@@ -8,7 +8,8 @@
  */
 
 import { TraceProcessorService } from './traceProcessorService';
-import { SqlKnowledgeBase, createKnowledgeBase } from './sqlKnowledgeBase';
+import { SqlKnowledgeBase, createKnowledgeBase, getExtendedKnowledgeBase, ExtendedSqlKnowledgeBase } from './sqlKnowledgeBase';
+import { EnhancedSQLTemplateEngine, getEnhancedSQLTemplateEngine } from './sqlTemplateEngine';
 import {
   PerfettoSkillType,
   type DetectedIntent,
@@ -165,10 +166,76 @@ const SKILL_PATTERNS: SkillPattern[] = [
 export class PerfettoSqlSkill {
   private traceProcessor: TraceProcessorService;
   private knowledgeBase: SqlKnowledgeBase;
+  private enhancedEngine: EnhancedSQLTemplateEngine | null = null;
+  private enhancedEngineInitializing: Promise<EnhancedSQLTemplateEngine> | null = null;
 
   constructor(traceProcessor: TraceProcessorService, knowledgeBase?: SqlKnowledgeBase) {
     this.traceProcessor = traceProcessor;
     this.knowledgeBase = knowledgeBase || createKnowledgeBase();
+  }
+
+  /**
+   * Get the enhanced SQL template engine (lazy initialization)
+   * Provides access to 527 official Perfetto SQL templates
+   */
+  private async getEnhancedEngine(): Promise<EnhancedSQLTemplateEngine> {
+    if (this.enhancedEngine) {
+      return this.enhancedEngine;
+    }
+
+    // Prevent multiple concurrent initializations
+    if (!this.enhancedEngineInitializing) {
+      this.enhancedEngineInitializing = getEnhancedSQLTemplateEngine().then(engine => {
+        this.enhancedEngine = engine;
+        return engine;
+      });
+    }
+
+    return this.enhancedEngineInitializing;
+  }
+
+  /**
+   * Get AI context enriched with official Perfetto SQL patterns
+   * This provides the AI with relevant official templates for generating SQL
+   */
+  async getEnrichedAIContext(question: string): Promise<string> {
+    try {
+      const engine = await this.getEnhancedEngine();
+      return await engine.getAIContext(question);
+    } catch (error) {
+      console.error('[PerfettoSqlSkill] Failed to get enriched AI context:', error);
+      return '';
+    }
+  }
+
+  /**
+   * Get recommended SQL queries for a given category
+   */
+  async getRecommendedSQLForCategory(category: string): Promise<Array<{name: string; description: string; sql: string}>> {
+    try {
+      const engine = await this.getEnhancedEngine();
+      return await engine.getRecommendedSQL(category);
+    } catch (error) {
+      console.error('[PerfettoSqlSkill] Failed to get recommended SQL:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get matching official templates for a user query
+   */
+  async findOfficialTemplates(query: string): Promise<{
+    builtinTemplate: any | null;
+    officialTemplates: any[];
+    recommendedSQL: Array<{name: string; description: string; sql: string}>;
+  }> {
+    try {
+      const engine = await this.getEnhancedEngine();
+      return await engine.smartMatchWithOfficial(query);
+    } catch (error) {
+      console.error('[PerfettoSqlSkill] Failed to find official templates:', error);
+      return { builtinTemplate: null, officialTemplates: [], recommendedSQL: [] };
+    }
   }
 
   // ========================================================================
@@ -412,6 +479,20 @@ ORDER BY p.name, t.name;
         summary = 'Explore the trace structure using these queries.';
     }
 
+    // Get official template recommendations for enriched context
+    let officialTemplates: any[] = [];
+    let recommendedSQL: Array<{name: string; description: string; sql: string}> = [];
+    let aiContext = '';
+
+    try {
+      const matchResult = await this.findOfficialTemplates(question);
+      officialTemplates = matchResult.officialTemplates.slice(0, 5); // Top 5 matches
+      recommendedSQL = matchResult.recommendedSQL.slice(0, 3); // Top 3 recommendations
+      aiContext = await this.getEnrichedAIContext(question);
+    } catch (error) {
+      console.log('[PerfettoSqlSkill] Could not load official templates (optional enhancement)');
+    }
+
     return {
       analysisType,
       sql,
@@ -422,7 +503,19 @@ ORDER BY p.name, t.name;
         note: 'For WASM traces: Execute this SQL in Perfetto UI to see results',
         question,
         packageName: packageName || null,
+        // Enhanced with official Perfetto SQL library
+        officialTemplates: officialTemplates.map(t => ({
+          id: t.id,
+          name: t.name,
+          category: t.category,
+          type: t.type,
+          description: t.description,
+        })),
+        recommendedSQL,
+        hasOfficialLibrary: officialTemplates.length > 0,
       },
+      // Provide AI context for downstream processing
+      aiContext,
     };
   }
 

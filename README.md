@@ -50,11 +50,82 @@ SmartPerfetto 是一个基于 AI 的 Perfetto 性能分析平台，通过 AI 助
 │  │  • 生成最终答案                                      │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                          │                                  │
-│  ┌───────────────┐  ┌──────────────────┐  ┌────────────┐ │
-│  │ TraceProcessor│  │ AnalysisSession  │  │  AI SDK    │ │
-│  │   Service     │  │     Service      │  │ (DeepSeek) │ │
-│  └───────────────┘  └──────────────────┘  └────────────┘ │
+│  ┌───────────────────────┴───────────────────────────┐     │
+│  │              SQL Skill Layer                       │     │
+│  │  ┌─────────────────────────────────────────────┐  │     │
+│  │  │     EnhancedSQLTemplateEngine               │  │     │
+│  │  │  • 智能模板匹配 (内置 + 官方)                │  │     │
+│  │  │  • AI 上下文生成                            │  │     │
+│  │  │  • SQL 验证和修正                           │  │     │
+│  │  └──────────────────┬──────────────────────────┘  │     │
+│  │                     │                              │     │
+│  │  ┌──────────────────┴──────────────────────────┐  │     │
+│  │  │     ExtendedSqlKnowledgeBase                │  │     │
+│  │  │  • 527 个官方 SQL 模板索引                   │  │     │
+│  │  │  • 27 个分类 (android/chrome/linux...)      │  │     │
+│  │  │  • 8 个预制分析场景                          │  │     │
+│  │  │  • 智能搜索和意图匹配                        │  │     │
+│  │  └─────────────────────────────────────────────┘  │     │
+│  └───────────────────────────────────────────────────┘     │
+│                          │                                  │
+│  ┌───────────────┐  ┌──────────────────┐  ┌────────────┐   │
+│  │ TraceProcessor│  │ AnalysisSession  │  │  AI SDK    │   │
+│  │   Service     │  │     Service      │  │ (DeepSeek) │   │
+│  └───────────────┘  └──────────────────┘  └────────────┘   │
 └─────────────────────────────────────────────────────────────┘
+                              │
+                              │ 索引来源
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Perfetto Official SQL Library                  │
+│                  perfetto/perfetto/src/                     │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────┐  ┌─────────────────────────────┐  │
+│  │ stdlib/ (386 模板)   │  │ metrics/sql/ (141 模板)     │  │
+│  │  • android/startup  │  │  • android/android_startup  │  │
+│  │  • android/frames   │  │  • android/android_binder   │  │
+│  │  • android/memory   │  │  • android/jank/            │  │
+│  │  • android/binder   │  │  • chrome/                  │  │
+│  │  • chrome/          │  │  • experimental/            │  │
+│  │  • linux/           │  │                             │  │
+│  │  • sched/           │  │                             │  │
+│  └─────────────────────┘  └─────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### SQL Skill 架构
+
+```
+用户提问 ──────────────────────────────────────────────────────►
+         │
+         ▼
+┌────────────────────────────────────────────────────────────┐
+│              EnhancedSQLTemplateEngine                     │
+├────────────────────────────────────────────────────────────┤
+│  1. smartMatchWithOfficial(query)                          │
+│     ├── 检查内置模板 (8个基础模板)                          │
+│     ├── 搜索官方模板 (527个)                                │
+│     └── 获取推荐 SQL                                        │
+│                                                             │
+│  2. getAIContext(query)                                     │
+│     └── 为 AI 生成参考上下文                                 │
+│                                                             │
+│  3. validateSQL() + suggestFix()                            │
+│     └── SQL 验证和自动修正                                   │
+└────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────────────────────────────┐
+│              ExtendedSqlKnowledgeBase                      │
+├────────────────────────────────────────────────────────────┤
+│  数据来源: perfettoSqlIndex.json                            │
+│                                                             │
+│  • searchIndex(query)      - 关键词搜索                     │
+│  • smartMatch(query)       - 意图匹配                       │
+│  • getScenarios()          - 预制分析场景                   │
+│  • getRecommendedQueries() - 推荐 SQL 查询                  │
+│  • generateIncludeStatement() - 生成 INCLUDE 语句          │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### 职责分离
@@ -180,15 +251,29 @@ AI 会实时显示分析进度：
 ```
 SmartPerfetto/
 ├── perfetto/                 # Perfetto 官方 UI (Git Submodule)
-│   └── ui/
-│       ├── src/
-│       │   └── plugins/
-│       │       └── com.smartperfetto.AIAssistant/  # AI 助手插件
-│       │           ├── ai_panel.ts                  # 主面板组件
-│       │           ├── commands.ts                  # 命令处理
-│       │           └── plugin.ts                    # 插件入口
-│       ├── run-dev-server                            # 启动脚本
-│       └── build.js                                  # 构建脚本
+│   ├── ui/
+│   │   ├── src/
+│   │   │   └── plugins/
+│   │   │       └── com.smartperfetto.AIAssistant/  # AI 助手插件
+│   │   │           ├── ai_panel.ts                  # 主面板组件
+│   │   │           ├── commands.ts                  # 命令处理
+│   │   │           └── plugin.ts                    # 插件入口
+│   │   ├── run-dev-server                           # 启动脚本
+│   │   └── build.js                                 # 构建脚本
+│   │
+│   └── perfetto/             # Perfetto 官方源码 (包含 SQL 库)
+│       └── src/trace_processor/
+│           ├── perfetto_sql/stdlib/                 # 标准库 (386 模板)
+│           │   ├── android/                         # Android 分析模块
+│           │   │   ├── startup/                     # 启动分析
+│           │   │   ├── frames/                      # 帧渲染分析
+│           │   │   ├── memory/                      # 内存分析
+│           │   │   └── binder.sql                   # Binder 分析
+│           │   ├── chrome/                          # Chrome 分析模块
+│           │   ├── linux/                           # Linux 系统分析
+│           │   └── sched/                           # 调度分析
+│           └── metrics/sql/                         # 预定义指标 (141 模板)
+│               └── android/                         # Android 指标
 │
 ├── backend/                 # 后端 API 服务
 │   ├── src/
@@ -199,11 +284,23 @@ SmartPerfetto/
 │   │   │   ├── traceProcessorService.ts        # Trace 处理服务
 │   │   │   ├── perfettoAnalysisOrchestrator.ts # 分析编排器
 │   │   │   ├── analysisSessionService.ts       # 会话管理
-│   │   │   └── perfettoSqlSkill.ts             # SQL 生成技能
+│   │   │   ├── perfettoSqlSkill.ts             # SQL 生成技能
+│   │   │   ├── sqlTemplateEngine.ts            # SQL 模板引擎
+│   │   │   │   ├── SQLTemplateEngine           # 基础模板引擎 (8 个内置模板)
+│   │   │   │   └── EnhancedSQLTemplateEngine   # 增强引擎 (集成官方库)
+│   │   │   └── sqlKnowledgeBase.ts             # SQL 知识库
+│   │   │       ├── SqlKnowledgeBase            # 表结构/函数定义
+│   │   │       └── ExtendedSqlKnowledgeBase    # 官方模板索引
+│   │   ├── scripts/
+│   │   │   ├── indexPerfettoSql.ts             # SQL 索引生成脚本
+│   │   │   └── testSqlKnowledgeBase.ts         # 测试脚本
 │   │   ├── types/
 │   │   │   └── analysis.ts                     # 类型定义
 │   │   └── index.ts                            # 入口文件
-│   └── .env                                      # 环境变量
+│   ├── data/
+│   │   ├── perfettoSqlIndex.json               # 完整 SQL 索引 (527 模板)
+│   │   └── perfettoSqlIndex.light.json         # 精简索引 (快速加载)
+│   └── .env                                    # 环境变量
 │
 └── docs/                    # 文档
     └── plans/               # 设计文档
