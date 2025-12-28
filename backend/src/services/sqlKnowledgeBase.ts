@@ -10,8 +10,8 @@
  * - perfetto/src/trace_processor/metrics/sql/android/
  */
 
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ============================================================================
 // Table Schema Definitions (from official views.sql)
@@ -802,11 +802,448 @@ export class SqlKnowledgeBase {
   }
 }
 
+// ============================================================================
+// Extended Knowledge Base with Official SQL Index
+// ============================================================================
+
+export interface PerfettoSqlTemplate {
+  id: string;
+  name: string;
+  category: string;
+  subcategory?: string;
+  type: 'table' | 'view' | 'function' | 'macro' | 'metric';
+  description: string;
+  sql?: string;
+  filePath?: string;
+  dependencies?: string[];
+  params?: string[];
+  returnType?: string;
+  columns?: Array<{ name: string; type: string; description: string }>;
+}
+
+export interface AnalysisScenario {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  templates: string[];
+  order: number;
+}
+
+export interface SqlIndex {
+  version: string;
+  generatedAt: string;
+  stats?: {
+    totalTemplates: number;
+    byCategory: Record<string, { count: number; types: Record<string, number> }>;
+  };
+  templates: PerfettoSqlTemplate[];
+  scenarios: AnalysisScenario[];
+}
+
+export interface SearchResult {
+  template: PerfettoSqlTemplate;
+  score: number;
+  matchedFields: string[];
+}
+
+/**
+ * Extended Knowledge Base with Official SQL Index Support
+ */
+export class ExtendedSqlKnowledgeBase extends SqlKnowledgeBase {
+  private index: SqlIndex | null = null;
+  private fullIndex: SqlIndex | null = null;
+  private templateMap: Map<string, PerfettoSqlTemplate> = new Map();
+  private categoryIndex: Map<string, PerfettoSqlTemplate[]> = new Map();
+  private nameIndex: Map<string, PerfettoSqlTemplate[]> = new Map();
+  private initialized = false;
+
+  private readonly indexPath: string;
+  private readonly fullIndexPath: string;
+
+  constructor(perfettoPath: string) {
+    super(perfettoPath);
+    this.indexPath = path.join(__dirname, '../../data/perfettoSqlIndex.light.json');
+    this.fullIndexPath = path.join(__dirname, '../../data/perfettoSqlIndex.json');
+  }
+
+  /**
+   * Initialize the extended knowledge base
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    try {
+      // Load light index
+      if (fs.existsSync(this.indexPath)) {
+        const content = fs.readFileSync(this.indexPath, 'utf-8');
+        this.index = JSON.parse(content);
+      }
+
+      // Build memory indexes
+      if (this.index) {
+        for (const template of this.index.templates) {
+          // Index by ID
+          this.templateMap.set(template.id, template);
+
+          // Index by category
+          const categoryTemplates = this.categoryIndex.get(template.category) || [];
+          categoryTemplates.push(template);
+          this.categoryIndex.set(template.category, categoryTemplates);
+
+          // Index by name (lowercase)
+          const nameLower = template.name.toLowerCase();
+          const nameTemplates = this.nameIndex.get(nameLower) || [];
+          nameTemplates.push(template);
+          this.nameIndex.set(nameLower, nameTemplates);
+        }
+      }
+
+      this.initialized = true;
+      console.log(`ExtendedSqlKnowledgeBase: Loaded ${this.templateMap.size} templates`);
+    } catch (error) {
+      console.error('ExtendedSqlKnowledgeBase: Initialization failed', error);
+      throw error;
+    }
+  }
+
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      throw new Error('ExtendedSqlKnowledgeBase not initialized. Call initialize() first.');
+    }
+  }
+
+  /**
+   * Get all categories from the index
+   */
+  getIndexCategories(): string[] {
+    this.ensureInitialized();
+    return Array.from(this.categoryIndex.keys()).sort();
+  }
+
+  /**
+   * Get templates by category from the index
+   */
+  getIndexTemplatesByCategory(category: string, includePrivate = false): PerfettoSqlTemplate[] {
+    this.ensureInitialized();
+    let templates = this.categoryIndex.get(category) || [];
+    if (!includePrivate) {
+      templates = templates.filter(t => !t.name.startsWith('_'));
+    }
+    return templates;
+  }
+
+  /**
+   * Get template by ID from the index
+   */
+  getIndexTemplateById(id: string): PerfettoSqlTemplate | null {
+    this.ensureInitialized();
+    return this.templateMap.get(id) || null;
+  }
+
+  /**
+   * Search templates in the index
+   */
+  searchIndex(query: string, options?: { category?: string; type?: string; limit?: number; includePrivate?: boolean }): SearchResult[] {
+    this.ensureInitialized();
+
+    const queryLower = query.toLowerCase();
+    const keywords = queryLower.split(/\s+/).filter(Boolean);
+    const results: SearchResult[] = [];
+
+    for (const template of Array.from(this.templateMap.values())) {
+      // Skip private templates
+      if (!options?.includePrivate && template.name.startsWith('_')) continue;
+      // Filter by category
+      if (options?.category && template.category !== options.category) continue;
+      // Filter by type
+      if (options?.type && template.type !== options.type) continue;
+
+      let score = 0;
+      const matchedFields: string[] = [];
+
+      // Name matching (highest weight)
+      const nameLower = template.name.toLowerCase();
+      if (nameLower === queryLower) {
+        score += 100;
+        matchedFields.push('name:exact');
+      } else if (nameLower.includes(queryLower)) {
+        score += 50;
+        matchedFields.push('name:partial');
+      } else {
+        for (const kw of keywords) {
+          if (nameLower.includes(kw)) {
+            score += 20;
+            matchedFields.push(`name:keyword:${kw}`);
+          }
+        }
+      }
+
+      // Description matching
+      const descLower = template.description.toLowerCase();
+      for (const kw of keywords) {
+        if (descLower.includes(kw)) {
+          score += 10;
+          matchedFields.push(`description:keyword:${kw}`);
+        }
+      }
+
+      // Category matching
+      if (template.category.toLowerCase().includes(queryLower)) {
+        score += 15;
+        matchedFields.push('category');
+      }
+
+      if (score > 0) {
+        results.push({ template, score, matchedFields });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return options?.limit ? results.slice(0, options.limit) : results;
+  }
+
+  /**
+   * Smart match - match templates based on user intent
+   */
+  smartMatch(userQuery: string): SearchResult[] {
+    const intentMap: Record<string, string[]> = {
+      'startup': ['android_startups', 'startup', 'launch', 'time_to_display'],
+      '启动': ['android_startups', 'startup', 'launch', 'time_to_display'],
+      'launch': ['android_startups', 'startup', 'launch'],
+      'ttid': ['time_to_display', 'initial_display'],
+      'ttfd': ['time_to_display', 'full_display'],
+      'frame': ['android_frames', 'choreographer', 'draw_frame', 'jank'],
+      '帧': ['android_frames', 'choreographer', 'draw_frame', 'jank'],
+      'jank': ['jank', 'frame', 'dropped'],
+      '卡顿': ['jank', 'frame', 'dropped'],
+      'memory': ['memory', 'heap', 'dmabuf', 'ion'],
+      '内存': ['memory', 'heap', 'dmabuf', 'ion'],
+      'cpu': ['cpu', 'sched', 'frequency', 'utilization'],
+      '调度': ['sched', 'scheduling', 'cpu'],
+      'binder': ['binder', 'sync_binder', 'async_binder'],
+      'battery': ['battery', 'charging', 'power'],
+      '电池': ['battery', 'charging', 'power'],
+      'power': ['power', 'power_rails', 'wattson'],
+      '功耗': ['power', 'power_rails', 'wattson'],
+      'gpu': ['gpu', 'graphics'],
+      'io': ['io', 'file', 'disk'],
+    };
+
+    const queryLower = userQuery.toLowerCase();
+    let searchTerms: string[] = [];
+
+    for (const [intent, terms] of Object.entries(intentMap)) {
+      if (queryLower.includes(intent)) {
+        searchTerms.push(...terms);
+      }
+    }
+
+    if (searchTerms.length === 0) {
+      return this.searchIndex(userQuery, { limit: 20 });
+    }
+
+    const allResults: Map<string, SearchResult> = new Map();
+    for (const term of searchTerms) {
+      const results = this.searchIndex(term, { limit: 10 });
+      for (const result of results) {
+        const existing = allResults.get(result.template.id);
+        if (existing) {
+          existing.score += result.score;
+          existing.matchedFields.push(...result.matchedFields);
+        } else {
+          allResults.set(result.template.id, result);
+        }
+      }
+    }
+
+    return Array.from(allResults.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+  }
+
+  /**
+   * Get analysis scenarios
+   */
+  getScenarios(): AnalysisScenario[] {
+    this.ensureInitialized();
+    return this.index?.scenarios || [];
+  }
+
+  /**
+   * Get scenario by ID
+   */
+  getScenarioById(id: string): AnalysisScenario | null {
+    this.ensureInitialized();
+    return this.index?.scenarios.find(s => s.id === id) || null;
+  }
+
+  /**
+   * Load full template with SQL content
+   */
+  async loadFullTemplate(id: string): Promise<PerfettoSqlTemplate | null> {
+    if (this.fullIndex) {
+      return this.fullIndex.templates.find(t => t.id === id) || null;
+    }
+
+    if (fs.existsSync(this.fullIndexPath)) {
+      try {
+        const content = fs.readFileSync(this.fullIndexPath, 'utf-8');
+        this.fullIndex = JSON.parse(content);
+        return this.fullIndex?.templates.find(t => t.id === id) || null;
+      } catch (error) {
+        console.error('Failed to load full index:', error);
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get stats from the index
+   */
+  getIndexStats(): SqlIndex['stats'] | null {
+    this.ensureInitialized();
+    return this.index?.stats || null;
+  }
+
+  /**
+   * Generate context for AI SQL generation
+   */
+  getContextForAI(query: string, maxTemplates = 5): string {
+    const matches = this.smartMatch(query);
+    const topMatches = matches.slice(0, maxTemplates);
+
+    if (topMatches.length === 0) return '';
+
+    let context = '以下是 Perfetto 官方提供的相关 SQL 模板，可以参考其写法：\n\n';
+
+    for (const { template } of topMatches) {
+      context += `### ${template.name} (${template.type})\n`;
+      context += `分类: ${template.category}\n`;
+      context += `描述: ${template.description.substring(0, 200)}\n`;
+      if (template.columns && template.columns.length > 0) {
+        context += `列: ${template.columns.map(c => c.name).join(', ')}\n`;
+      }
+      context += '\n';
+    }
+
+    return context;
+  }
+
+  /**
+   * Generate INCLUDE statement for a template
+   */
+  generateIncludeStatement(templateId: string): string {
+    const template = this.getIndexTemplateById(templateId);
+    if (!template || !template.filePath) return '';
+
+    const modulePath = template.filePath
+      .replace(/\.sql$/, '')
+      .replace(/\//g, '.');
+
+    return `INCLUDE PERFETTO MODULE ${modulePath};`;
+  }
+
+  /**
+   * Get recommended queries for a category
+   */
+  getRecommendedQueries(category: string): Array<{ name: string; description: string; sql: string }> {
+    const recommendations: Record<string, Array<{ name: string; description: string; sql: string }>> = {
+      'startup': [
+        {
+          name: '应用启动列表',
+          description: '获取所有应用启动事件',
+          sql: `INCLUDE PERFETTO MODULE android.startup.startups;
+SELECT startup_id, ts, dur, package, startup_type
+FROM android_startups
+ORDER BY ts;`
+        },
+        {
+          name: '启动阶段耗时',
+          description: '分析启动各阶段的耗时',
+          sql: `INCLUDE PERFETTO MODULE android.startup.startups;
+SELECT
+  startup_id,
+  slice_name,
+  slice_dur / 1e6 AS duration_ms,
+  thread_name
+FROM android_thread_slices_for_all_startups
+WHERE slice_name IN ('bindApplication', 'activityStart', 'activityResume')
+ORDER BY startup_id, slice_ts;`
+        }
+      ],
+      'frame': [
+        {
+          name: '帧渲染时间线',
+          description: '获取应用的帧渲染信息',
+          sql: `INCLUDE PERFETTO MODULE android.frames.timeline;
+SELECT
+  frame_id,
+  ts / 1e6 AS ts_ms,
+  dur / 1e6 AS duration_ms,
+  process_name
+FROM android_frames
+ORDER BY ts;`
+        }
+      ],
+      'cpu': [
+        {
+          name: 'CPU 核心利用率',
+          description: '统计各 CPU 核心的利用率',
+          sql: `SELECT
+  cpu,
+  SUM(dur) / 1e9 AS total_runtime_s,
+  COUNT(*) AS schedule_count
+FROM sched
+WHERE dur > 0
+GROUP BY cpu
+ORDER BY cpu;`
+        }
+      ],
+      'binder': [
+        {
+          name: 'Binder 调用统计',
+          description: '统计进程间的 Binder 调用',
+          sql: `INCLUDE PERFETTO MODULE android.binder;
+SELECT
+  client_process,
+  server_process,
+  COUNT(*) AS call_count,
+  AVG(dur) / 1e6 AS avg_duration_ms
+FROM android_sync_binder_metrics_by_txn
+GROUP BY client_process, server_process
+ORDER BY call_count DESC
+LIMIT 20;`
+        }
+      ]
+    };
+
+    return recommendations[category] || [];
+  }
+}
+
 // Default instance (uses local Perfetto project path)
 const DEFAULT_PERFETTO_PATH = '/Users/chris/Code/SmartPerfetto/SmartPerfetto/perfetto';
 
 export function createKnowledgeBase(perfettoPath = DEFAULT_PERFETTO_PATH): SqlKnowledgeBase {
   return new SqlKnowledgeBase(perfettoPath);
+}
+
+export function createExtendedKnowledgeBase(perfettoPath = DEFAULT_PERFETTO_PATH): ExtendedSqlKnowledgeBase {
+  return new ExtendedSqlKnowledgeBase(perfettoPath);
+}
+
+// Singleton instance
+let extendedInstance: ExtendedSqlKnowledgeBase | null = null;
+
+export async function getExtendedKnowledgeBase(): Promise<ExtendedSqlKnowledgeBase> {
+  if (!extendedInstance) {
+    extendedInstance = createExtendedKnowledgeBase();
+    await extendedInstance.initialize();
+  }
+  return extendedInstance;
 }
 
 export default SqlKnowledgeBase;

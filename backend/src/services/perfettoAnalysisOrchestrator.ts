@@ -108,22 +108,37 @@ export class PerfettoAnalysisOrchestrator {
    * Start analysis for a session
    */
   public async startAnalysis(sessionId: string): Promise<void> {
+    console.log('[Orchestrator] ========================================');
+    console.log('[Orchestrator] startAnalysis called for session:', sessionId);
     const session = this.sessionService.getSession(sessionId);
     if (!session) {
+      console.error('[Orchestrator] ERROR: Session not found:', sessionId);
       throw new Error(`Session ${sessionId} not found`);
     }
 
+    console.log('[Orchestrator] Session found:', {
+      id: session.id,
+      traceId: session.traceId,
+      question: session.question,
+      state: session.state
+    });
+
     // Verify trace exists
+    console.log('[Orchestrator] Checking if trace exists...');
     const trace = this.traceProcessor.getTrace(session.traceId);
+    console.log('[Orchestrator] Trace found:', !!trace, trace ? `status: ${trace.status}` : 'not found');
     if (!trace) {
+      console.error('[Orchestrator] ERROR: Trace not found:', session.traceId);
       this.sessionService.failSession(sessionId, `Trace ${session.traceId} not found`);
       return;
     }
 
     // Update state to generating SQL
+    console.log('[Orchestrator] Updating session state to GENERATING_SQL');
     this.sessionService.updateState(sessionId, AnalysisState.GENERATING_SQL);
 
     try {
+      console.log('[Orchestrator] Starting analysis loop...');
       await this.runAnalysisLoop(sessionId);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -164,9 +179,17 @@ export class PerfettoAnalysisOrchestrator {
       this.emitProgress(sessionId, 'generating_sql', '🤔 正在生成查询...');
       const sqlResult = await this.generateSQL(sessionId, currentQuestion);
 
+      console.log(`[Orchestrator] Iteration ${iteration} - SQL generated:`, sqlResult.sql ? 'YES' : 'NO');
+      if (sqlResult.sql) {
+        console.log(`[Orchestrator] SQL (first 200 chars):`, sqlResult.sql.substring(0, 200));
+        console.log(`[Orchestrator] Explanation:`, sqlResult.explanation);
+      }
+
       if (!sqlResult.sql) {
         // AI couldn't generate SQL, try to answer directly
+        console.log('[Orchestrator] No SQL generated, calling generateDirectAnswer...');
         const directAnswer = await this.generateDirectAnswer(sessionId, currentQuestion);
+        console.log('[Orchestrator] Direct answer:', directAnswer.substring(0, 100) + '...');
         this.sessionService.completeSession(sessionId, directAnswer);
         this.emitCompleted(sessionId, directAnswer, startTime);
         return;
@@ -180,17 +203,26 @@ export class PerfettoAnalysisOrchestrator {
       this.emitProgress(sessionId, 'executing_sql', '⏳ 正在执行查询...');
       const queryResult = await this.executeSQL(sessionId, sqlResult.sql);
 
+      console.log(`[Orchestrator] Iteration ${iteration} - SQL executed:`, {
+        error: queryResult.error || 'none',
+        rowCount: queryResult.rowCount,
+        columnCount: queryResult.columns?.length || 0,
+        durationMs: queryResult.durationMs,
+      });
+
       // Emit SQL executed event
       this.emitSQLExecuted(sessionId, iteration, sqlResult.sql, queryResult);
 
       // Step 3: Check for errors
       if (queryResult.error) {
+        console.log(`[Orchestrator] Iteration ${iteration} - SQL ERROR:`, queryResult.error);
         if (!this.config.enableRetry) {
           this.sessionService.failSession(sessionId, queryResult.error);
           return;
         }
 
         // Generate fixed SQL
+        console.log('[Orchestrator] Retrying with fix prompt...');
         this.sessionService.updateState(sessionId, AnalysisState.RETRYING);
         const fixPrompt = this.buildFixPrompt(sqlResult.sql, queryResult.error);
         currentQuestion = fixPrompt;
@@ -199,6 +231,7 @@ export class PerfettoAnalysisOrchestrator {
 
       // Step 4: Check for empty results
       if (queryResult.rowCount === 0) {
+        console.log(`[Orchestrator] Iteration ${iteration} - Empty result (0 rows)`);
         if (!this.config.enableRetry) {
           // Complete with empty result message
           const answer = this.buildEmptyResultAnswer(sqlResult.sql, sqlResult.explanation);
@@ -208,11 +241,15 @@ export class PerfettoAnalysisOrchestrator {
         }
 
         // Ask AI to adjust approach
+        console.log('[Orchestrator] Retrying with adjusted prompt...');
         this.sessionService.updateState(sessionId, AnalysisState.RETRYING);
         const adjustPrompt = this.buildAdjustPrompt(sqlResult.sql, sqlResult.explanation);
+        console.log('[Orchestrator] Adjusted prompt:', adjustPrompt.substring(0, 150) + '...');
         currentQuestion = adjustPrompt;
         continue;
       }
+
+      console.log(`[Orchestrator] Iteration ${iteration} - SUCCESS! Got ${queryResult.rowCount} rows`);
 
       // Step 5: Collect successful result
       this.emitProgress(sessionId, 'analyzing', '📊 正在分析结果...');
@@ -275,6 +312,9 @@ export class PerfettoAnalysisOrchestrator {
     const session = this.sessionService.getSession(sessionId);
     if (!session) return { sql: '', explanation: '' };
 
+    // Get enriched AI context from the skill (with official Perfetto SQL patterns)
+    let enrichedAIContext = '';
+
     // Try Perfetto SQL Skill first if available
     if (this.perfettoSqlSkill) {
       try {
@@ -291,17 +331,32 @@ export class PerfettoAnalysisOrchestrator {
             explanation: perfettoResult.summary,
           };
         }
+
+        // Even if no direct SQL match, capture the AI context for enhanced prompting
+        if (perfettoResult.aiContext) {
+          enrichedAIContext = perfettoResult.aiContext;
+          console.log('[Orchestrator] Got enriched AI context with official Perfetto SQL patterns');
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.log('[Orchestrator] Perfetto SQL Skill failed, falling back to AI:', errorMessage);
+      }
+
+      // Try to get enriched context even if skill didn't return SQL
+      if (!enrichedAIContext) {
+        try {
+          enrichedAIContext = await this.perfettoSqlSkill.getEnrichedAIContext(question);
+        } catch (error) {
+          // Ignore - enriched context is optional
+        }
       }
     }
 
     // Get trace schema for context
     const schemaContext = await this.getTraceSchema(session.traceId);
 
-    // Build messages with conversation history
-    const messages = this.buildSQLGenerationMessages(question, schemaContext, session);
+    // Build messages with conversation history and enriched AI context
+    const messages = this.buildSQLGenerationMessages(question, schemaContext, session, enrichedAIContext);
 
     if (!this.isConfigured || !this.openai) {
       // Use mock SQL based on keywords
@@ -660,16 +715,23 @@ Note: SQL queries couldn't be generated for this question. Please provide genera
   private buildSQLGenerationMessages(
     question: string,
     schemaContext: string,
-    session: any
+    session: any,
+    enrichedAIContext?: string
   ): ChatCompletionMessageParam[] {
     // Use PromptTemplateService for unified template management
     const templateService = PromptTemplateService.getInstance();
     const schemaWithTables = `${schemaContext}\n\n${PERFETTO_TABLES_SCHEMA}`;
 
-    const basePrompt = templateService.formatTemplate('sql-generation', {
+    // Build base prompt with optional enriched context from official Perfetto SQL library
+    let basePrompt = templateService.formatTemplate('sql-generation', {
       schema: schemaWithTables,
       examples: JSON.stringify(PERFETTO_SQL_EXAMPLES, null, 2),
     });
+
+    // Append enriched AI context if available (contains official Perfetto SQL patterns)
+    if (enrichedAIContext) {
+      basePrompt += `\n\n## Official Perfetto SQL Reference\n${enrichedAIContext}`;
+    }
 
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: basePrompt },

@@ -598,6 +598,8 @@ export interface PerfettoSqlResponse {
   metrics?: Record<string, number | string>;
   /** Additional analysis details (e.g., jank breakdown, method used) */
   details?: Record<string, unknown>;
+  /** AI context enriched with official Perfetto SQL patterns */
+  aiContext?: string;
 }
 
 /**

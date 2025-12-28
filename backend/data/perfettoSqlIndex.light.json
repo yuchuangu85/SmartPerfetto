@@ -1,0 +1,3780 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2025-12-28T11:49:48.310Z",
+  "templates": [
+    {
+      "id": "stdlib.android._extract_anr_type",
+      "name": "_extract_anr_type",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._default_anr_dur",
+      "name": "_default_anr_dur",
+      "category": "android",
+      "type": "function",
+      "description": "Function to get the default ANR duration in milliseconds based on ANR type. Note: These are common defaults. Actual timeouts can vary by OEM, Android version, and FG/BG status."
+    },
+    {
+      "id": "stdlib.android._platform_to_standard_anr_type",
+      "name": "_platform_to_standard_anr_type",
+      "category": "android",
+      "type": "function",
+      "description": "Some of the anr timer events don't use the standard anr types and we have to convert them (temporal solution). For 'JobScheduler' there's not a 1:1 mapping to a standard type."
+    },
+    {
+      "id": "stdlib.android.app_process_starts",
+      "name": "app_process_starts",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.auto.android_auto_multiuser_timing",
+      "name": "android_auto_multiuser_timing",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.auto.android_auto_multiuser_timing_with_previous_user_resource_usage",
+      "name": "android_auto_multiuser_timing_with_previous_user_resource_usage",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.charging_states",
+      "name": "charging_states",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.battery.android_light_idle_state",
+      "name": "android_light_idle_state",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.battery.android_deep_idle_state",
+      "name": "android_deep_idle_state",
+      "category": "android",
+      "type": "table",
+      "description": "device is used or on power\n    WHEN 0\n    THEN 'active'\n    -- device is waiting to go idle\n    WHEN 1\n    THEN 'inactive'\n    -- device is idle\n    WHEN 4\n    THEN 'idle'\n    -- waiting for connectiv"
+    },
+    {
+      "id": "stdlib.android.android_battery_charge",
+      "name": "android_battery_charge",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_battery_stats_state",
+      "name": "android_battery_stats_state",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_battery_stats_event_slices",
+      "name": "android_battery_stats_event_slices",
+      "category": "android",
+      "type": "view",
+      "description": "Start of the new barrary state.\n  ts TIMESTAMP,\n  -- The duration the state was active, -1 for incomplete slices.\n  dur DURATION,\n  -- The same as `dur`, but extends to trace end for incomplete slices"
+    },
+    {
+      "id": "stdlib.android.android_binder_metrics_by_process",
+      "name": "android_binder_metrics_by_process",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_sync_binder_thread_state_by_txn",
+      "name": "android_sync_binder_thread_state_by_txn",
+      "category": "android",
+      "type": "view",
+      "description": "Name of the process that started the binder transaction.\n  process_name STRING,\n  -- PID of the process that started the binder transaction.\n  pid LONG,\n  -- Name of the slice with binder transaction."
+    },
+    {
+      "id": "stdlib.android.android_sync_binder_blocked_functions_by_txn",
+      "name": "android_sync_binder_blocked_functions_by_txn",
+      "category": "android",
+      "type": "view",
+      "description": "slice id of the binder txn\n  binder_txn_id LONG,\n  -- Client timestamp\n  client_ts TIMESTAMP,\n  -- Client tid\n  client_tid LONG,\n  -- slice id of the binder reply\n  binder_reply_id LONG,\n  -- Server t"
+    },
+    {
+      "id": "stdlib.android.android_binder_graph",
+      "name": "android_binder_graph",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2022 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._binder_reason",
+      "name": "_binder_reason",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.bitmaps",
+      "name": "bitmaps",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android._extract_broadcast_process_name",
+      "name": "_extract_broadcast_process_name",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2022 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.cpu.android_cpu_cluster_mapping",
+      "name": "android_cpu_cluster_mapping",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.cpu._active_cpu_count_for_cluster_type",
+      "name": "_active_cpu_count_for_cluster_type",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.cpu.android_cpu_per_uid_track",
+      "name": "android_cpu_per_uid_track",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.cpu.android_cpu_per_uid_counter",
+      "name": "android_cpu_per_uid_counter",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._is_relevant_blocking_call",
+      "name": "_is_relevant_blocking_call",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._is_relevant_notifications_blocking_call",
+      "name": "_is_relevant_notifications_blocking_call",
+      "category": "android",
+      "type": "function",
+      "description": "Some top level handler slices\n    $depth = 0\n    AND NOT $name GLOB '*Choreographer*'\n    AND NOT $name GLOB '*Input*'\n    AND NOT $name GLOB '*input*'\n    AND NOT $name GLOB 'android.os.Handler: #*'\n"
+    },
+    {
+      "id": "stdlib.android.cujs._extract_cuj_name_from_slice",
+      "name": "_extract_cuj_name_from_slice",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.cujs._android_cuj_missed_vsyncs_for_callback",
+      "name": "_android_cuj_missed_vsyncs_for_callback",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.cujs._android_jank_cuj_counter_value",
+      "name": "_android_jank_cuj_counter_value",
+      "category": "android",
+      "type": "function",
+      "description": "Extract all counters for Jank CUJ tracks.\nCREATE PERFETTO VIEW _android_jank_cuj_counter AS\nWITH\n  cuj_counter_track AS (\n    SELECT DISTINCT\n      upid,\n      track.id AS track_id,\n      -- extract t"
+    },
+    {
+      "id": "stdlib.android.sysui_cujs",
+      "name": "sysui_cujs",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.desktop_mode",
+      "name": "desktop_mode",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_device_name",
+      "name": "android_device_name",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.show_map",
+      "name": "show_map",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_dvfs_counter_stats",
+      "name": "android_dvfs_counter_stats",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_dvfs_counters",
+      "name": "android_dvfs_counters",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_dvfs_counter_residency",
+      "name": "android_dvfs_counter_residency",
+      "category": "android",
+      "type": "view",
+      "description": "Counter name.\n  name STRING,\n  -- Timestamp when counter value changed.\n  ts TIMESTAMP,\n  -- Counter value.\n  value DOUBLE,\n  -- Counter duration.\n  dur DURATION\n) AS\nSELECT\n  counter_track.name,\n  co"
+    },
+    {
+      "id": "stdlib.android.entity_state_residency",
+      "name": "entity_state_residency",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.blocking_calls_aggregation",
+      "name": "blocking_calls_aggregation",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.jank_type",
+      "name": "jank_type",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.frames.android_frames_overrun",
+      "name": "android_frames_overrun",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.frames.android_frames_ui_time",
+      "name": "android_frames_ui_time",
+      "category": "android",
+      "type": "table",
+      "description": "How much time did the frame's Choreographer callbacks take."
+    },
+    {
+      "id": "stdlib.android.frames.android_app_vsync_delay_per_frame",
+      "name": "android_app_vsync_delay_per_frame",
+      "category": "android",
+      "type": "table",
+      "description": "App Vsync delay for a frame. The time between the VSYNC-app signal and the start of Choreographer work.\nCalculated as time difference between the actual frame start (from\n`actual_frame_timeline_slice`"
+    },
+    {
+      "id": "stdlib.android.frames.android_cpu_time_per_frame",
+      "name": "android_cpu_time_per_frame",
+      "category": "android",
+      "type": "table",
+      "description": "As there can be multiple `DrawFrame` slices, the `frames_surface_slices` table contains multiple rows for the same `frame_id` which only differ on\n`draw_frame_id`. As we don't care about `draw_frame_i"
+    },
+    {
+      "id": "stdlib.android.frames._cpu_time_per_frame_fallback",
+      "name": "_cpu_time_per_frame_fallback",
+      "category": "android",
+      "type": "table",
+      "description": "CPU time of frames which don't have `android_cpu_time_per_frame` available. Calculated as UI time of the frame + 5ms.\nFor Googlers: more details in go/android-performance-metrics-glossary."
+    },
+    {
+      "id": "stdlib.android.frames.android_frame_stats",
+      "name": "android_frame_stats",
+      "category": "android",
+      "type": "table",
+      "description": "Aggregated stats of the frame. -- For Googlers: more details in go/android-performance-metrics-glossary."
+    },
+    {
+      "id": "stdlib.android.frames._get_frame_table_with_id",
+      "name": "_get_frame_table_with_id",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.frames.android_first_frame_after",
+      "name": "android_first_frame_after",
+      "category": "android",
+      "type": "function",
+      "description": "Parsed frame id.\n  frame_id LONG,\n  -- Utid.\n  utid JOINID(thread.id),\n  -- Upid.\n  upid JOINID(process.id),\n  -- Timestamp of the frame slice.\n  ts TIMESTAMP\n) AS\nWITH\n  all_found AS (\n    SELECT\n   "
+    },
+    {
+      "id": "stdlib.android.timeline_maxsdk28",
+      "name": "timeline_maxsdk28",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android._extract_freezer_pid",
+      "name": "_extract_freezer_pid",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._translate_unfreeze_reason",
+      "name": "_translate_unfreeze_reason",
+      "category": "android",
+      "type": "function",
+      "description": "Converts a pid to a upid using the timestamp of occurrence of an event from |pid| to disambiguate duplicate pids.\nThis is still best effort because it relies on having information about\nprocess start "
+    },
+    {
+      "id": "stdlib.android._android_garbage_collection_stats",
+      "name": "_android_garbage_collection_stats",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.gpu.android_gpu_frequency",
+      "name": "android_gpu_frequency",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.gpu.android_mali_gpu_power_state",
+      "name": "android_mali_gpu_power_state",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.memory",
+      "name": "memory",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.gpu.android_gpu_work_period_track",
+      "name": "android_gpu_work_period_track",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_key_events",
+      "name": "android_key_events",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_motion_events",
+      "name": "android_motion_events",
+      "category": "android",
+      "type": "view",
+      "description": "ID of the trace entry\n  id LONG,\n  -- The randomly-generated ID associated with each input event processed\n  -- by Android Framework, used to track the event through the input pipeline\n  event_id LONG"
+    },
+    {
+      "id": "stdlib.android.android_input_event_dispatch",
+      "name": "android_input_event_dispatch",
+      "category": "android",
+      "type": "view",
+      "description": "ID of the trace entry\n  id LONG,\n  -- The randomly-generated ID associated with each input event processed\n  -- by Android Framework, used to track the event through the input pipeline\n  event_id LONG"
+    },
+    {
+      "id": "stdlib.android._android_io_f2fs_counter_stats",
+      "name": "_android_io_f2fs_counter_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._android_io_f2fs_write_stats",
+      "name": "_android_io_f2fs_write_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Counter name on which all the other values are aggregated on.\n  name STRING,\n  -- Sum of all counter values for the counter name.\n  sum DOUBLE,\n  -- Max of all counter values for the counter name.\n  m"
+    },
+    {
+      "id": "stdlib.android._android_io_f2fs_aggregate_write_stats",
+      "name": "_android_io_f2fs_aggregate_write_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Utid of the thread.\n  utid JOINID(thread.id),\n  -- Tid of the thread.\n  tid LONG,\n  -- Name of the thread.\n  thread_name STRING,\n  -- Upid of the process.\n  upid JOINID(process.id),\n  -- Pid of the pr"
+    },
+    {
+      "id": "stdlib.android.job_scheduler",
+      "name": "job_scheduler",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.job_scheduler_states",
+      "name": "job_scheduler_states",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.kernel_wakelocks",
+      "name": "kernel_wakelocks",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.memory._alloc_source",
+      "name": "_alloc_source",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.dmabuf_spans",
+      "name": "dmabuf_spans",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.class_relationship",
+      "name": "class_relationship",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.class_summary_tree",
+      "name": "class_summary_tree",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.class_tree",
+      "name": "class_tree",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.dominator_class_tree",
+      "name": "dominator_class_tree",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.dominator_tree",
+      "name": "dominator_tree",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.excluded_refs",
+      "name": "excluded_refs",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.memory.heap_graph._is_libcore_or_array",
+      "name": "_is_libcore_or_array",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.heap_graph_stats",
+      "name": "heap_graph_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.helpers",
+      "name": "helpers",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.raw_dominator_tree",
+      "name": "raw_dominator_tree",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.callstacks",
+      "name": "callstacks",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.android.memory.heap_profile.android_heap_profile_summary_tree",
+      "name": "android_heap_profile_summary_tree",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.memory._android_lmk_kill_reason_string",
+      "name": "_android_lmk_kill_reason_string",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.process",
+      "name": "process",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.android.android_monitor_contention_chain_thread_state_by_txn",
+      "name": "android_monitor_contention_chain_thread_state_by_txn",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_monitor_contention_chain_blocked_functions_by_txn",
+      "name": "android_monitor_contention_chain_blocked_functions_by_txn",
+      "category": "android",
+      "type": "view",
+      "description": "Slice id of the monitor contention.\n  id LONG,\n  -- A |thread_state| that occurred in the blocking thread during the contention.\n  thread_state STRING,\n  -- Total time the blocking thread spent in the"
+    },
+    {
+      "id": "stdlib.android.android_network_packets",
+      "name": "android_network_packets",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_oom_adj_intervals",
+      "name": "android_oom_adj_intervals",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.power_rails",
+      "name": "power_rails",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android._android_kernel_tasks",
+      "name": "_android_kernel_tasks",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2019 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._android_package_for_process",
+      "name": "_android_package_for_process",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2019 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.screen_state",
+      "name": "screen_state",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.screenshots",
+      "name": "screenshots",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.services",
+      "name": "services",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.slices",
+      "name": "slices",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.startup._normalize_android_string",
+      "name": "_normalize_android_string",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.startup._startup_breakdown_reason",
+      "name": "_startup_breakdown_reason",
+      "category": "android",
+      "type": "function",
+      "description": "Derives a startup reason from a slice name and some thread_state columns."
+    },
+    {
+      "id": "stdlib.android.startup_events",
+      "name": "startup_events",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.startup.android_startups",
+      "name": "android_startups",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.startup.android_startup_threads",
+      "name": "android_startup_threads",
+      "category": "android",
+      "type": "view",
+      "description": "Startup id.\n  startup_id ID,\n  -- Timestamp of startup start.\n  ts TIMESTAMP,\n  -- Timestamp of startup end.\n  ts_end LONG,\n  -- Startup duration.\n  dur DURATION,\n  -- Package name.\n  package STRING,\n"
+    },
+    {
+      "id": "stdlib.android.startup.android_thread_slices_for_all_startups",
+      "name": "android_thread_slices_for_all_startups",
+      "category": "android",
+      "type": "view",
+      "description": "Startup id.\n  startup_id LONG,\n  -- Timestamp of start.\n  ts TIMESTAMP,\n  -- Duration of startup.\n  dur DURATION,\n  -- Upid of process involved in startup.\n  upid JOINID(process.id),\n  -- Pid if proce"
+    },
+    {
+      "id": "stdlib.android.startup.android_class_loading_for_startup",
+      "name": "android_class_loading_for_startup",
+      "category": "android",
+      "type": "view",
+      "description": "Timestamp of startup.\n  startup_ts TIMESTAMP,\n  -- Timestamp of startup end.\n  startup_ts_end LONG,\n  -- Startup id.\n  startup_id LONG,\n  -- UTID of thread with slice.\n  utid JOINID(thread.id),\n  --Ti"
+    },
+    {
+      "id": "stdlib.android.startup.android_slices_for_startup_and_slice_name",
+      "name": "android_slices_for_startup_and_slice_name",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2019 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.startup.android_binder_transaction_slices_for_startup",
+      "name": "android_binder_transaction_slices_for_startup",
+      "category": "android",
+      "type": "function",
+      "description": "Name of the slice.\n  slice_name STRING,\n  -- Timestamp of start of the slice.\n  slice_ts TIMESTAMP,\n  -- Duration of the slice.\n  slice_dur DURATION,\n  -- Name of the thread with the slice.\n  thread_n"
+    },
+    {
+      "id": "stdlib.android.startups_maxsdk28",
+      "name": "startups_maxsdk28",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.startups_minsdk29",
+      "name": "startups_minsdk29",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.startups_minsdk33",
+      "name": "startups_minsdk33",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.time_to_display",
+      "name": "time_to_display",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android._android_statsd_perfetto_triggers",
+      "name": "_android_statsd_perfetto_triggers",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_statsd_atoms",
+      "name": "android_statsd_atoms",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._android_sf_thread",
+      "name": "_android_sf_thread",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._find_android_jank_cuj_sf_main_thread_slice",
+      "name": "_find_android_jank_cuj_sf_main_thread_slice",
+      "category": "android",
+      "type": "function",
+      "description": "utid of the process.\n  utid JOINID(thread.id),\n  -- name of the thread.\n  name STRING,\n  -- track_id for the thread.\n  track_id JOINID(track.id)\n) AS\nSELECT\n  upid,\n  utid,\n  thread.name,\n  thread_tra"
+    },
+    {
+      "id": "stdlib.android.android_suspend_state",
+      "name": "android_suspend_state",
+      "category": "android",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._extract_duration_without_suspend",
+      "name": "_extract_duration_without_suspend",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._android_thread_creation_spam_per_thread",
+      "name": "_android_thread_creation_spam_per_thread",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android._android_thread_creation_spam_per_process",
+      "name": "_android_thread_creation_spam_per_process",
+      "category": "android",
+      "type": "function",
+      "description": "String prefix of thread names created.\n  thread_name_prefix STRING,\n  -- Max number of threads created within a time window.\n  max_count_per_sec LONG\n) AS\nWITH\n  x AS (\n    SELECT\n      upid,\n      pr"
+    },
+    {
+      "id": "stdlib.android.android_user_list",
+      "name": "android_user_list",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 22025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a cop"
+    },
+    {
+      "id": "stdlib.android._android_sdk_version",
+      "name": "_android_sdk_version",
+      "category": "android",
+      "type": "function",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.wakeups",
+      "name": "wakeups",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.winscope.android_inputmethod_clients",
+      "name": "android_inputmethod_clients",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.winscope.android_inputmethod_manager_service",
+      "name": "android_inputmethod_manager_service",
+      "category": "android",
+      "type": "view",
+      "description": "Dump id\n  id LONG,\n  -- Timestamp when the dump was triggered\n  ts TIMESTAMP,\n  -- Extra args parsed from the proto message\n  arg_set_id ARGSETID\n) AS\nSELECT\n  id,\n  ts,\n  arg_set_id\nFROM __intrinsic_"
+    },
+    {
+      "id": "stdlib.android.winscope.android_inputmethod_service",
+      "name": "android_inputmethod_service",
+      "category": "android",
+      "type": "view",
+      "description": "Dump id\n  id LONG,\n  -- Timestamp when the dump was triggered\n  ts TIMESTAMP,\n  -- Extra args parsed from the proto message\n  arg_set_id ARGSETID\n) AS\nSELECT\n  id,\n  ts,\n  arg_set_id\nFROM __intrinsic_"
+    },
+    {
+      "id": "stdlib.android.winscope.android_winscope_rect",
+      "name": "android_winscope_rect",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.winscope.android_winscope_transform",
+      "name": "android_winscope_transform",
+      "category": "android",
+      "type": "view",
+      "description": "Rect id\n  id LONG,\n  -- x\n  x DOUBLE,\n  -- y\n  y DOUBLE,\n  -- w\n  w DOUBLE,\n  -- h\n  h DOUBLE\n) AS\nSELECT\n  *\nFROM __intrinsic_winscope_rect;\n Android Winscope transforms."
+    },
+    {
+      "id": "stdlib.android.winscope.android_winscope_trace_rect",
+      "name": "android_winscope_trace_rect",
+      "category": "android",
+      "type": "view",
+      "description": "Transform id\n  id LONG,\n  -- dsdx\n  dsdx DOUBLE,\n  -- dtdx\n  dtdx DOUBLE,\n  -- tx\n  tx DOUBLE,\n  -- dtdy\n  dtdy DOUBLE,\n  -- dsdy\n  dsdy DOUBLE,\n  -- ty\n  ty DOUBLE\n) AS\nSELECT\n  id,\n  dsdx,\n  dtdx,\n "
+    },
+    {
+      "id": "stdlib.android.winscope.android_surfaceflinger_transaction",
+      "name": "android_surfaceflinger_transaction",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.winscope.android_surfaceflinger_transaction_flag",
+      "name": "android_surfaceflinger_transaction_flag",
+      "category": "android",
+      "type": "view",
+      "description": "Row id\n  id LONG,\n  -- Snapshot id\n  snapshot_id LONG,\n  -- Arg set id\n  arg_set_id LONG,\n  -- Transaction id\n  transaction_id LONG,\n  -- PID\n  pid LONG,\n  -- UID\n  uid LONG,\n  -- Layer id\n  layer_id "
+    },
+    {
+      "id": "stdlib.android.winscope.android_surfaceflinger_display",
+      "name": "android_surfaceflinger_display",
+      "category": "android",
+      "type": "view",
+      "description": "Flags id\n  flags_id LONG,\n  -- Flag\n  flag STRING\n) AS\nSELECT\n  flags_id,\n  flag\nFROM __intrinsic_surfaceflinger_transaction_flag;\n Android surfaceflinger displays (from android.surfaceflinger.layers "
+    },
+    {
+      "id": "stdlib.android.winscope.android_winscope_fill_region",
+      "name": "android_winscope_fill_region",
+      "category": "android",
+      "type": "view",
+      "description": "Id\n  id LONG,\n  -- Snapshot id\n  snapshot_id LONG,\n  -- Is on\n  is_on LONG,\n  -- Is virtual\n  is_virtual LONG,\n  -- Trace rect id\n  trace_rect_id LONG,\n  -- Display id\n  display_id LONG,\n  -- Display "
+    },
+    {
+      "id": "stdlib.android.winscope.android_window_manager_shell_transition_participants",
+      "name": "android_window_manager_shell_transition_participants",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.winscope.android_window_manager_shell_transition_protos",
+      "name": "android_window_manager_shell_transition_protos",
+      "category": "android",
+      "type": "view",
+      "description": "Transition id\n  transition_id LONG,\n  -- Layer participant\n  layer_id LONG,\n  -- Window participant\n  window_id LONG\n) AS\nSELECT\n  transition_id,\n  layer_id,\n  window_id\nFROM __intrinsic_window_manage"
+    },
+    {
+      "id": "stdlib.android.winscope.android_viewcapture",
+      "name": "android_viewcapture",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.winscope.android_viewcapture_view",
+      "name": "android_viewcapture_view",
+      "category": "android",
+      "type": "view",
+      "description": "Snapshot id\n  id LONG,\n  -- Timestamp when snapshot was triggered\n  ts TIMESTAMP,\n  -- Extra args parsed from proto message\n  arg_set_id ARGSETID,\n  -- Package name deinterned from proto message\n  pac"
+    },
+    {
+      "id": "stdlib.android.winscope.android_windowmanager",
+      "name": "android_windowmanager",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.winscope.android_windowmanager_windowcontainer",
+      "name": "android_windowmanager_windowcontainer",
+      "category": "android",
+      "type": "view",
+      "description": "Snapshot id\n  id LONG,\n  -- Timestamp when the snapshot was triggered\n  ts TIMESTAMP,\n  -- Extra args parsed from the proto message\n  arg_set_id ARGSETID,\n  -- Raw proto message\n  base64_proto_id LONG"
+    },
+    {
+      "id": "stdlib.appleos.instruments.appleos_instruments_samples_summary_tree",
+      "name": "appleos_instruments_samples_summary_tree",
+      "category": "appleos",
+      "type": "table",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.callstacks.stack_profile",
+      "name": "stack_profile",
+      "category": "callstacks",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.callstacks.symbolize",
+      "name": "symbolize",
+      "category": "callstacks",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome._chrome_android_motion_input_reader_step",
+      "name": "_chrome_android_motion_input_reader_step",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nThis module defines"
+    },
+    {
+      "id": "stdlib.chrome._chrome_android_motion_input_dispatcher_step",
+      "name": "_chrome_android_motion_input_dispatcher_step",
+      "category": "chrome",
+      "type": "table",
+      "description": "Get the substring that starts with 'id=', remove the 'id=' and remove the trailing ')'.\n  -- 'id=0x344bb0f9)' ->  '0x344bb0f9'\n  trim(substr(substr(name, instr(name, 'id=')), 4), ')') AS android_input"
+    },
+    {
+      "id": "stdlib.chrome.chrome_android_input",
+      "name": "chrome_android_input",
+      "category": "chrome",
+      "type": "table",
+      "description": "DeliverInputEvent is the third step in the input pipeline. It is responsible for routing the input events within browser process.\nCREATE PERFETTO TABLE chrome_deliver_android_input_event (\n  -- Timest"
+    },
+    {
+      "id": "stdlib.chrome.chrome_scrolls",
+      "name": "chrome_scrolls",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.event_latency;\n\nINCLUDE PERFETTO M"
+    },
+    {
+      "id": "stdlib.chrome.chrome_scroll_update_info_step_templates",
+      "name": "chrome_scroll_update_info_step_templates",
+      "category": "chrome",
+      "type": "table",
+      "description": "TODO(b:389055670): Remove this once the UI doesn't rely on it.\n  NULL AS gesture_scroll_begin_ts,\n  NULL AS gesture_scroll_end_ts\nFROM chrome_gesture_scroll_updates\nGROUP BY\n  scroll_id;\n Timestamps a"
+    },
+    {
+      "id": "stdlib.chrome._get_presentation_timestamp",
+      "name": "_get_presentation_timestamp",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nFinds the start timestamp for a given slice's descendant with a g"
+    },
+    {
+      "id": "stdlib.chrome.chrome_event_latency_stage_descriptions",
+      "name": "chrome_event_latency_stage_descriptions",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nSource of truth of the descriptions of EventLatency stages."
+    },
+    {
+      "id": "stdlib.chrome.chrome_surface_frame_id_to_first_display_id",
+      "name": "chrome_surface_frame_id_to_first_display_id",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\n`Graphics.Pipeline`"
+    },
+    {
+      "id": "stdlib.chrome.chrome_graphics_pipeline_inputs_to_surface_frames",
+      "name": "chrome_graphics_pipeline_inputs_to_surface_frames",
+      "category": "chrome",
+      "type": "table",
+      "description": "Links inputs (`chrome_input_pipeline_steps.latency_id`) to the surface frame (`chrome_graphics_pipeline_surface_frame_steps`) to which they correspond.\nIn other words, in general, multiple `latency_id"
+    },
+    {
+      "id": "stdlib.chrome.chrome_histograms",
+      "name": "chrome_histograms",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nA helper view on top of the histogram events emitted by Chrome.\nR"
+    },
+    {
+      "id": "stdlib.chrome.chrome_coalesced_inputs",
+      "name": "chrome_coalesced_inputs",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.android_input;\n\nINCLUDE PERFETTO M"
+    },
+    {
+      "id": "stdlib.chrome.chrome_interactions",
+      "name": "chrome_interactions",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nThis file specifies common metrics/tables for critical user inter"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_story_start",
+      "name": "_chrome_loadline2_story_start",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2025 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nGets the presentati"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_story_pid",
+      "name": "_chrome_loadline2_story_pid",
+      "category": "chrome",
+      "type": "table",
+      "description": "Renderer process pid for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_story_start_with_pid",
+      "name": "_chrome_loadline2_story_start_with_pid",
+      "category": "chrome",
+      "type": "table",
+      "description": "Story start and Renderer pid for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_start_request",
+      "name": "_chrome_loadline2_start_request",
+      "category": "chrome",
+      "type": "table",
+      "description": "Start timestamp for the first network request for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_end_request",
+      "name": "_chrome_loadline2_end_request",
+      "category": "chrome",
+      "type": "table",
+      "description": "Finish timestamp for the first network request for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_renderer_ready",
+      "name": "_chrome_loadline2_renderer_ready",
+      "category": "chrome",
+      "type": "table",
+      "description": "Renderer ready for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_visual_mark",
+      "name": "_chrome_loadline2_visual_mark",
+      "category": "chrome",
+      "type": "table",
+      "description": "Visual mark for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_visual_raf",
+      "name": "_chrome_loadline2_visual_raf",
+      "category": "chrome",
+      "type": "table",
+      "description": "Timestamp of the second rAF after visual mark for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_visual_presentation",
+      "name": "_chrome_loadline2_visual_presentation",
+      "category": "chrome",
+      "type": "table",
+      "description": "Visual presentation for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_interactive_mark",
+      "name": "_chrome_loadline2_interactive_mark",
+      "category": "chrome",
+      "type": "table",
+      "description": "Interactive mark for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_interactive_raf",
+      "name": "_chrome_loadline2_interactive_raf",
+      "category": "chrome",
+      "type": "table",
+      "description": "Timestamp of the second rAF after interactive mark for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_interactive_presentation",
+      "name": "_chrome_loadline2_interactive_presentation",
+      "category": "chrome",
+      "type": "table",
+      "description": "Interactive presentation for each page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_story_finish",
+      "name": "_chrome_loadline2_story_finish",
+      "category": "chrome",
+      "type": "table",
+      "description": "Story finish for each page"
+    },
+    {
+      "id": "stdlib.chrome.chrome_loadline2_stages",
+      "name": "chrome_loadline2_stages",
+      "category": "chrome",
+      "type": "table",
+      "description": "All LoadLine2 stages per page"
+    },
+    {
+      "id": "stdlib.chrome._chrome_loadline2_marks_with_pid",
+      "name": "_chrome_loadline2_marks_with_pid",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2025 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nGets the presentati"
+    },
+    {
+      "id": "stdlib.chrome._chrome_get_next_presentation_time_by_pid",
+      "name": "_chrome_get_next_presentation_time_by_pid",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2025 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nGets the presentati"
+    },
+    {
+      "id": "stdlib.chrome.metadata",
+      "name": "metadata",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be"
+    },
+    {
+      "id": "stdlib.chrome._page_load_metrics",
+      "name": "_page_load_metrics",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nTODO(b/306300843): The recorded navigation ids are not guaranteed"
+    },
+    {
+      "id": "stdlib.chrome.chrome_scroll_interactions",
+      "name": "chrome_scroll_interactions",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nTop level scroll ev"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._get_slow_scroll_delta_threshold",
+      "name": "_get_slow_scroll_delta_threshold",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nThis file implements the scrolling predictor jank metric, as is\ni"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._get_slow_scroll_janky_threshold",
+      "name": "_get_slow_scroll_janky_threshold",
+      "category": "chrome",
+      "type": "function",
+      "description": "The threshold for the ratio of the delta of middle frame to tbe deltas of its neighbors in a sequence of three frames, if the sequence is considered\n\"slow\"."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._get_fast_scroll_janky_threshold",
+      "name": "_get_fast_scroll_janky_threshold",
+      "category": "chrome",
+      "type": "function",
+      "description": "The threshold for the ratio of the delta of middle frame to tbe deltas of its neighbors in a sequence of three frames, if the sequence is considered\n\"fast\"."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._get_scroll_jank_threshold",
+      "name": "_get_scroll_jank_threshold",
+      "category": "chrome",
+      "type": "function",
+      "description": "Determine the acceptable threshold (see _get_slow_scroll_janky_threshold() and _get_fast_scroll_janky_threshold()) based on the maximum delta value\nbetween three consecutive frames."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._get_predictor_jank",
+      "name": "_get_predictor_jank",
+      "category": "chrome",
+      "type": "function",
+      "description": "Calculate the predictor jank of three consecutive frames, if it is above the threshold. Anything below the threshold is not considered jank."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_scroll_jank_cause_descriptions",
+      "name": "chrome_scroll_jank_cause_descriptions",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.event_latency_description;\n\nSource"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_scroll_jank_causes_with_event_latencies",
+      "name": "chrome_scroll_jank_causes_with_event_latencies",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.event_latency_description;\n\nSource"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._process_type_to_name",
+      "name": "_process_type_to_name",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nFunction to retriev"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._get_process_id_by_type",
+      "name": "_get_process_id_by_type",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nFunction to retriev"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._processes_by_type_for_event_latency",
+      "name": "_processes_by_type_for_event_latency",
+      "category": "chrome",
+      "type": "function",
+      "description": "Function to retrieve the chrome process ID that a given EventLatency slice occurred on. This is the Renderer process.\nCREATE PERFETTO FUNCTION _get_renderer_upid_for_event_latency(\n    -- The slice id"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_select_scroll_jank_cause_thread",
+      "name": "chrome_select_scroll_jank_cause_thread",
+      "category": "chrome",
+      "type": "function",
+      "description": "Renderer process upids\n    SELECT\n      $type AS process,\n      $thread AS thread,\n      $event_latency_id AS event_latency_id,\n      _get_renderer_upid_for_event_latency($event_latency_id) AS upid\n  "
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_scroll_stats",
+      "name": "chrome_scroll_stats",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.chrome_scrolls;\n\nINCLUDE PERFETTO "
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_scroll_jank_intervals_v3",
+      "name": "chrome_scroll_jank_intervals_v3",
+      "category": "chrome",
+      "type": "table",
+      "description": "Defines slices for all of janky scrolling intervals in a trace."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_janky_frame_presentation_intervals",
+      "name": "chrome_janky_frame_presentation_intervals",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.chrome_scrolls;\n\nINCLUDE PERFETTO "
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_presented_gesture_scrolls",
+      "name": "chrome_presented_gesture_scrolls",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nHardware info is useful when using sql metrics for analysis\nin BT"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_scroll_updates_with_deltas",
+      "name": "chrome_scroll_updates_with_deltas",
+      "category": "chrome",
+      "type": "table",
+      "description": "For each scroll update, find the latest presented update which\n      -- started before it.\n      (\n        SELECT\n          id\n        FROM _presented_gesture_scrolls AS _presented\n        WHERE\n     "
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_full_frame_view",
+      "name": "chrome_full_frame_view",
+      "category": "chrome",
+      "type": "table",
+      "description": "Obtain the subset of input events that were fully presented."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_full_frame_delta_view",
+      "name": "chrome_full_frame_delta_view",
+      "category": "chrome",
+      "type": "table",
+      "description": "Join deltas with EventLatency data."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_merged_frame_view",
+      "name": "chrome_merged_frame_view",
+      "category": "chrome",
+      "type": "table",
+      "description": "Group all gestures presented at the same timestamp together in a single row."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_frame_info_with_delay",
+      "name": "chrome_frame_info_with_delay",
+      "category": "chrome",
+      "type": "table",
+      "description": "View contains all chrome presented frames during gesture updates while calculating delay since last presented which usually should\nequal to |VSYNC_INTERVAL| if no jank is present."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_vsyncs",
+      "name": "chrome_vsyncs",
+      "category": "chrome",
+      "type": "table",
+      "description": "Calculate |VSYNC_INTERVAL| as the lowest vsync seen in the trace or the minimum delay between frames larger than zero.\nTODO(~M130): Remove the lowest vsync since we should always have vsync_interval_m"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_janky_frames_no_cause",
+      "name": "chrome_janky_frames_no_cause",
+      "category": "chrome",
+      "type": "table",
+      "description": "Filter the frame view only to frames that had missed vsyncs."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_janky_frames_no_subcause",
+      "name": "chrome_janky_frames_no_subcause",
+      "category": "chrome",
+      "type": "table",
+      "description": "Janky frame information including the jank cause."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_janky_frames",
+      "name": "chrome_janky_frames",
+      "category": "chrome",
+      "type": "table",
+      "description": "Finds all causes of jank for all janky frames, and a cause of sub jank if the cause of jank was GPU related."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_unique_frame_presentation_ts",
+      "name": "chrome_unique_frame_presentation_ts",
+      "category": "chrome",
+      "type": "table",
+      "description": "Getting sub-cause\n    chrome_get_v3_jank_cause_id(\n      -- Here the cause itself is the parent.\n      cause_id,\n      -- Get the previous cause id as a child to the previous |EventLatency|.\n      (\n "
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_janky_frames_percentage",
+      "name": "chrome_janky_frames_percentage",
+      "category": "chrome",
+      "type": "table",
+      "description": "Dividing missed frames over total frames to get janky frame percentage. This represents the v3 scroll jank metrics.\nReflects Event.Jank.DelayedFramesPercentage UMA metric."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_frames_per_scroll",
+      "name": "chrome_frames_per_scroll",
+      "category": "chrome",
+      "type": "table",
+      "description": "Number of frames and janky frames per scroll."
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._direct_children_slice",
+      "name": "_direct_children_slice",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nFinds all slices with a direct parent with the given parent_id."
+    },
+    {
+      "id": "stdlib.chrome.scroll_offsets",
+      "name": "scroll_offsets",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank._jank_budget",
+      "name": "_jank_budget",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\nThese are helper functions/tables used in computing jank metrics\n\n"
+    },
+    {
+      "id": "stdlib.chrome.scroll_jank.chrome_select_long_task_slices",
+      "name": "chrome_select_long_task_slices",
+      "category": "chrome",
+      "type": "function",
+      "description": "We determine the difference between the frame count of the current frame and its consecutive frames by subtracting with the frame_exact values. We\nnull check for cases when the neighbor frame count ca"
+    },
+    {
+      "id": "stdlib.chrome.chrome_scroll_jank_tags",
+      "name": "chrome_scroll_jank_tags",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2025 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.chrome_scrolls;\n\nINCLUDE PERFETTO "
+    },
+    {
+      "id": "stdlib.chrome.chrome_tagged_janky_scroll_frames",
+      "name": "chrome_tagged_janky_scroll_frames",
+      "category": "chrome",
+      "type": "table",
+      "description": "Start of the the long stage tags. We use 16ms as the threshold for most stages, as if they take O(vsync) or\nmore, then we have a problem.\nSELECT\n  *\nFROM _chrome_scroll_jank_tag_long_stage!(\n  first_i"
+    },
+    {
+      "id": "stdlib.chrome._chrome_speedometer_version",
+      "name": "_chrome_speedometer_version",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE chrome.speedometer_2_1;\n\nINCLUDE PERFETTO"
+    },
+    {
+      "id": "stdlib.chrome._chrome_speedometer_2_1_mark_name",
+      "name": "_chrome_speedometer_2_1_mark_name",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nList Speedometer 2.1 test marks. Used to find relevant slices."
+    },
+    {
+      "id": "stdlib.chrome._chrome_speedometer_3_measure_name",
+      "name": "_chrome_speedometer_3_measure_name",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2024 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nList Speedometer 3 measures. Used to find relevant slices."
+    },
+    {
+      "id": "stdlib.chrome.chrome_startups",
+      "name": "chrome_startups",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nAccess all startups"
+    },
+    {
+      "id": "stdlib.chrome.chrome_java_views",
+      "name": "chrome_java_views",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nChecks if slice has an ancestor with provided name.\nCREATE PERFET"
+    },
+    {
+      "id": "stdlib.chrome.chrome_scheduler_tasks",
+      "name": "chrome_scheduler_tasks",
+      "category": "chrome",
+      "type": "view",
+      "description": "Name of the view.\n  filtered_name STRING,\n  -- Whether this slice is a part of non-accelerated capture toolbar screenshot.\n  is_software_screenshot BOOL,\n  -- Whether this slice is a part of accelerat"
+    },
+    {
+      "id": "stdlib.chrome.chrome_tasks",
+      "name": "chrome_tasks",
+      "category": "chrome",
+      "type": "view",
+      "description": "Slice id.\n  id LONG,\n  -- Type.\n  type STRING,\n  -- Name of the task.\n  name STRING,\n  -- Timestamp.\n  ts TIMESTAMP,\n  -- Duration.\n  dur DURATION,\n  -- Utid of the thread this task run on.\n  utid LON"
+    },
+    {
+      "id": "stdlib.chrome._extract_mojo_ipc_hash",
+      "name": "_extract_mojo_ipc_hash",
+      "category": "chrome",
+      "type": "function",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nChecks if slice has an ancestor with provided name.\nCREATE PERFET"
+    },
+    {
+      "id": "stdlib.chrome._extract_frame_type",
+      "name": "_extract_frame_type",
+      "category": "chrome",
+      "type": "function",
+      "description": "Returns the frame type (main frame vs subframe) for key navigation tasks which capture the associated RenderFrameHost in an argument."
+    },
+    {
+      "id": "stdlib.chrome._human_readable_navigation_task_name",
+      "name": "_human_readable_navigation_task_name",
+      "category": "chrome",
+      "type": "function",
+      "description": "Human-readable aliases for a few key navigation tasks."
+    },
+    {
+      "id": "stdlib.chrome._format_scheduler_task_name",
+      "name": "_format_scheduler_task_name",
+      "category": "chrome",
+      "type": "function",
+      "description": "Takes a task name and formats it correctly for scheduler tasks."
+    },
+    {
+      "id": "stdlib.chrome._java_not_top_level_category",
+      "name": "_java_not_top_level_category",
+      "category": "chrome",
+      "type": "function",
+      "description": "Takes the category and determines whether it is \"Java\" only, as opposed to \"toplevel,Java\"."
+    },
+    {
+      "id": "stdlib.chrome._any_top_level_category",
+      "name": "_any_top_level_category",
+      "category": "chrome",
+      "type": "function",
+      "description": "Takes the category and determines whether is any valid toplevel category or combination of categories."
+    },
+    {
+      "id": "stdlib.chrome._get_java_views_task_type",
+      "name": "_get_java_views_task_type",
+      "category": "chrome",
+      "type": "function",
+      "description": "TODO(altimin): the situations with kinds in this file is a bit of a mess. The idea is that it should work as `type` in the `slice` table, pointing to\na \"child\" table with more information about the ta"
+    },
+    {
+      "id": "stdlib.chrome._get_posted_from",
+      "name": "_get_posted_from",
+      "category": "chrome",
+      "type": "function",
+      "description": "All slices corresponding to receiving mojo messages. On the newer Chrome versions, it's just \"Receive mojo message\" and\n\"Receive mojo reply\" slices (or \"Receive {mojo_message_name}\" if\nbuilt with `ext"
+    },
+    {
+      "id": "stdlib.chrome._select_begin_main_frame_java_slices",
+      "name": "_select_begin_main_frame_java_slices",
+      "category": "chrome",
+      "type": "function",
+      "description": "Selects the BeginMainFrame slices (which as posted from ScheduledActionSendBeginMainFrame), used for root-level processing. In top-level/Java based slices, these will correspond to the\nancestor of des"
+    },
+    {
+      "id": "stdlib.chrome._get_descendant_mojo_slice_candidate",
+      "name": "_get_descendant_mojo_slice_candidate",
+      "category": "chrome",
+      "type": "function",
+      "description": "A list of Chrome tasks which were performing operations with Java views, together with the names of these views.\n@column id INT            Slice id.\n@column kind STRING       Type of the task.\n@column"
+    },
+    {
+      "id": "stdlib.chrome._descendant_mojo_slice",
+      "name": "_descendant_mojo_slice",
+      "category": "chrome",
+      "type": "function",
+      "description": "The tricky case here is dealing with sync mojo IPCs: we do not want to\n  -- pick up sync IPCs when we are in a non-IPC task.\n  -- So we look at all toplevel events and pick up the first one:\n  -- for "
+    },
+    {
+      "id": "stdlib.chrome.chrome_vsync_intervals",
+      "name": "chrome_vsync_intervals",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nA simple table that checks the time between VSync (this can be us"
+    },
+    {
+      "id": "stdlib.chrome.chrome_web_content_interactions",
+      "name": "chrome_web_content_interactions",
+      "category": "chrome",
+      "type": "table",
+      "description": "Copyright 2023 The Chromium Authors Use of this source code is governed by a BSD-style license that can be\nfound in the LICENSE file.\n\nINCLUDE PERFETTO MODULE slices.with_context;\n\nChrome web content "
+    },
+    {
+      "id": "stdlib.counters._counter_track_is_only_name_dimension",
+      "name": "_counter_track_is_only_name_dimension",
+      "category": "counters",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.counters.intervals",
+      "name": "intervals",
+      "category": "counters",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.export._export_firefox_thread_markers",
+      "name": "_export_firefox_thread_markers",
+      "category": "export",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.export._export_firefox_native_symbol_table",
+      "name": "_export_firefox_native_symbol_table",
+      "category": "export",
+      "type": "function",
+      "description": "threadId?: Tid[]\n    'length', 0\n  );\n Returns an empty instance of `NativeSymbolTable` as defined in\nhttps://github.com/firefox-devtools/profiler/blob/main/src/types/profile.js"
+    },
+    {
+      "id": "stdlib.export._export_firefox_resource_table",
+      "name": "_export_firefox_resource_table",
+      "category": "export",
+      "type": "function",
+      "description": "Returns an empty instance of `ResourceTable` as defined in https://github.com/firefox-devtools/profiler/blob/main/src/types/profile.js"
+    },
+    {
+      "id": "stdlib.export._export_firefox_threads",
+      "name": "_export_firefox_threads",
+      "category": "export",
+      "type": "function",
+      "description": "Materialize this intermediate table and sort by `callsite_id` to speedup the generation of the stack_table further down.\nCREATE PERFETTO TABLE _export_to_firefox_table AS\nWITH\n  symbol AS (\n    SELECT"
+    },
+    {
+      "id": "stdlib.export._export_firefox_meta",
+      "name": "_export_firefox_meta",
+      "category": "export",
+      "type": "function",
+      "description": "Returns an instance of `ProfileMeta` as defined in https://github.com/firefox-devtools/profiler/blob/main/src/types/profile.js"
+    },
+    {
+      "id": "stdlib.export._escape_xml",
+      "name": "_escape_xml",
+      "category": "export",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.export._format_duration",
+      "name": "_format_duration",
+      "category": "export",
+      "type": "function",
+      "description": "Format nanosecond duration as human-readable string (ns/μs/ms/s)."
+    },
+    {
+      "id": "stdlib.export._format_large_number",
+      "name": "_format_large_number",
+      "category": "export",
+      "type": "function",
+      "description": "Format large numbers with K, M, G, T suffixes to 2 decimal places."
+    },
+    {
+      "id": "stdlib.export._pixels_per_ns",
+      "name": "_pixels_per_ns",
+      "category": "export",
+      "type": "function",
+      "description": "Calculate pixels per nanosecond scaling factor for time-to-pixel conversion."
+    },
+    {
+      "id": "stdlib.export._row_height",
+      "name": "_row_height",
+      "category": "export",
+      "type": "function",
+      "description": "Calculate optimal row height based on viewport width (minimum 2px)."
+    },
+    {
+      "id": "stdlib.export._counter_height",
+      "name": "_counter_height",
+      "category": "export",
+      "type": "function",
+      "description": "Calculate counter track height (between slice height and double)."
+    },
+    {
+      "id": "stdlib.export._slice_color",
+      "name": "_slice_color",
+      "category": "export",
+      "type": "function",
+      "description": "Generate deterministic color from slice name hash."
+    },
+    {
+      "id": "stdlib.export._state_color",
+      "name": "_state_color",
+      "category": "export",
+      "type": "function",
+      "description": "Map thread state to semantic color (running=green, blocked=orange, etc.)."
+    },
+    {
+      "id": "stdlib.export._fit_text",
+      "name": "_fit_text",
+      "category": "export",
+      "type": "function",
+      "description": "Truncate text with ellipsis to fit available pixel width."
+    },
+    {
+      "id": "stdlib.export._svg_rect",
+      "name": "_svg_rect",
+      "category": "export",
+      "type": "function",
+      "description": "Generate simple SVG rect element with optional hyperlink and text."
+    },
+    {
+      "id": "stdlib.export._svg_styles",
+      "name": "_svg_styles",
+      "category": "export",
+      "type": "function",
+      "description": "Generate minimal CSS styles."
+    },
+    {
+      "id": "stdlib.export._slice_to_svg",
+      "name": "_slice_to_svg",
+      "category": "export",
+      "type": "function",
+      "description": "Convert time intervals to pixel coordinates with grouping metadata. svg_group_key: separate SVG documents.\ntrack_group_key: related tracks within SVG.\ntrack_group_order: vertical ordering within track"
+    },
+    {
+      "id": "stdlib.export._thread_state_to_svg",
+      "name": "_thread_state_to_svg",
+      "category": "export",
+      "type": "function",
+      "description": "Render thread state interval as simple SVG rect."
+    },
+    {
+      "id": "stdlib.export._counter_to_svg",
+      "name": "_counter_to_svg",
+      "category": "export",
+      "type": "function",
+      "description": "Render counter value as step in filled area chart with proper negative value handling."
+    },
+    {
+      "id": "stdlib.graphs.critical_path",
+      "name": "critical_path",
+      "category": "graphs",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.graphs.dominator_tree",
+      "name": "dominator_tree",
+      "category": "graphs",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.graphs.hierarchy",
+      "name": "hierarchy",
+      "category": "graphs",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.graphs.partition",
+      "name": "partition",
+      "category": "graphs",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.graphs.search",
+      "name": "search",
+      "category": "graphs",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.intervals.intersect",
+      "name": "intersect",
+      "category": "intervals",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.intervals.overlap",
+      "name": "overlap",
+      "category": "intervals",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.linux.linux_active_block_io_operations_by_device",
+      "name": "linux_active_block_io_operations_by_device",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.frequency",
+      "name": "frequency",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.linux.idle",
+      "name": "idle",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.linux.idle_stats",
+      "name": "idle_stats",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.linux.idle_time_in_state",
+      "name": "idle_time_in_state",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization._partition_start",
+      "name": "_partition_start",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization._partition_count",
+      "name": "_partition_count",
+      "category": "linux",
+      "type": "function",
+      "description": "Division of two ints would result in floor(ts/size).\nSELECT\n  (\n    $ts / $size\n  ) * $size;\n Returns the number of partitions required to cover all of the trace\ntimestamps."
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization._partitions",
+      "name": "_partitions",
+      "category": "linux",
+      "type": "function",
+      "description": "Returns a table of partitions with first partition containing the TRACE_START() and last one containing TRACE_END()."
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_cycles_per_process_in_interval",
+      "name": "cpu_cycles_per_process_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_process_utilization_in_interval",
+      "name": "cpu_process_utilization_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Sum of CPU millicycles\n  millicycles LONG,\n  -- Sum of CPU megacycles\n  megacycles LONG,\n  -- Total runtime duration\n  runtime DURATION,\n  -- Total runtime duration, while 'awake' (CPUs not suspended)"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_cycles_per_thread_slice_in_interval",
+      "name": "cpu_cycles_per_thread_slice_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_utilization_per_second",
+      "name": "cpu_utilization_per_second",
+      "category": "linux",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_cycles",
+      "name": "cpu_cycles",
+      "category": "linux",
+      "type": "table",
+      "description": "Aggregated CPU statistics for whole trace. Results in only one row."
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_utilization_per_period",
+      "name": "cpu_utilization_per_period",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_cycles_in_interval",
+      "name": "cpu_cycles_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Table with system utilization per second. Utilization is calculated by sum of average utilization of each CPU every\nsecond. For this reason first and last second might have lower then real\nutilization"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_utilization_in_interval",
+      "name": "cpu_utilization_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Minimum CPU frequency in kHz.\n  min_freq LONG,\n  -- Maximum CPU frequency in kHz.\n  max_freq LONG,\n  -- Average CPU frequency in kHz.\n  avg_freq LONG\n) AS\nSELECT\n  cast_int!(SUM(ii.dur * freq / 1000))"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_cycles_per_cpu_in_interval",
+      "name": "cpu_cycles_per_cpu_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Percentage of 'awake_dur' over the 'awake' duration of the interval, normalized by the number of CPUs.\n  -- Values in [0.0, 100.0]\n  awake_utilization DOUBLE,\n  -- Percentage of 'awake_dur' over the '"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_cycles_per_thread_in_interval",
+      "name": "cpu_cycles_per_thread_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_thread_utilization_in_interval",
+      "name": "cpu_thread_utilization_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Sum of CPU millicycles\n  millicycles LONG,\n  -- Sum of CPU megacycles\n  megacycles LONG,\n  -- Total runtime duration\n  runtime DURATION,\n  -- Total runtime duration, while 'awake' (CPUs not suspended)"
+    },
+    {
+      "id": "stdlib.linux.cpu.utilization.cpu_cycles_per_thread_per_cpu_in_interval",
+      "name": "cpu_cycles_per_thread_per_cpu_in_interval",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.linux_devfreq_dsu_counter",
+      "name": "linux_devfreq_dsu_counter",
+      "category": "linux",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux._get_devfreq_counters",
+      "name": "_get_devfreq_counters",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.linux_hard_irqs",
+      "name": "linux_hard_irqs",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.linux_soft_irqs",
+      "name": "linux_soft_irqs",
+      "category": "linux",
+      "type": "view",
+      "description": "Starting timestamp of this IRQ.\n  ts TIMESTAMP,\n  -- Duration of this IRQ.\n  dur DURATION,\n  -- The name of the IRQ.\n  name STRING,\n  -- The id of the IRQ.\n  id JOINID(slice.id),\n  -- The id of this I"
+    },
+    {
+      "id": "stdlib.linux.linux_irqs",
+      "name": "linux_irqs",
+      "category": "linux",
+      "type": "view",
+      "description": "Starting timestamp of this IRQ.\n  ts TIMESTAMP,\n  -- Duration of this IRQ.\n  dur DURATION,\n  -- The name of the IRQ.\n  name STRING,\n  -- The id of the IRQ.\n  id JOINID(slice.id)\n) AS\nSELECT\n  slices.t"
+    },
+    {
+      "id": "stdlib.linux.general",
+      "name": "general",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.linux.memory.memory_rss_high_watermark_per_process",
+      "name": "memory_rss_high_watermark_per_process",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.memory.memory_rss_and_swap_per_process",
+      "name": "memory_rss_and_swap_per_process",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.perf._linux_perf_etm_metadata",
+      "name": "_linux_perf_etm_metadata",
+      "category": "linux",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.perf.linux_perf_samples_summary_tree",
+      "name": "linux_perf_samples_summary_tree",
+      "category": "linux",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.perf.linux_perf_spe_record",
+      "name": "linux_perf_spe_record",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.linux.threads",
+      "name": "threads",
+      "category": "linux",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.pixel.camera",
+      "name": "camera",
+      "category": "pixel",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.pkvm.pkvm_hypervisor_events",
+      "name": "pkvm_hypervisor_events",
+      "category": "pkvm",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.trace_metrics",
+      "name": "trace_metrics",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.trace_bounds",
+      "name": "trace_bounds",
+      "category": "prelude",
+      "type": "view",
+      "description": "The name of the metric.\n  name STRING\n) AS\nSELECT\n  name\nFROM _trace_metrics;\n Definition of `trace_bounds` table. The values are being filled by Trace\nProcessor when parsing the trace.\nIt is recommen"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.counter_track",
+      "name": "counter_track",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.counters",
+      "name": "counters",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this cpu counter track.\n  id ID(track.id),\n  -- Name of the track.\n  name STRING,\n  -- The track which is the \"parent\" of this track. Only non-null for tracks\n  -- created using "
+    },
+    {
+      "id": "stdlib.prelude.after_eof.cpu",
+      "name": "cpu",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.cpu_available_frequencies",
+      "name": "cpu_available_frequencies",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this CPU. Identical to |ucpu|, prefer using |ucpu|\n  -- instead.\n  id ID,\n  -- Unique identifier for this CPU. Isn't equal to |cpu| for remote machines\n  -- and is equal to |cpu|"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.sched",
+      "name": "sched",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this cpu frequency.\n  id ID,\n  -- The CPU for this frequency, meaningful only in single machine traces.\n  -- For multi-machine, join with the `cpu` table on `ucpu` to get the CPU"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.sched_slice",
+      "name": "sched_slice",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this scheduling slice.\n  id ID,\n  -- The timestamp at the start of the slice.\n  ts TIMESTAMP,\n  -- The duration of the slice.\n  dur DURATION,\n  -- The CPU that the slice executed"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.thread_state",
+      "name": "thread_state",
+      "category": "prelude",
+      "type": "view",
+      "description": "Alias of `sched.id`.\n  id ID,\n  -- Alias of `sched.ts`.\n  ts TIMESTAMP,\n  -- Alias of `sched.dur`.\n  dur DURATION,\n  -- Alias of `sched.cpu`.\n  cpu LONG,\n  -- Alias of `sched.utid`.\n  utid JOINID(thre"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.ftrace_event",
+      "name": "ftrace_event",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.raw",
+      "name": "raw",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this ftrace event.\n  id ID,\n  -- The timestamp of this event.\n  ts TIMESTAMP,\n  -- The ftrace event name.\n  name STRING,\n  -- The CPU this event was emitted on (meaningful only i"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.frame_slice",
+      "name": "frame_slice",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this raw event.\n  id ID,\n  -- The timestamp of this event.\n  ts TIMESTAMP,\n  -- The name of the event. For ftrace events, this will be the ftrace event\n  -- name.\n  name STRING,\n"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.gpu_slice",
+      "name": "gpu_slice",
+      "category": "prelude",
+      "type": "view",
+      "description": "Alias of `slice.id`.\n  id ID(slice.id),\n  -- Alias of `slice.ts`.\n  ts TIMESTAMP,\n  -- Alias of `slice.dur`.\n  dur DURATION,\n  -- Alias of `slice.track_id`.\n  track_id JOINID(track.id),\n  -- Alias of "
+    },
+    {
+      "id": "stdlib.prelude.after_eof.heap_graph_class",
+      "name": "heap_graph_class",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.heap_graph_object",
+      "name": "heap_graph_object",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this heap graph class.\n  id ID,\n  -- (potentially obfuscated) name of the class.\n  name STRING,\n  -- If class name was obfuscated and deobfuscation map for it provided, the\n  -- "
+    },
+    {
+      "id": "stdlib.prelude.after_eof.heap_graph_reference",
+      "name": "heap_graph_reference",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this heap graph object.\n  id ID,\n  -- Unique PID of the target.\n  upid JOINID(process.id),\n  -- Timestamp this dump was taken at.\n  graph_sample_ts TIMESTAMP,\n  -- Size this obje"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.memory_snapshot",
+      "name": "memory_snapshot",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this heap graph reference.\n  id ID,\n  -- Join key to heap_graph_object reference_set_id.\n  reference_set_id JOINID(heap_graph_object.reference_set_id),\n  -- Id of object that has"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.process_memory_snapshot",
+      "name": "process_memory_snapshot",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this snapshot.\n  id ID,\n  -- Time of the snapshot.\n  timestamp TIMESTAMP,\n  -- Track of this snapshot.\n  track_id JOINID(track.id),\n  -- Detail level of this snapshot.\n  detail_l"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.memory_snapshot_node",
+      "name": "memory_snapshot_node",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this snapshot.\n  id ID,\n  -- Snapshot ID for this snapshot.\n  snapshot_id JOINID(memory_snapshot.id),\n  -- Process for this snapshot.\n  upid JOINID(process.id)\n) AS\nSELECT\n  id,\n"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.memory_snapshot_edge",
+      "name": "memory_snapshot_edge",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique identifier for this node.\n  id ID,\n  -- Process snapshot ID for to this node.\n  process_snapshot_id JOINID(process_memory_snapshot.id),\n  -- Parent node for this node, optional.\n  parent_node_i"
+    },
+    {
+      "id": "stdlib.prelude.slices",
+      "name": "slices",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.track",
+      "name": "track",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.counter",
+      "name": "counter",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.slice",
+      "name": "slice",
+      "category": "prelude",
+      "type": "view",
+      "description": "Unique id of a counter value\n  id ID,\n  -- Time of fetching the counter value.\n  ts TIMESTAMP,\n  -- Track this counter value belongs to.\n  track_id JOINID(track.id),\n  -- Value.\n  value DOUBLE,\n  -- A"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.instant",
+      "name": "instant",
+      "category": "prelude",
+      "type": "view",
+      "description": "The id of the slice.\n  id ID,\n  -- The timestamp at the start of the slice in nanoseconds. The actual value\n  -- depends on the `primary_trace_clock` selected in TraceConfig. This is often\n  -- the va"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.slices",
+      "name": "slices",
+      "category": "prelude",
+      "type": "view",
+      "description": "The timestamp of the instant.\n  ts TIMESTAMP,\n  -- The id of the track this instant is located on.\n  track_id JOINID(track.id),\n  -- The name of the instant. The name describes what happened during th"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.thread",
+      "name": "thread",
+      "category": "prelude",
+      "type": "view",
+      "description": "Alias of `slice.id`.\n  id JOINID(slice.id),\n  -- Alias of `slice.ts`.\n  ts TIMESTAMP,\n  -- Alias of `slice.dur`.\n  dur DURATION,\n  -- Alias of `slice.track_id`.\n  track_id JOINID(track.id),\n  -- Alias"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.process",
+      "name": "process",
+      "category": "prelude",
+      "type": "view",
+      "description": "The id of the thread. Prefer using `utid` instead.\n  id ID,\n  -- Unique thread id. This is != the OS tid. This is a monotonic number\n  -- associated to each thread. The OS thread id (tid) cannot be us"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.args",
+      "name": "args",
+      "category": "prelude",
+      "type": "view",
+      "description": "The id of the process. Prefer using `upid` instead.\n  id ID,\n  -- Unique process id. This is != the OS pid. This is a monotonic number\n  -- associated to each process. The OS process id (pid) cannot b"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.perf_session",
+      "name": "perf_session",
+      "category": "prelude",
+      "type": "view",
+      "description": "The id of the arg.\n  id ID,\n  -- The id for a single set of arguments.\n  arg_set_id ARGSETID,\n  -- The \"flat key\" of the arg: this is the key without any array indexes.\n  flat_key STRING,\n  -- The key"
+    },
+    {
+      "id": "stdlib.prelude.after_eof.android_logs",
+      "name": "android_logs",
+      "category": "prelude",
+      "type": "view",
+      "description": "The id of the perf session. Prefer using `perf_session_id` instead.\n  id LONG,\n  -- The id of the perf session.\n  perf_session_id LONG,\n  -- Command line used to collect the data.\n  cmdline STRING\n) A"
+    },
+    {
+      "id": "stdlib.prelude.after_eof._trace_import_logs",
+      "name": "_trace_import_logs",
+      "category": "prelude",
+      "type": "view",
+      "description": "Which row in the table the log corresponds to.\n  id ID,\n  -- Timestamp of log entry.\n  ts TIMESTAMP,\n  -- Thread writing the log entry.\n  utid JOINID(thread.id),\n  -- Priority of the log. 3=DEBUG, 4=I"
+    },
+    {
+      "id": "stdlib.prelude.trace_bounds",
+      "name": "trace_bounds",
+      "category": "prelude",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.proto_path.proto_path",
+      "name": "proto_path",
+      "category": "proto_path",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.sched.latency",
+      "name": "latency",
+      "category": "sched",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.sched.runnable",
+      "name": "runnable",
+      "category": "sched",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.sched.states",
+      "name": "states",
+      "category": "sched",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.sched.thread_executing_span",
+      "name": "thread_executing_span",
+      "category": "sched",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.sched.thread_executing_span_with_slice",
+      "name": "thread_executing_span_with_slice",
+      "category": "sched",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.sched.sched_runnable_thread_count",
+      "name": "sched_runnable_thread_count",
+      "category": "sched",
+      "type": "table",
+      "description": "Copyright 2023 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.sched.sched_uninterruptible_sleep_thread_count",
+      "name": "sched_uninterruptible_sleep_thread_count",
+      "category": "sched",
+      "type": "table",
+      "description": "The count of threads in uninterruptible sleep over time."
+    },
+    {
+      "id": "stdlib.sched.sched_active_cpu_count",
+      "name": "sched_active_cpu_count",
+      "category": "sched",
+      "type": "table",
+      "description": "The count of active CPUs over time."
+    },
+    {
+      "id": "stdlib.sched.thread_state_flattened",
+      "name": "thread_state_flattened",
+      "category": "sched",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.sched.sched_time_in_state_for_cpu_in_interval",
+      "name": "sched_time_in_state_for_cpu_in_interval",
+      "category": "sched",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.sched.sched_with_thread_process",
+      "name": "sched_with_thread_process",
+      "category": "sched",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.slices.thread_slice_cpu_cycles",
+      "name": "thread_slice_cpu_cycles",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.slices.flat_slices",
+      "name": "flat_slices",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.slices.flow",
+      "name": "flow",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.slices.hierarchy",
+      "name": "hierarchy",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.slices.self_dur",
+      "name": "self_dur",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.slices.slice_with_stack_id",
+      "name": "slice_with_stack_id",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.slices.ancestor_slice_by_stack",
+      "name": "ancestor_slice_by_stack",
+      "category": "slices",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.slices.descendant_slice_by_stack",
+      "name": "descendant_slice_by_stack",
+      "category": "slices",
+      "type": "function",
+      "description": "Alias of `slice.ts`.\n  ts TIMESTAMP,\n  -- Alias of `slice.dur`.\n  dur DURATION,\n  -- Alias of `slice.track_id`.\n  track_id JOINID(track.id),\n  -- Alias of `slice.category`.\n  category STRING,\n  -- Ali"
+    },
+    {
+      "id": "stdlib.slices.time_in_state",
+      "name": "time_in_state",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.slices.thread_slice",
+      "name": "thread_slice",
+      "category": "slices",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.slices.process_slice",
+      "name": "process_slice",
+      "category": "slices",
+      "type": "view",
+      "description": "Slice\n  id ID(slice.id),\n  -- Alias for `slice.ts`.\n  ts TIMESTAMP,\n  -- Alias for `slice.dur`.\n  dur DURATION,\n  -- Alias for `slice.category`.\n  category STRING,\n  -- Alias for `slice.name`.\n  name "
+    },
+    {
+      "id": "stdlib.slices.thread_or_process_slice",
+      "name": "thread_or_process_slice",
+      "category": "slices",
+      "type": "view",
+      "description": "Slice\n  id ID(slice.id),\n  -- Alias for `slice.ts`.\n  ts TIMESTAMP,\n  -- Alias for `slice.dur`.\n  dur DURATION,\n  -- Alias for `slice.category`.\n  category STRING,\n  -- Alias for `slice.name`.\n  name "
+    },
+    {
+      "id": "stdlib.stack_trace._jit_code",
+      "name": "_jit_code",
+      "category": "stack_trace",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.stack_trace._jit_frame",
+      "name": "_jit_frame",
+      "category": "stack_trace",
+      "type": "view",
+      "description": "Unique jit code id.\n  jit_code_id LONG,\n  -- Time this code was created / allocated.\n  create_ts TIMESTAMP,\n  -- Time this code was destroyed / deallocated. This is a upper bound, as we\n  -- can only "
+    },
+    {
+      "id": "stdlib.stacks.cpu_profiling_summary_tree",
+      "name": "cpu_profiling_summary_tree",
+      "category": "stacks",
+      "type": "table",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.stacks._to_breakpad_module",
+      "name": "_to_breakpad_module",
+      "category": "stacks",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the 'License');\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.time.conversion",
+      "name": "conversion",
+      "category": "time",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.traced.traced_trigger_clone_flush_latency",
+      "name": "traced_trigger_clone_flush_latency",
+      "category": "traced",
+      "type": "table",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.v8.v8_isolate",
+      "name": "v8_isolate",
+      "category": "v8",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.v8.v8_js_script",
+      "name": "v8_js_script",
+      "category": "v8",
+      "type": "view",
+      "description": "Unique V8 isolate id.\n  v8_isolate_id LONG,\n  -- Process the isolate was created in.\n  upid JOINID(process.id),\n  -- Internal id used by the v8 engine. Unique in a process.\n  internal_isolate_id LONG,"
+    },
+    {
+      "id": "stdlib.v8.v8_wasm_script",
+      "name": "v8_wasm_script",
+      "category": "v8",
+      "type": "view",
+      "description": "Unique V8 JS script id.\n  v8_js_script_id LONG,\n  -- V8 isolate this script belongs to (joinable with\n  -- `v8_isolate.v8_isolate_id`).\n  v8_isolate_id LONG,\n  -- Script id used by the V8 engine.\n  in"
+    },
+    {
+      "id": "stdlib.v8.v8_js_function",
+      "name": "v8_js_function",
+      "category": "v8",
+      "type": "view",
+      "description": "Unique V8 WASM script id.\n  v8_wasm_script_id LONG,\n  -- V8 Isolate this script belongs to (joinable with\n  -- `v8_isolate.v8_isolate_id`).\n  v8_isolate_id LONG,\n  -- Script id used by the V8 engine.\n"
+    },
+    {
+      "id": "stdlib.v8._v8_js_code",
+      "name": "_v8_js_code",
+      "category": "v8",
+      "type": "view",
+      "description": "Unique V8 JS function id.\n  v8_js_function_id LONG,\n  -- Function name.\n  name STRING,\n  -- Script where the function is defined (joinable with\n  -- `v8_js_script.v8_js_script_id`).\n  v8_js_script_id "
+    },
+    {
+      "id": "stdlib.v8._v8_internal_code",
+      "name": "_v8_internal_code",
+      "category": "v8",
+      "type": "view",
+      "description": "Unique id\n  id LONG,\n  -- Associated jit code. Set for all tiers except IGNITION. Joinable with\n  -- `_jit_code.jit_code_id`.\n  jit_code_id LONG,\n  -- JS function for this snippet. Joinable with\n  -- "
+    },
+    {
+      "id": "stdlib.v8._v8_wasm_code",
+      "name": "_v8_wasm_code",
+      "category": "v8",
+      "type": "view",
+      "description": "Unique id\n  id LONG,\n  -- Associated jit code. Joinable with `_jit_code.jit_code_id`.\n  jit_code_id LONG,\n  -- V8 Isolate this code was created in. Joinable with\n  -- `v8_isolate.v8_isolate_id`.\n  v8_"
+    },
+    {
+      "id": "stdlib.v8._v8_regexp_code",
+      "name": "_v8_regexp_code",
+      "category": "v8",
+      "type": "view",
+      "description": "Unique id\n  id LONG,\n  -- Associated jit code. Joinable with `_jit_code.jit_code_id`.\n  jit_code_id LONG,\n  -- V8 Isolate this code was created in. Joinable with\n  -- `v8_isolate.v8_isolate_id`.\n  v8_"
+    },
+    {
+      "id": "stdlib.viz.flamegraph",
+      "name": "flamegraph",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.slices",
+      "name": "slices",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.counters",
+      "name": "counters",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.processes",
+      "name": "processes",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.slices",
+      "name": "slices",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.threads",
+      "name": "threads",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.summary._is_linux_trace",
+      "name": "_is_linux_trace",
+      "category": "viz",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.viz.track_event",
+      "name": "track_event",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.threads",
+      "name": "threads",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.viz.track_event_callstacks",
+      "name": "track_event_callstacks",
+      "category": "viz",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.cpu._get_rate",
+      "name": "_get_rate",
+      "category": "wattson",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.wattson.estimates",
+      "name": "estimates",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.freq",
+      "name": "freq",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.freq_idle",
+      "name": "freq_idle",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.hotplug",
+      "name": "hotplug",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.idle",
+      "name": "idle",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.pivot",
+      "name": "pivot",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.cpu_1d",
+      "name": "cpu_1d",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.cpu_2d",
+      "name": "cpu_2d",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.gpu",
+      "name": "gpu",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.l3",
+      "name": "l3",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.tg5_cpu_1d",
+      "name": "tg5_cpu_1d",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.tg5_cpu_2d",
+      "name": "tg5_cpu_2d",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.tg5_cpu_2d_1",
+      "name": "tg5_cpu_2d_1",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.tg5_cpu_2d_2",
+      "name": "tg5_cpu_2d_2",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.tg5_l3",
+      "name": "tg5_l3",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.utils",
+      "name": "utils",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.device_infos",
+      "name": "device_infos",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson._windowed_system_state_mw",
+      "name": "_windowed_system_state_mw",
+      "category": "wattson",
+      "type": "function",
+      "description": "Copyright 2025 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.wattson.estimates",
+      "name": "estimates",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.freq_idle",
+      "name": "freq_idle",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.attribution",
+      "name": "attribution",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.tasks._filter_idle_attribution",
+      "name": "_filter_idle_attribution",
+      "category": "wattson",
+      "type": "function",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.wattson.task_slices",
+      "name": "task_slices",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.continuous_estimates",
+      "name": "continuous_estimates",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.wattson.utils",
+      "name": "utils",
+      "category": "wattson",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.ad_services_metric",
+      "name": "ad_services_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_anomaly",
+      "name": "android_anomaly",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_anr",
+      "name": "android_anr",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_auto_multiuser",
+      "name": "android_auto_multiuser",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_batt",
+      "name": "android_batt",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_binder",
+      "name": "android_binder",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_blocking_calls_cuj_metric",
+      "name": "android_blocking_calls_cuj_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_blocking_calls_cuj_per_frame_metric",
+      "name": "android_blocking_calls_cuj_per_frame_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_blocking_calls_unagg",
+      "name": "android_blocking_calls_unagg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_boot",
+      "name": "android_boot",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_boot_unagg",
+      "name": "android_boot_unagg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_broadcasts",
+      "name": "android_broadcasts",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_camera",
+      "name": "android_camera",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_camera_unagg",
+      "name": "android_camera_unagg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_cpu",
+      "name": "android_cpu",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_cpu_agg",
+      "name": "android_cpu_agg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "metric.android.android_cpu_raw_metrics_per_core",
+      "name": "android_cpu_raw_metrics_per_core",
+      "category": "android",
+      "type": "metric",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_dma_heap",
+      "name": "android_dma_heap",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_dvfs",
+      "name": "android_dvfs",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_fastrpc",
+      "name": "android_fastrpc",
+      "category": "android",
+      "type": "view",
+      "description": "android_fastrpc"
+    },
+    {
+      "id": "stdlib.android.android_frame_timeline_metric",
+      "name": "android_frame_timeline_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_garbage_collection_stats",
+      "name": "android_garbage_collection_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_garbage_collection_unagg",
+      "name": "android_garbage_collection_unagg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_gpu",
+      "name": "android_gpu",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_hwcomposer",
+      "name": "android_hwcomposer",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_hwui_metric",
+      "name": "android_hwui_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_hwui_threads",
+      "name": "android_hwui_threads",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_io",
+      "name": "android_io",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_io_unagg",
+      "name": "android_io_unagg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_ion",
+      "name": "android_ion",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_irq_runtime",
+      "name": "android_irq_runtime",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_jank_cuj",
+      "name": "android_jank_cuj",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_lmk",
+      "name": "android_lmk",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_lmk_reason",
+      "name": "android_lmk_reason",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_mem",
+      "name": "android_mem",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_mem_unagg",
+      "name": "android_mem_unagg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_monitor_contention",
+      "name": "android_monitor_contention",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_monitor_contention_agg",
+      "name": "android_monitor_contention_agg",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_multiuser",
+      "name": "android_multiuser",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_multiuser_populator",
+      "name": "android_multiuser_populator",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_netperf",
+      "name": "android_netperf",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_oom_adj_intervals_with_detailed_bucket_name",
+      "name": "android_oom_adj_intervals_with_detailed_bucket_name",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project -- Licensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy"
+    },
+    {
+      "id": "stdlib.android.android_package_list",
+      "name": "android_package_list",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_powrails",
+      "name": "android_powrails",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_proxy_power",
+      "name": "android_proxy_power",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_rt_runtime",
+      "name": "android_rt_runtime",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_simpleperf",
+      "name": "android_simpleperf",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_startup",
+      "name": "android_startup",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_surfaceflinger",
+      "name": "android_surfaceflinger",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_sysui_notifications_blocking_calls_metric",
+      "name": "android_sysui_notifications_blocking_calls_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_trace_quality",
+      "name": "android_trace_quality",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "metric.android.codec_metrics",
+      "name": "codec_metrics",
+      "category": "android",
+      "type": "metric",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.composer_execution",
+      "name": "composer_execution",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.composition_layers",
+      "name": "composition_layers",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.counter_span_view_merged",
+      "name": "counter_span_view_merged",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.cpu_info",
+      "name": "cpu_info",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "metric.android.display_metrics",
+      "name": "display_metrics",
+      "category": "android",
+      "type": "metric",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.frame_missed",
+      "name": "frame_missed",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.g2d",
+      "name": "g2d",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.g2d_duration",
+      "name": "g2d_duration",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.global_counter_span_view",
+      "name": "global_counter_span_view",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.gpu_counter_span_view",
+      "name": "gpu_counter_span_view",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_jank_cuj_init",
+      "name": "android_jank_cuj_init",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2025 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.cujs_boundaries",
+      "name": "cujs_boundaries",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.frames",
+      "name": "frames",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.counters",
+      "name": "counters",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.query_base",
+      "name": "query_base",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.query_frame_slice",
+      "name": "query_frame_slice",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.query_functions",
+      "name": "query_functions",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.relevant_slices",
+      "name": "relevant_slices",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.relevant_threads",
+      "name": "relevant_threads",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.slices",
+      "name": "slices",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.java_heap_class_stats",
+      "name": "java_heap_class_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.java_heap_histogram",
+      "name": "java_heap_histogram",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.java_heap_stats",
+      "name": "java_heap_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.mem_stats_priority_breakdown",
+      "name": "mem_stats_priority_breakdown",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.network_activity_template",
+      "name": "network_activity_template",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.p_state",
+      "name": "p_state",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.power_drain_in_watts",
+      "name": "power_drain_in_watts",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.android.power_profile_data",
+      "name": "power_profile_data",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.process_counter_span_view",
+      "name": "process_counter_span_view",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.process_mem",
+      "name": "process_mem",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.process_metadata",
+      "name": "process_metadata",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.process_oom_score",
+      "name": "process_oom_score",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.process_unagg_mem_view",
+      "name": "process_unagg_mem_view",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.profiler_smaps",
+      "name": "profiler_smaps",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.span_view_stats",
+      "name": "span_view_stats",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.android_app_process_starts",
+      "name": "android_app_process_starts",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.gc_slices",
+      "name": "gc_slices",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.hsc",
+      "name": "hsc",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.launches",
+      "name": "launches",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.launches_maxsdk28",
+      "name": "launches_maxsdk28",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.launches_minsdk29",
+      "name": "launches_minsdk29",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.launches_minsdk33",
+      "name": "launches_minsdk33",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.mcycles_per_launch",
+      "name": "mcycles_per_launch",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.slice_functions",
+      "name": "slice_functions",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.slow_start_reasons",
+      "name": "slow_start_reasons",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.slow_start_thresholds",
+      "name": "slow_start_thresholds",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.system_state",
+      "name": "system_state",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.thread_state_breakdown",
+      "name": "thread_state_breakdown",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.sysui_notif_shade_list_builder_metric",
+      "name": "sysui_notif_shade_list_builder_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.sysui_notif_shade_list_builder_slices",
+      "name": "sysui_notif_shade_list_builder_slices",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.sysui_update_notif_on_ui_mode_changed_metric",
+      "name": "sysui_update_notif_on_ui_mode_changed_metric",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.thread_counter_span_view",
+      "name": "thread_counter_span_view",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.unsymbolized_frames",
+      "name": "unsymbolized_frames",
+      "category": "android",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.android.wattson_app_startup_rails",
+      "name": "wattson_app_startup_rails",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_app_startup_rails"
+    },
+    {
+      "id": "stdlib.android.wattson_app_startup_threads",
+      "name": "wattson_app_startup_threads",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_app_startup_threads"
+    },
+    {
+      "id": "stdlib.android.wattson_atrace_apps_rails",
+      "name": "wattson_atrace_apps_rails",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_atrace_apps_rails"
+    },
+    {
+      "id": "stdlib.android.wattson_atrace_apps_threads",
+      "name": "wattson_atrace_apps_threads",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_atrace_apps_threads"
+    },
+    {
+      "id": "stdlib.android.wattson_markers_rails",
+      "name": "wattson_markers_rails",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_markers_rails"
+    },
+    {
+      "id": "stdlib.android.wattson_markers_threads",
+      "name": "wattson_markers_threads",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_markers_threads"
+    },
+    {
+      "id": "stdlib.android.wattson_rail_relations",
+      "name": "wattson_rail_relations",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_rail_relations"
+    },
+    {
+      "id": "stdlib.android.wattson_tasks_attribution",
+      "name": "wattson_tasks_attribution",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_tasks_attribution"
+    },
+    {
+      "id": "stdlib.android.wattson_trace_rails",
+      "name": "wattson_trace_rails",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_trace_rails"
+    },
+    {
+      "id": "stdlib.android.wattson_trace_threads",
+      "name": "wattson_trace_threads",
+      "category": "android",
+      "type": "view",
+      "description": "wattson_trace_threads"
+    },
+    {
+      "id": "stdlib.chrome.chrome_args_class_names",
+      "name": "chrome_args_class_names",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_event_metadata",
+      "name": "chrome_event_metadata",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.chrome.chrome_histogram_hashes",
+      "name": "chrome_histogram_hashes",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_histogram_summaries",
+      "name": "chrome_histogram_summaries",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_performance_mark_hashes",
+      "name": "chrome_performance_mark_hashes",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_processes",
+      "name": "chrome_processes",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_reliable_range",
+      "name": "chrome_reliable_range",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_scroll_jank_caused_by_scheduling",
+      "name": "chrome_scroll_jank_caused_by_scheduling",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_scroll_jank_v3",
+      "name": "chrome_scroll_jank_v3",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_slice_names",
+      "name": "chrome_slice_names",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_stack_samples_for_task",
+      "name": "chrome_stack_samples_for_task",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_study_hashes",
+      "name": "chrome_study_hashes",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2024 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_unsymbolized_args",
+      "name": "chrome_unsymbolized_args",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.chrome_user_event_hashes",
+      "name": "chrome_user_event_hashes",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.sufficient_chrome_processes",
+      "name": "sufficient_chrome_processes",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.chrome.test_chrome_metric",
+      "name": "test_chrome_metric",
+      "category": "chrome",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.common.clone_duration",
+      "name": "clone_duration",
+      "category": "common",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.experimental.chrome_dropped_frames",
+      "name": "chrome_dropped_frames",
+      "category": "experimental",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.experimental.chrome_long_latency",
+      "name": "chrome_long_latency",
+      "category": "experimental",
+      "type": "view",
+      "description": "Copyright 2022 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.experimental.frame_times",
+      "name": "frame_times",
+      "category": "experimental",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.experimental.media_metric",
+      "name": "media_metric",
+      "category": "experimental",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the 'License');"
+    },
+    {
+      "id": "stdlib.experimental.reported_by_page",
+      "name": "reported_by_page",
+      "category": "experimental",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.trace_metadata.sql.trace_metadata",
+      "name": "trace_metadata",
+      "category": "trace_metadata.sql",
+      "type": "view",
+      "description": "Copyright 2019 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.trace_stats.sql.trace_stats",
+      "name": "trace_stats",
+      "category": "trace_stats.sql",
+      "type": "view",
+      "description": "Copyright 2021 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.webview.webview_jank_approximation",
+      "name": "webview_jank_approximation",
+      "category": "webview",
+      "type": "view",
+      "description": "Copyright 2023 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    },
+    {
+      "id": "stdlib.webview.webview_power_usage",
+      "name": "webview_power_usage",
+      "category": "webview",
+      "type": "view",
+      "description": "Copyright 2020 The Android Open Source Project Licensed under the Apache License, Version 2.0 (the \"License\");"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "app_startup",
+      "name": "应用启动分析",
+      "description": "分析应用冷启动/热启动性能，包括 TTID、TTFD、各阶段耗时",
+      "category": "startup",
+      "templates": [
+        "stdlib.android.startup.android_startups",
+        "stdlib.android.startup.android_startup_threads",
+        "stdlib.android.startup.android_thread_slices_for_all_startups",
+        "stdlib.android.startup.android_slices_for_startup_and_slice_name"
+      ],
+      "order": 1
+    },
+    {
+      "id": "frame_jank",
+      "name": "帧渲染卡顿分析",
+      "description": "分析帧渲染性能，检测卡顿帧和掉帧原因",
+      "category": "frame",
+      "templates": [
+        "stdlib.android.frames.android_frame_stats",
+        "stdlib.android.frames.android_frames_overrun",
+        "stdlib.android.frames.android_frames_ui_time",
+        "stdlib.android.frames.android_cpu_time_per_frame"
+      ],
+      "order": 2
+    },
+    {
+      "id": "memory_analysis",
+      "name": "内存分析",
+      "description": "分析内存使用情况，包括堆内存、DMA 缓冲区等",
+      "category": "memory",
+      "templates": [],
+      "order": 3
+    },
+    {
+      "id": "cpu_analysis",
+      "name": "CPU 分析",
+      "description": "分析 CPU 使用情况，包括调度、频率、各核心负载",
+      "category": "cpu",
+      "templates": [],
+      "order": 4
+    },
+    {
+      "id": "binder_analysis",
+      "name": "Binder 通信分析",
+      "description": "分析 Binder IPC 调用，检测慢调用和阻塞",
+      "category": "binder",
+      "templates": [
+        "stdlib.android.android_binder_metrics_by_process",
+        "stdlib.android.android_sync_binder_thread_state_by_txn",
+        "stdlib.android.android_sync_binder_blocked_functions_by_txn",
+        "stdlib.android.android_binder_graph"
+      ],
+      "order": 5
+    },
+    {
+      "id": "battery_analysis",
+      "name": "电池功耗分析",
+      "description": "分析电池状态、功耗轨迹",
+      "category": "battery",
+      "templates": [
+        "stdlib.android.charging_states",
+        "stdlib.android.android_battery_charge",
+        "stdlib.android.android_battery_stats_state"
+      ],
+      "order": 6
+    },
+    {
+      "id": "gpu_analysis",
+      "name": "GPU 分析",
+      "description": "分析 GPU 频率、内存使用、工作周期",
+      "category": "gpu",
+      "templates": [],
+      "order": 7
+    },
+    {
+      "id": "io_analysis",
+      "name": "I/O 分析",
+      "description": "分析文件 I/O 操作",
+      "category": "io",
+      "templates": [],
+      "order": 8
+    }
+  ]
+}
