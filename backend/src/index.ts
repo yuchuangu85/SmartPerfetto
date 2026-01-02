@@ -7,7 +7,6 @@ import cors from 'cors';
 import path from 'path';
 
 // Import routes (now after dotenv.config())
-import authRoutes from './routes/auth';
 import sqlRoutes from './routes/sql';
 import traceRoutes from './routes/trace';
 import traceProcessorRoutes from './routes/traceProcessorRoutes';
@@ -76,7 +75,6 @@ app.get('/debug', (req, res) => {
 });
 
 // API routes
-app.use('/api/auth', authRoutes);
 app.use('/api/sql', sqlRoutes);
 app.use('/api/trace', traceRoutes);
 app.use('/api/traces', simpleTraceRoutes); // Use our simple trace routes

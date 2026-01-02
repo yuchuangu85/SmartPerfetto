@@ -1,0 +1,269 @@
+# IRQ Analysis Skill v2.1
+# Uses Perfetto stdlib: linux_irqs, linux_hard_irqs, linux_soft_irqs views
+# Key columns: ts, dur, name, id, parent_id (for hard irqs), is_soft_irq
+# Hard IRQ: 硬件中断，由硬件设备触发
+# Soft IRQ: 软中断，用于延迟处理
+
+name: irq_analysis
+version: "2.1"
+type: composite
+display:
+  name: "中断分析"
+  level: expert
+  description: "Linux 硬中断和软中断分析，识别中断负载和潜在性能问题"
+
+triggers:
+  - pattern: "(中断|interrupt|IRQ|irq)"
+    confidence: 0.95
+  - pattern: "(硬中断|hard irq|软中断|softirq)"
+    confidence: 0.9
+  - pattern: "(中断延迟|interrupt latency)"
+    confidence: 0.85
+
+parameters:
+  - name: irq_name
+    type: string
+    required: false
+    description: "中断名称过滤"
+  - name: min_duration_us
+    type: number
+    required: false
+    default: 100
+    description: "最小中断持续时间阈值 (微秒)"
+
+analysis_steps:
+  # Step 1: 中断概览
+  - id: irq_overview
+    type: diagnostic
+    name: "中断概览"
+    description: "统计硬中断和软中断的数量和耗时"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.irqs;
+
+      SELECT
+        CASE WHEN is_soft_irq THEN 'Soft IRQ' ELSE 'Hard IRQ' END AS irq_type,
+        COUNT(*) AS irq_count,
+        SUM(dur) / 1e6 AS total_dur_ms,
+        AVG(dur) / 1e3 AS avg_dur_us,
+        MAX(dur) / 1e3 AS max_dur_us
+      FROM linux_irqs
+      GROUP BY irq_type;
+    interpretation:
+      key_metrics:
+        - name: "irq_count"
+          description: "中断次数"
+        - name: "avg_dur_us"
+          description: "平均中断处理时间 (微秒)"
+        - name: "max_dur_us"
+          description: "最大中断处理时间 (微秒)"
+          thresholds:
+            warning: 1000
+            critical: 10000
+
+  # Step 2: 硬中断排行
+  - id: hard_irq_ranking
+    type: diagnostic
+    name: "硬中断排行"
+    description: "按耗时排列硬中断"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.irqs;
+
+      SELECT
+        name,
+        COUNT(*) AS irq_count,
+        SUM(dur) / 1e6 AS total_dur_ms,
+        AVG(dur) / 1e3 AS avg_dur_us,
+        MAX(dur) / 1e3 AS max_dur_us,
+        COUNT(parent_id) AS preempted_count
+      FROM linux_hard_irqs
+      WHERE CASE WHEN '{{irq_name}}' != ''
+                 THEN name GLOB '*{{irq_name}}*'
+                 ELSE 1 END
+        AND dur / 1e3 >= COALESCE({{min_duration_us}}, 100)
+      GROUP BY name
+      ORDER BY total_dur_ms DESC
+      LIMIT 20;
+    interpretation:
+      key_metrics:
+        - name: "total_dur_ms"
+          description: "硬中断总耗时"
+        - name: "preempted_count"
+          description: "被抢占的中断数 (嵌套中断)"
+      analysis_hints:
+        - condition: "preempted_count > irq_count * 0.1"
+          insight: "存在较多嵌套中断，可能影响响应时间"
+        - condition: "avg_dur_us > 500"
+          insight: "硬中断处理时间较长，可能需要优化"
+
+  # Step 3: 软中断排行
+  - id: soft_irq_ranking
+    type: diagnostic
+    name: "软中断排行"
+    description: "按耗时排列软中断"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.irqs;
+
+      SELECT
+        name,
+        COUNT(*) AS irq_count,
+        SUM(dur) / 1e6 AS total_dur_ms,
+        AVG(dur) / 1e3 AS avg_dur_us,
+        MAX(dur) / 1e3 AS max_dur_us
+      FROM linux_soft_irqs
+      WHERE CASE WHEN '{{irq_name}}' != ''
+                 THEN name GLOB '*{{irq_name}}*'
+                 ELSE 1 END
+        AND dur / 1e3 >= COALESCE({{min_duration_us}}, 100)
+      GROUP BY name
+      ORDER BY total_dur_ms DESC
+      LIMIT 20;
+    interpretation:
+      key_metrics:
+        - name: "name"
+          description: "软中断类型 (NET_RX, NET_TX, TIMER, SCHED, RCU 等)"
+      analysis_hints:
+        - condition: "name = 'NET_RX' AND total_dur_ms > 100"
+          insight: "网络接收软中断耗时较高，网络流量较大"
+        - condition: "name = 'TIMER' AND avg_dur_us > 100"
+          insight: "定时器软中断耗时较高，检查定时任务"
+
+  # Step 4: 长耗时中断事件
+  - id: long_irq_events
+    type: diagnostic
+    name: "长耗时中断"
+    description: "识别耗时超过阈值的中断"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.irqs;
+
+      SELECT
+        ts / 1e9 AS time_sec,
+        name,
+        CASE WHEN is_soft_irq THEN 'Soft' ELSE 'Hard' END AS irq_type,
+        dur / 1e3 AS dur_us
+      FROM linux_irqs
+      WHERE dur / 1e3 >= COALESCE({{min_duration_us}}, 100) * 10  -- 10x threshold for "long"
+        AND CASE WHEN '{{irq_name}}' != ''
+                 THEN name GLOB '*{{irq_name}}*'
+                 ELSE 1 END
+      ORDER BY dur DESC
+      LIMIT 50;
+    interpretation:
+      key_metrics:
+        - name: "dur_us"
+          description: "中断持续时间 (微秒)"
+          thresholds:
+            warning: 1000
+            critical: 5000
+
+  # Step 5: 中断时间分布
+  - id: irq_timeline
+    type: diagnostic
+    name: "中断时间分布"
+    description: "按时间统计中断频率"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.irqs;
+
+      SELECT
+        CAST(ts / 1e9 AS INTEGER) AS time_sec,
+        SUM(CASE WHEN is_soft_irq = 0 THEN 1 ELSE 0 END) AS hard_irq_count,
+        SUM(CASE WHEN is_soft_irq = 1 THEN 1 ELSE 0 END) AS soft_irq_count,
+        SUM(CASE WHEN is_soft_irq = 0 THEN dur ELSE 0 END) / 1e6 AS hard_irq_dur_ms,
+        SUM(CASE WHEN is_soft_irq = 1 THEN dur ELSE 0 END) / 1e6 AS soft_irq_dur_ms
+      FROM linux_irqs
+      GROUP BY time_sec
+      ORDER BY time_sec;
+    interpretation:
+      key_metrics:
+        - name: "hard_irq_count"
+          description: "每秒硬中断次数"
+        - name: "soft_irq_count"
+          description: "每秒软中断次数"
+
+  # Step 6: 中断嵌套分析 (硬中断抢占)
+  - id: irq_nesting
+    type: diagnostic
+    name: "中断嵌套分析"
+    description: "分析硬中断的嵌套情况"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.irqs;
+
+      WITH nested AS (
+        SELECT
+          child.name AS interrupted_irq,
+          parent.name AS preempting_irq,
+          child.dur / 1e3 AS interrupted_dur_us
+        FROM linux_hard_irqs child
+        JOIN linux_hard_irqs parent ON child.parent_id = parent.id
+      )
+      SELECT
+        interrupted_irq,
+        preempting_irq,
+        COUNT(*) AS nest_count,
+        AVG(interrupted_dur_us) AS avg_interrupted_dur_us
+      FROM nested
+      GROUP BY interrupted_irq, preempting_irq
+      ORDER BY nest_count DESC
+      LIMIT 20;
+    interpretation:
+      analysis_hints:
+        - condition: "nest_count > 10"
+          insight: "频繁的中断嵌套可能导致延迟抖动"
+
+  # Step 7: AI 综合分析
+  - id: irq_ai_summary
+    type: ai_summary
+    name: "中断性能 AI 分析"
+    description: "综合分析中断行为"
+    depends_on:
+      - irq_overview
+      - hard_irq_ranking
+      - soft_irq_ranking
+      - long_irq_events
+      - irq_timeline
+      - irq_nesting
+    prompt: |
+      请基于以下中断分析数据，提供专业的分析：
+
+      ## 中断概览
+      {{irq_overview}}
+
+      ## 硬中断排行
+      {{hard_irq_ranking}}
+
+      ## 软中断排行
+      {{soft_irq_ranking}}
+
+      ## 长耗时中断
+      {{long_irq_events}}
+
+      ## 时间分布
+      {{irq_timeline}}
+
+      ## 中断嵌套
+      {{irq_nesting}}
+
+      请分析：
+      1. 中断负载评估
+      2. 主要中断来源识别
+      3. 是否存在异常长中断
+      4. 中断嵌套影响评估
+      5. 优化建议
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "中断分析总结"
+      content: |
+        ## 中断概览
+        {{irq_overview}}
+
+        ## 硬中断排行
+        {{hard_irq_ranking}}
+
+        ## 软中断排行
+        {{soft_irq_ranking}}
+
+        ## AI 综合分析
+        {{irq_ai_summary}}

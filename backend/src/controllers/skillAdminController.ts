@@ -8,12 +8,12 @@ import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
-import { skillRegistry, initializeSkills } from '../services/skillEngine/skillLoader';
-import { SkillDefinition, VendorType } from '../services/skillEngine/types';
+import { skillRegistryV2, ensureSkillRegistryV2Initialized, getSkillsDir } from '../services/skillEngine/skillLoaderV2';
+import { SkillDefinitionV2, VendorType } from '../services/skillEngine/types_v2';
 import { ErrorResponse } from '../types';
 
-const SKILLS_DIR = path.join(__dirname, '../../skills');
-const BASE_DIR = path.join(SKILLS_DIR, 'base');
+const SKILLS_DIR = getSkillsDir();
+const V2_COMPOSITE_DIR = path.join(SKILLS_DIR, 'v2', 'composite');
 const VENDORS_DIR = path.join(SKILLS_DIR, 'vendors');
 const CUSTOM_DIR = path.join(SKILLS_DIR, 'custom');
 
@@ -22,7 +22,7 @@ class SkillAdminController {
    * Ensure skill registry is initialized
    */
   private async ensureInitialized(): Promise<void> {
-    await initializeSkills();
+    await ensureSkillRegistryV2Initialized();
   }
 
   /**
@@ -33,24 +33,18 @@ class SkillAdminController {
     try {
       await this.ensureInitialized();
 
-      const skills = skillRegistry.getAllSkills();
+      const skills = skillRegistryV2.getAllSkills();
 
       const result = skills.map(skill => ({
-        id: skill.id,
-        name: skill.definition.name,
-        version: skill.definition.version,
-        displayName: skill.definition.meta.display_name,
-        description: skill.definition.meta.description,
-        category: skill.definition.category,
-        type: skill.definition.type,
-        stepsCount: skill.definition.steps?.length ||
-          skill.definition.layers?.reduce((sum, l) => sum + l.steps.length, 0) || 0,
-        filePath: skill.filePath,
-        isCustom: skill.filePath.includes('/custom/'),
-        isEditable: skill.filePath.includes('/custom/'),
-        hasVendorOverrides: skill.overrides && skill.overrides.length > 0,
-        vendorOverrides: skill.overrides?.map(o => o.meta?.vendor) || [],
-        hasSOP: !!skill.sopContent,
+        id: skill.name,
+        name: skill.name,
+        version: skill.version,
+        displayName: skill.meta?.display_name || skill.name,
+        description: skill.meta?.description || '',
+        category: skill.category,
+        type: skill.type,
+        stepsCount: skill.steps?.length || 0,
+        tags: skill.meta?.tags,
       }));
 
       res.json({
@@ -76,7 +70,7 @@ class SkillAdminController {
       const { skillId } = req.params;
       await this.ensureInitialized();
 
-      const skill = skillRegistry.getSkill(skillId);
+      const skill = skillRegistryV2.getSkill(skillId);
       if (!skill) {
         return res.status(404).json({
           error: 'Skill not found',
@@ -84,21 +78,30 @@ class SkillAdminController {
         });
       }
 
-      // Read raw YAML content
+      // Try to find the YAML file
+      const possiblePaths = [
+        path.join(V2_COMPOSITE_DIR, `${skillId}.skill.yaml`),
+        path.join(SKILLS_DIR, 'v2', 'atomic', `${skillId}.skill.yaml`),
+        path.join(CUSTOM_DIR, `${skillId}.skill.yaml`),
+      ];
+
       let rawYaml = '';
-      if (fs.existsSync(skill.filePath)) {
-        rawYaml = fs.readFileSync(skill.filePath, 'utf-8');
+      let filePath = '';
+      for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+          rawYaml = fs.readFileSync(p, 'utf-8');
+          filePath = p;
+          break;
+        }
       }
 
       res.json({
-        id: skill.id,
-        definition: skill.definition,
+        id: skill.name,
+        definition: skill,
         rawYaml,
-        sopContent: skill.sopContent,
-        filePath: skill.filePath,
-        isCustom: skill.filePath.includes('/custom/'),
-        isEditable: skill.filePath.includes('/custom/'),
-        vendorOverrides: skill.overrides,
+        filePath,
+        isCustom: filePath.includes('/custom/'),
+        isEditable: filePath.includes('/custom/'),
       });
     } catch (error) {
       console.error('[SkillAdminController] Error getting skill:', error);
@@ -113,18 +116,18 @@ class SkillAdminController {
   /**
    * Create a new custom skill
    * POST /api/admin/skills
-   * Body: { yaml: string } or { definition: SkillDefinition }
+   * Body: { yaml: string } or { definition: SkillDefinitionV2 }
    */
   createSkill = async (req: Request, res: Response) => {
     try {
       const { yaml: yamlContent, definition } = req.body;
 
-      let skillDef: SkillDefinition;
+      let skillDef: SkillDefinitionV2;
       let yamlToSave: string;
 
       if (yamlContent) {
         // Parse YAML
-        skillDef = yaml.load(yamlContent) as SkillDefinition;
+        skillDef = yaml.load(yamlContent) as SkillDefinitionV2;
         yamlToSave = yamlContent;
       } else if (definition) {
         skillDef = definition;
@@ -164,7 +167,7 @@ class SkillAdminController {
       fs.writeFileSync(filePath, yamlToSave, 'utf-8');
 
       // Reload skills
-      await skillRegistry.reload();
+      await skillRegistryV2.reload();
 
       res.status(201).json({
         success: true,
@@ -185,7 +188,7 @@ class SkillAdminController {
   /**
    * Update an existing custom skill
    * PUT /api/admin/skills/:skillId
-   * Body: { yaml: string } or { definition: SkillDefinition }
+   * Body: { yaml: string } or { definition: SkillDefinitionV2 }
    */
   updateSkill = async (req: Request, res: Response) => {
     try {
@@ -194,7 +197,7 @@ class SkillAdminController {
 
       await this.ensureInitialized();
 
-      const skill = skillRegistry.getSkill(skillId);
+      const skill = skillRegistryV2.getSkill(skillId);
       if (!skill) {
         return res.status(404).json({
           error: 'Skill not found',
@@ -202,13 +205,15 @@ class SkillAdminController {
         });
       }
 
-      // Check if editable (only custom skills)
-      if (!skill.filePath.includes('/custom/')) {
+      // Find the file path - only custom skills are editable
+      const customFilePath = path.join(CUSTOM_DIR, `${skillId}.skill.yaml`);
+      if (!fs.existsSync(customFilePath)) {
         return res.status(403).json({
           error: 'Skill not editable',
           details: 'Only custom skills can be edited. Base and vendor skills are read-only.',
         });
       }
+      const filePath = customFilePath;
 
       let yamlToSave: string;
 
@@ -224,10 +229,10 @@ class SkillAdminController {
       }
 
       // Save file
-      fs.writeFileSync(skill.filePath, yamlToSave, 'utf-8');
+      fs.writeFileSync(filePath, yamlToSave, 'utf-8');
 
       // Reload skills
-      await skillRegistry.reload();
+      await skillRegistryV2.reload();
 
       res.json({
         success: true,
@@ -254,7 +259,7 @@ class SkillAdminController {
 
       await this.ensureInitialized();
 
-      const skill = skillRegistry.getSkill(skillId);
+      const skill = skillRegistryV2.getSkill(skillId);
       if (!skill) {
         return res.status(404).json({
           error: 'Skill not found',
@@ -263,7 +268,8 @@ class SkillAdminController {
       }
 
       // Check if deletable (only custom skills)
-      if (!skill.filePath.includes('/custom/')) {
+      const customFilePath = path.join(CUSTOM_DIR, `${skillId}.skill.yaml`);
+      if (!fs.existsSync(customFilePath)) {
         return res.status(403).json({
           error: 'Skill not deletable',
           details: 'Only custom skills can be deleted. Base and vendor skills are protected.',
@@ -271,16 +277,16 @@ class SkillAdminController {
       }
 
       // Delete file
-      fs.unlinkSync(skill.filePath);
+      fs.unlinkSync(customFilePath);
 
       // Also delete SOP if exists
-      const sopPath = skill.filePath.replace('.skill.yaml', '.sop.md');
+      const sopPath = customFilePath.replace('.skill.yaml', '.sop.md');
       if (fs.existsSync(sopPath)) {
         fs.unlinkSync(sopPath);
       }
 
       // Reload skills
-      await skillRegistry.reload();
+      await skillRegistryV2.reload();
 
       res.json({
         success: true,
@@ -317,9 +323,9 @@ class SkillAdminController {
       const warnings: string[] = [];
 
       // Parse YAML
-      let skillDef: SkillDefinition;
+      let skillDef: SkillDefinitionV2;
       try {
-        skillDef = yaml.load(yamlContent) as SkillDefinition;
+        skillDef = yaml.load(yamlContent) as SkillDefinitionV2;
       } catch (e: any) {
         return res.json({
           valid: false,
@@ -347,8 +353,11 @@ class SkillAdminController {
         const stepIds = new Set<string>();
         skillDef.steps.forEach((step, i) => {
           if (!step.id) errors.push(`steps[${i}]: Missing id`);
-          if (!step.name) errors.push(`steps[${i}]: Missing name`);
-          if (!step.sql) errors.push(`steps[${i}]: Missing sql`);
+          // name is optional for most step types
+          // sql is only required for atomic steps
+          if ('type' in step && step.type === 'atomic' && !('sql' in step && step.sql)) {
+            errors.push(`steps[${i}]: Atomic step missing sql`);
+          }
           if (step.id && stepIds.has(step.id)) {
             errors.push(`steps[${i}]: Duplicate id '${step.id}'`);
           }
@@ -469,9 +478,9 @@ class SkillAdminController {
    */
   reloadSkills = async (req: Request, res: Response) => {
     try {
-      await skillRegistry.reload();
+      await skillRegistryV2.reload();
 
-      const skills = skillRegistry.getAllSkills();
+      const skills = skillRegistryV2.getAllSkills();
 
       res.json({
         success: true,

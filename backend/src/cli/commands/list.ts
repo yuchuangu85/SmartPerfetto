@@ -31,30 +31,28 @@ export const listCommand = new Command('list')
   .action(async (options: { verbose?: boolean; json?: boolean }) => {
     try {
       // Dynamic import to avoid loading heavy dependencies
-      const { skillRegistry, initializeSkills } = await import('../../services/skillEngine/skillLoader');
+      const { skillRegistryV2, ensureSkillRegistryV2Initialized } = await import('../../services/skillEngine/skillLoaderV2');
 
       // Initialize
       if (!options.json) {
         console.log(colors.gray('Loading skills...'));
       }
-      await initializeSkills();
+      await ensureSkillRegistryV2Initialized();
 
-      const skills = skillRegistry.getAllSkills();
+      const skills = skillRegistryV2.getAllSkills();
 
       if (options.json) {
         // JSON output
         const output = skills.map(skill => ({
-          id: skill.id,
-          name: skill.definition.name,
-          version: skill.definition.version,
-          displayName: skill.definition.meta.display_name,
-          description: skill.definition.meta.description,
-          category: skill.definition.category,
-          type: skill.definition.type,
-          stepsCount: skill.definition.steps?.length ||
-            skill.definition.layers?.reduce((sum, l) => sum + l.steps.length, 0) || 0,
-          hasVendorOverrides: skill.overrides && skill.overrides.length > 0,
-          hasSOP: !!skill.sopContent,
+          id: skill.name,
+          name: skill.name,
+          version: skill.version,
+          displayName: skill.meta.display_name,
+          description: skill.meta.description,
+          category: skill.category,
+          type: skill.type,
+          stepsCount: skill.steps?.length || 0,
+          tags: skill.meta.tags,
         }));
         console.log(JSON.stringify(output, null, 2));
         return;
@@ -64,64 +62,46 @@ export const listCommand = new Command('list')
       console.log(colors.bold('\nSmartPerfetto Skills\n'));
       console.log(`Found ${colors.cyan(String(skills.length))} skills\n`);
 
-      // Group by category
-      const byCategory = new Map<string, typeof skills>();
+      // Group by type
+      const byType = new Map<string, typeof skills>();
       for (const skill of skills) {
-        const category = skill.definition.category || 'other';
-        if (!byCategory.has(category)) {
-          byCategory.set(category, []);
+        const type = skill.type || 'other';
+        if (!byType.has(type)) {
+          byType.set(type, []);
         }
-        byCategory.get(category)!.push(skill);
+        byType.get(type)!.push(skill);
       }
 
-      // Print by category
-      for (const [category, categorySkills] of byCategory.entries()) {
-        console.log(colors.bold(`${category.toUpperCase()}:`));
+      // Print by type
+      for (const [type, typeSkills] of byType.entries()) {
+        console.log(colors.bold(`${type.toUpperCase()}:`));
 
-        for (const skill of categorySkills) {
-          const def = skill.definition;
-          const hasOverrides = skill.overrides && skill.overrides.length > 0;
-          const hasSOP = !!skill.sopContent;
-
+        for (const skill of typeSkills) {
           // Skill header
-          console.log(`\n  ${colors.cyan(skill.id)}`);
-          console.log(`    ${def.meta.display_name} v${def.version}`);
-          console.log(`    ${colors.gray(def.meta.description)}`);
+          console.log(`\n  ${colors.cyan(skill.name)}`);
+          console.log(`    ${skill.meta.display_name} v${skill.version}`);
+          console.log(`    ${colors.gray(skill.meta.description)}`);
 
           if (options.verbose) {
-            // Steps (support both flat and layered structure)
-            const allSteps = def.steps || [];
-            const layerSteps = def.layers?.flatMap(l => l.steps) || [];
-            const steps = allSteps.length > 0 ? allSteps : layerSteps;
-            console.log(`    Steps: ${steps.length}${def.layers ? ` (in ${def.layers.length} layers)` : ''}`);
+            // Steps
+            const steps = skill.steps || [];
+            console.log(`    Steps: ${steps.length}`);
             for (const step of steps) {
-              console.log(`      - ${step.id}: ${step.name}`);
+              console.log(`      - ${(step as any).id}: ${(step as any).name || (step as any).type}`);
             }
 
             // Keywords
-            const triggers = def.triggers;
-            const keywords = Array.isArray(triggers.keywords)
-              ? triggers.keywords
-              : [...(triggers.keywords.zh || []), ...(triggers.keywords.en || [])];
-            console.log(`    Keywords: ${keywords.slice(0, 5).join(', ')}${keywords.length > 5 ? '...' : ''}`);
-
-            // Thresholds
-            if (def.thresholds) {
-              console.log(`    Thresholds: ${Object.keys(def.thresholds).join(', ')}`);
+            if (skill.triggers?.keywords) {
+              const keywords = Array.isArray(skill.triggers.keywords)
+                ? skill.triggers.keywords
+                : [...(skill.triggers.keywords.zh || []), ...(skill.triggers.keywords.en || [])];
+              console.log(`    Keywords: ${keywords.slice(0, 5).join(', ')}${keywords.length > 5 ? '...' : ''}`);
             }
 
-            // Diagnostics
-            if (def.diagnostics) {
-              console.log(`    Diagnostics: ${def.diagnostics.length}`);
+            // Tags
+            if (skill.meta.tags) {
+              console.log(`    Tags: ${skill.meta.tags.join(', ')}`);
             }
-          }
-
-          // Status indicators
-          const indicators: string[] = [];
-          if (hasOverrides) indicators.push(colors.yellow('vendor-overrides'));
-          if (hasSOP) indicators.push(colors.green('sop'));
-          if (indicators.length > 0) {
-            console.log(`    [${indicators.join('] [')}]`);
           }
         }
 

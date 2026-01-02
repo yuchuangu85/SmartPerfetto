@@ -9,6 +9,16 @@ import { TraceProcessorFactory } from '../services/workingTraceProcessor';
 
 const router = Router();
 
+// GET /api/traces/health - Health check for auto-upload feature
+// This endpoint allows the frontend to quickly check if the backend is available
+router.get('/health', (req, res) => {
+  res.json({
+    available: true,
+    version: '1.0',
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "err_1767267549335_s10l6tsls",
+    "timestamp": "2026-01-01T11:39:09.335Z",
+    "originalSQL": "SELECT DISTINCT name FROM slice WHERE name LIKE \"%Scroll%\" OR name LIKE \"%scroll%\" OR name LIKE \"%Fling%\" LIMIT 30",
+    "errorType": "UNKNOWN",
+    "errorMessage": "No processor for trace d3ed57b1-391b-40e0-a9e0-f339c664a9af",
+    "userQuery": ""
+  },
+  {
+    "id": "err_1767267570380_9jzuu9e4d",
+    "timestamp": "2026-01-01T11:39:30.380Z",
+    "originalSQL": "SELECT DISTINCT name FROM slice WHERE name LIKE \"%Scroll%\" OR name LIKE \"%scroll%\" OR name LIKE \"%Fling%\" LIMIT 30",
+    "errorType": "UNKNOWN",
+    "errorMessage": "No processor for trace 93f8036e-1a02-45dd-8396-ccbe7adfc12e",
+    "userQuery": ""
+  }
+]

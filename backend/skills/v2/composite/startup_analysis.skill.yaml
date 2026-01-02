@@ -1,0 +1,498 @@
+# =============================================================================
+# 启动分析 v2.2（组合 Skill）- 基于 Perfetto stdlib 优化版
+# =============================================================================
+# 使用 Perfetto stdlib 的 android_startups 系列表和函数
+# 充分利用多表 JOIN 获取深度分析数据
+#
+# v2.2 新增：
+# - Iterator 模式：逐个启动事件详细分析
+# - 大小核分析：启动期间 CPU 大小核占比
+# - 四大象限分析：Running/Runnable/Sleeping 状态分布
+# - Perfetto 跳转链接：点击跳转到启动区间
+#
+# 核心表：
+# - android_startups: 启动事件基础信息
+# - android_startup_processes: 启动进程信息，包含 startup_type
+# - android_startup_threads: 启动线程信息，包含 is_main_thread
+# - android_thread_slices_for_all_startups: 启动期间所有 slice
+# - android_startup_opinionated_breakdown: 启动延迟归因分析
+# - android_startup_time_to_display: TTID/TTFD 指标
+#
+# 核心函数：
+# - android_sum_dur_for_startup_and_slice(startup_id, slice_name)
+# - android_sum_dur_on_main_thread_for_startup_and_slice(startup_id, slice_name)
+# - android_binder_transaction_slices_for_startup(startup_id, threshold)
+
+name: startup_analysis
+version: "2.2"
+type: composite
+
+meta:
+  display_name: "启动性能分析"
+  description: "分析应用冷启动、温启动、热启动的性能，识别启动瓶颈"
+  icon: "rocket"
+  tags: [startup, launch, cold_start, warm_start, composite]
+
+triggers:
+  keywords:
+    zh: [启动, 冷启动, 热启动, 温启动, 启动时间, 启动慢, 启动优化]
+    en: [startup, launch, cold start, warm start, hot start, app launch]
+  patterns:
+    - ".*启动.*时间.*"
+    - ".*启动.*慢.*"
+    - ".*launch.*"
+
+prerequisites:
+  modules:
+    - android.startup.startups
+    - android.binder
+
+inputs:
+  - name: package
+    type: string
+    required: false
+    description: "应用包名（可选，不填则分析所有启动事件）"
+
+steps:
+  # ========== 获取启动事件概览 ==========
+  - id: get_startups
+    type: atomic
+    name: "获取启动事件"
+    display:
+      level: key
+      title: "检测到的启动事件"
+    sql: |
+      SELECT
+        s.startup_id,
+        s.package,
+        s.startup_type,
+        s.dur / 1e6 as dur_ms,
+        printf('%d', s.ts) as start_ts,
+        printf('%d', s.ts + s.dur) as end_ts,
+        -- 关联 TTID/TTFD 数据
+        ttd.time_to_initial_display / 1e6 as ttid_ms,
+        ttd.time_to_full_display / 1e6 as ttfd_ms,
+        CASE s.startup_type
+          WHEN 'cold' THEN '冷启动'
+          WHEN 'warm' THEN '温启动'
+          WHEN 'hot' THEN '热启动'
+          ELSE s.startup_type
+        END as type_display,
+        CASE
+          WHEN s.startup_type = 'cold' AND s.dur / 1e6 < 500 THEN '优秀'
+          WHEN s.startup_type = 'cold' AND s.dur / 1e6 < 1000 THEN '良好'
+          WHEN s.startup_type = 'cold' AND s.dur / 1e6 < 2000 THEN '需优化'
+          WHEN s.startup_type = 'warm' AND s.dur / 1e6 < 200 THEN '优秀'
+          WHEN s.startup_type = 'warm' AND s.dur / 1e6 < 500 THEN '良好'
+          WHEN s.startup_type = 'hot' AND s.dur / 1e6 < 100 THEN '优秀'
+          WHEN s.startup_type = 'hot' AND s.dur / 1e6 < 200 THEN '良好'
+          ELSE '需优化'
+        END as rating,
+        -- Perfetto 跳转参数（前后各扩展 10%）
+        printf('%d', CAST(s.ts - s.dur * 0.1 AS INTEGER)) as perfetto_start,
+        printf('%d', CAST(s.ts + s.dur * 1.1 AS INTEGER)) as perfetto_end
+      FROM android_startups s
+      LEFT JOIN android_startup_time_to_display ttd USING (startup_id)
+      WHERE s.package GLOB '${package}*' OR '${package}' = ''
+      ORDER BY s.ts ASC
+    save_as: startups
+    on_empty: "未检测到启动事件。请确认 Trace 包含应用启动数据。"
+
+  # ========== 启动延迟归因分析（使用 opinionated_breakdown）==========
+  - id: startup_breakdown
+    type: atomic
+    name: "启动延迟归因"
+    display:
+      level: key
+      title: "启动延迟归因分析"
+    sql: |
+      SELECT
+        b.reason,
+        COUNT(*) as count,
+        SUM(b.dur) / 1e6 as total_dur_ms,
+        ROUND(AVG(b.dur) / 1e6, 2) as avg_dur_ms,
+        ROUND(MAX(b.dur) / 1e6, 2) as max_dur_ms,
+        ROUND(100.0 * SUM(b.dur) / (
+          SELECT SUM(dur) FROM android_startup_opinionated_breakdown
+          WHERE startup_id IN (
+            SELECT startup_id FROM android_startups
+            WHERE package GLOB '${package}*' OR '${package}' = ''
+          )
+        ), 1) as percent,
+        -- 按原因分类
+        CASE
+          WHEN b.reason GLOB '*binder*' THEN 'IPC'
+          WHEN b.reason GLOB '*io*' OR b.reason GLOB '*dlopen*' THEN 'IO'
+          WHEN b.reason GLOB '*gc*' OR b.reason GLOB '*memory*' THEN 'Memory'
+          WHEN b.reason GLOB '*lock*' OR b.reason GLOB '*contention*' THEN 'Lock'
+          WHEN b.reason GLOB '*inflate*' THEN 'Layout'
+          WHEN b.reason GLOB '*verify*' OR b.reason GLOB '*dex*' THEN 'ClassLoading'
+          ELSE 'Other'
+        END as category
+      FROM android_startup_opinionated_breakdown b
+      JOIN android_startups s ON b.startup_id = s.startup_id
+      WHERE s.package GLOB '${package}*' OR '${package}' = ''
+      GROUP BY b.reason
+      ORDER BY total_dur_ms DESC
+      LIMIT 15
+    save_as: breakdown
+    condition: startups.data.length > 0
+
+  # ========== 主线程关键 Slice 分析 ==========
+  - id: main_thread_slices
+    type: atomic
+    name: "主线程关键操作"
+    display:
+      level: key
+      title: "主线程耗时操作 Top15"
+    sql: |
+      SELECT
+        ts.slice_name,
+        ts.thread_name,
+        COUNT(*) as count,
+        SUM(ts.slice_dur) / 1e6 as total_dur_ms,
+        ROUND(AVG(ts.slice_dur) / 1e6, 2) as avg_dur_ms,
+        ROUND(MAX(ts.slice_dur) / 1e6, 2) as max_dur_ms,
+        -- 关联启动信息计算占比
+        ROUND(100.0 * SUM(ts.slice_dur) / s.dur, 1) as percent_of_startup,
+        s.startup_type,
+        s.package
+      FROM android_thread_slices_for_all_startups ts
+      JOIN android_startups s ON ts.startup_id = s.startup_id
+      WHERE ts.is_main_thread = 1
+        AND (s.package GLOB '${package}*' OR '${package}' = '')
+        AND ts.slice_dur > 1000000  -- > 1ms
+      GROUP BY ts.slice_name, s.startup_id
+      ORDER BY total_dur_ms DESC
+      LIMIT 15
+    save_as: main_thread_slices
+    condition: startups.data.length > 0
+
+  # ========== 启动期间 Binder 调用分析（多表 JOIN）==========
+  - id: startup_binder
+    type: atomic
+    name: "启动期间 Binder 调用"
+    display:
+      level: key
+      title: "启动期间 Binder 调用"
+    sql: |
+      SELECT
+        bt.server_process,
+        bt.aidl_name,
+        COUNT(*) as call_count,
+        SUM(bt.client_dur) / 1e6 as total_dur_ms,
+        ROUND(AVG(bt.client_dur) / 1e6, 2) as avg_dur_ms,
+        ROUND(MAX(bt.client_dur) / 1e6, 2) as max_dur_ms,
+        SUM(CASE WHEN bt.is_main_thread THEN 1 ELSE 0 END) as main_thread_calls,
+        -- 关联启动信息
+        s.startup_type,
+        ROUND(100.0 * SUM(bt.client_dur) / s.dur, 1) as percent_of_startup
+      FROM android_binder_txns bt
+      JOIN android_startups s ON (
+        bt.client_ts >= s.ts AND bt.client_ts <= s.ts + s.dur
+        AND bt.client_process GLOB s.package || '*'
+      )
+      WHERE s.package GLOB '${package}*' OR '${package}' = ''
+      GROUP BY bt.server_process, bt.aidl_name, s.startup_id
+      ORDER BY total_dur_ms DESC
+      LIMIT 15
+    save_as: startup_binder
+    condition: startups.data.length > 0
+
+  # ========== 主线程 Binder 阻塞分析（深度 JOIN）==========
+  - id: main_thread_binder_blocking
+    type: atomic
+    name: "主线程 Binder 阻塞"
+    display:
+      level: detail
+      title: "主线程 Binder 阻塞分析"
+    sql: |
+      SELECT
+        bt.server_process,
+        bt.aidl_name,
+        bt.client_dur / 1e6 as dur_ms,
+        -- 关联 thread_state 分析阻塞期间的状态
+        ts.state,
+        ts.blocked_function,
+        printf('%d', bt.client_ts) as ts_str,
+        printf('%d', bt.client_dur) as dur_str,
+        CASE
+          WHEN bt.client_dur / 1e6 > 50 THEN 'critical'
+          WHEN bt.client_dur / 1e6 > 16 THEN 'warning'
+          ELSE 'normal'
+        END as severity
+      FROM android_binder_txns bt
+      JOIN android_startups s ON (
+        bt.client_ts >= s.ts AND bt.client_ts <= s.ts + s.dur
+        AND bt.client_process GLOB s.package || '*'
+      )
+      LEFT JOIN thread_state ts ON (
+        ts.utid = bt.client_utid
+        AND ts.ts >= bt.client_ts
+        AND ts.ts < bt.client_ts + bt.client_dur
+      )
+      WHERE bt.is_main_thread = 1
+        AND (s.package GLOB '${package}*' OR '${package}' = '')
+        AND bt.client_dur > 5000000  -- > 5ms
+      ORDER BY bt.client_dur DESC
+      LIMIT 20
+    save_as: main_binder_blocking
+    condition: startups.data.length > 0
+
+  # ========== 启动期间主线程状态分析（多表 JOIN）==========
+  - id: main_thread_state_during_startup
+    type: atomic
+    name: "主线程状态分析"
+    display:
+      level: key
+      title: "启动期间主线程状态"
+    sql: |
+      SELECT
+        ts.state,
+        CASE ts.state
+          WHEN 'Running' THEN 'Running (CPU执行)'
+          WHEN 'R' THEN 'Runnable (等待调度)'
+          WHEN 'R+' THEN 'Runnable+ (抢占等待)'
+          WHEN 'S' THEN 'Sleeping (主动睡眠)'
+          WHEN 'D' THEN 'Disk Sleep (IO等待)'
+          ELSE ts.state
+        END as state_desc,
+        SUM(ts.dur) / 1e6 as total_dur_ms,
+        ROUND(100.0 * SUM(ts.dur) / s.dur, 1) as percent,
+        COUNT(*) as count,
+        -- 分析阻塞函数
+        GROUP_CONCAT(DISTINCT ts.blocked_function) as blocked_functions
+      FROM thread_state ts
+      JOIN android_startup_threads st ON ts.utid = st.utid
+      JOIN android_startups s ON st.startup_id = s.startup_id
+      WHERE st.is_main_thread = 1
+        AND (s.package GLOB '${package}*' OR '${package}' = '')
+        AND ts.ts >= s.ts
+        AND ts.ts <= s.ts + s.dur
+      GROUP BY ts.state, s.startup_id
+      ORDER BY total_dur_ms DESC
+    save_as: main_thread_states
+    condition: startups.data.length > 0
+
+  # ========== 类加载分析 ==========
+  - id: class_loading
+    type: atomic
+    name: "类加载分析"
+    display:
+      level: detail
+      title: "启动期间类加载"
+    sql: |
+      SELECT
+        cl.slice_name,
+        cl.thread_name,
+        COUNT(*) as count,
+        SUM(cl.slice_dur) / 1e6 as total_dur_ms,
+        ROUND(AVG(cl.slice_dur) / 1e6, 2) as avg_dur_ms,
+        -- 关联启动信息
+        s.startup_type,
+        ROUND(100.0 * SUM(cl.slice_dur) / s.dur, 1) as percent_of_startup
+      FROM android_class_loading_for_startup cl
+      JOIN android_startups s ON cl.startup_id = s.startup_id
+      WHERE s.package GLOB '${package}*' OR '${package}' = ''
+      GROUP BY cl.slice_name
+      ORDER BY total_dur_ms DESC
+      LIMIT 10
+    save_as: class_loading
+    condition: startups.data.length > 0
+
+  # ========== GC 对启动的影响 ==========
+  - id: gc_during_startup
+    type: atomic
+    name: "GC 影响分析"
+    display:
+      level: detail
+      title: "启动期间 GC"
+    sql: |
+      SELECT
+        ts.slice_name as gc_type,
+        ts.thread_name,
+        ts.is_main_thread,
+        COUNT(*) as count,
+        SUM(ts.slice_dur) / 1e6 as total_dur_ms,
+        ROUND(AVG(ts.slice_dur) / 1e6, 2) as avg_dur_ms,
+        ROUND(100.0 * SUM(ts.slice_dur) / s.dur, 1) as percent_of_startup
+      FROM android_thread_slices_for_all_startups ts
+      JOIN android_startups s ON ts.startup_id = s.startup_id
+      WHERE (s.package GLOB '${package}*' OR '${package}' = '')
+        AND (ts.slice_name GLOB '*GC*' OR ts.slice_name GLOB '*gc*')
+      GROUP BY ts.slice_name, ts.is_main_thread
+      ORDER BY total_dur_ms DESC
+      LIMIT 10
+    save_as: gc_during_startup
+    condition: startups.data.length > 0
+
+  # ========== 调度延迟分析（关联 sched_slice 和 cpu）==========
+  - id: sched_latency_during_startup
+    type: atomic
+    name: "调度延迟分析"
+    display:
+      level: detail
+      title: "启动期间调度延迟"
+    sql: |
+      SELECT
+        ts.state,
+        COUNT(*) as count,
+        SUM(ts.dur) / 1e6 as total_wait_ms,
+        ROUND(AVG(ts.dur) / 1e6, 2) as avg_wait_ms,
+        ROUND(MAX(ts.dur) / 1e6, 2) as max_wait_ms,
+        -- 严重的调度延迟次数
+        SUM(CASE WHEN ts.dur / 1e6 > 8 THEN 1 ELSE 0 END) as severe_delays
+      FROM thread_state ts
+      JOIN android_startup_threads st ON ts.utid = st.utid
+      JOIN android_startups s ON st.startup_id = s.startup_id
+      WHERE st.is_main_thread = 1
+        AND (s.package GLOB '${package}*' OR '${package}' = '')
+        AND ts.state IN ('R', 'R+')
+        AND ts.ts >= s.ts
+        AND ts.ts <= s.ts + s.dur
+      GROUP BY ts.state
+    save_as: sched_latency
+    condition: startups.data.length > 0
+
+  # ========== 逐个启动事件详细分析 ==========
+  - id: analyze_startups
+    type: iterator
+    name: "启动事件详细分析"
+    display:
+      level: key
+      title: "启动事件详细分析"
+    source: startups
+    skill: startup_detail
+    item_params:
+      startup_id: startup_id
+      start_ts: start_ts
+      end_ts: end_ts
+      dur_ms: dur_ms
+      package: package
+      startup_type: startup_type
+      ttid_ms: ttid_ms
+      ttfd_ms: ttfd_ms
+      perfetto_start: perfetto_start
+      perfetto_end: perfetto_end
+    condition: startups.data.length > 0
+
+  # ========== 启动诊断 ==========
+  - id: startup_diagnosis
+    type: diagnostic
+    name: "启动诊断"
+    display:
+      level: key
+      title: "问题诊断"
+    inputs: [startups, breakdown, main_thread_slices, startup_binder, main_thread_states, gc_during_startup]
+    rules:
+      # 冷启动时间过长
+      - condition: "${startups.data[0]?.dur_ms > 2000 && startups.data[0]?.startup_type === 'cold'}"
+        severity: critical
+        diagnosis: "冷启动时间过长 (${startups.data[0].dur_ms}ms)"
+        confidence: high
+        suggestions:
+          - "检查 Application.onCreate() 中的初始化逻辑"
+          - "使用 App Startup 库延迟初始化"
+          - "将耗时操作移到后台线程"
+
+      # Binder 调用占比过高
+      - condition: "${startup_binder.data[0]?.percent_of_startup > 20}"
+        severity: warning
+        diagnosis: "Binder 调用占启动时间 ${startup_binder.data[0].percent_of_startup}%"
+        confidence: high
+        suggestions:
+          - "减少启动期间的 IPC 调用"
+          - "将非必要的服务调用延迟到启动后"
+          - "使用异步 Binder 调用"
+
+      # 主线程 Running 比例低
+      - condition: "${main_thread_states.data.find(s => s.state === 'Running')?.percent < 50}"
+        severity: warning
+        diagnosis: "主线程 Running 比例偏低"
+        confidence: medium
+        suggestions:
+          - "分析阻塞原因：IO 等待、锁竞争、调度延迟"
+          - "将阻塞操作移到后台线程"
+
+      # GC 影响
+      - condition: "${gc_during_startup.data[0]?.percent_of_startup > 5}"
+        severity: warning
+        diagnosis: "GC 占启动时间 ${gc_during_startup.data[0].percent_of_startup}%"
+        confidence: medium
+        suggestions:
+          - "减少启动期间的对象分配"
+          - "避免在启动时创建大量临时对象"
+
+      # 类加载耗时
+      - condition: "${breakdown.data.find(b => b.category === 'ClassLoading')?.percent > 15}"
+        severity: info
+        diagnosis: "类加载占比较高"
+        confidence: medium
+        suggestions:
+          - "使用 baseline profile 预编译热点类"
+          - "减少启动时加载的类数量"
+
+  # ========== AI 总结 ==========
+  - id: global_summary
+    type: ai_summary
+    name: "分析总结"
+    display:
+      level: key
+      title: "启动分析总结"
+    inputs: [startups, breakdown, main_thread_slices, startup_binder, main_thread_states, analyze_startups, startup_diagnosis]
+    prompt: |
+      请基于以下启动分析结果，生成专业的性能评估总结。
+
+      ## 启动事件
+      共检测到 ${startups.data.length} 个启动事件：
+      ${startups}
+
+      ## 延迟归因分析
+      ${breakdown}
+
+      ## 主线程耗时操作
+      ${main_thread_slices}
+
+      ## Binder 调用
+      ${startup_binder}
+
+      ## 主线程状态
+      ${main_thread_states}
+
+      ## 逐个启动详细分析（大小核、四象限）
+      ${analyze_startups}
+
+      ## 诊断结果
+      ${startup_diagnosis}
+
+      ## 专业分析要求
+
+      如果启动事件数量为0，请输出：
+      "未检测到应用启动事件。
+
+      可能原因：
+      - Trace 采集期间未进行应用启动操作
+      - 应用包名不匹配
+
+      建议：请在 Trace 采集期间启动目标应用后重新分析。"
+
+      如果检测到启动事件，请分析并输出：
+      1. **整体评价**：基于启动类型和 TTID/TTFD 给出评价
+         - 冷启动：<500ms优秀，<1000ms良好，<2000ms需优化，>=2000ms严重
+         - 温启动：<200ms优秀，<500ms良好，<1000ms需优化
+         - 热启动：<100ms优秀，<200ms良好，<500ms需优化
+      2. **CPU 大小核分析**：分析启动期间大核占比和四象限分布
+      3. **延迟归因**：分析主要延迟来源（Binder/IO/Lock/GC/CPU调度等）
+      4. **瓶颈分析**：识别最耗时的阶段和操作
+      5. **优化建议**：基于实际问题给出1-3条具体建议
+
+      ## 严格要求
+      - 只基于提供的实际数据分析，不要编造数据
+      - 区分冷启动、温启动、热启动分别说明
+      - 重点分析大核占比和 Runnable 等待时间
+      - 格式清晰，不超过400字
+
+output:
+  display:
+    level: key
+    format: summary

@@ -1,0 +1,309 @@
+# DMA Buffer Analysis Skill v2.1
+# Uses Perfetto stdlib: android_dmabuf_allocs, android_memory_cumulative_dmabuf tables
+# Key columns (android_dmabuf_allocs): ts, buf_size, inode, utid, tid, thread_name, upid, pid, process_name
+# Key columns (android_memory_cumulative_dmabuf): upid, process_name, utid, thread_name, ts, value
+# Note: Requires ftrace event "dmabuf_allocs" enabled
+
+name: dmabuf_analysis
+version: "2.1"
+type: composite
+display:
+  name: "DMA Buffer 分析"
+  level: expert
+  description: "DMA Buffer 分配分析，追踪图形内存使用、分配来源和内存泄漏"
+
+triggers:
+  - pattern: "(DMA|dmabuf|dma buffer|图形内存)"
+    confidence: 0.95
+  - pattern: "(gralloc|buffer|缓冲区)"
+    confidence: 0.8
+  - pattern: "(图形|graphics|显示|display)"
+    confidence: 0.7
+
+parameters:
+  - name: process_name
+    type: string
+    required: false
+    description: "目标进程名，留空分析所有 DMA Buffer"
+  - name: min_size_mb
+    type: number
+    required: false
+    default: 1
+    description: "最小缓冲区大小阈值 (MB)"
+
+analysis_steps:
+  # Step 1: DMA Buffer 使用概览
+  - id: dmabuf_overview
+    type: diagnostic
+    name: "DMA Buffer 概览"
+    description: "按进程统计 DMA Buffer 分配"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.dmabuf;
+
+      SELECT
+        process_name,
+        COUNT(*) AS alloc_count,
+        SUM(CASE WHEN buf_size > 0 THEN buf_size ELSE 0 END) / 1024 / 1024 AS total_alloc_mb,
+        SUM(CASE WHEN buf_size < 0 THEN -buf_size ELSE 0 END) / 1024 / 1024 AS total_free_mb,
+        SUM(buf_size) / 1024 / 1024 AS net_alloc_mb,
+        MAX(buf_size) / 1024 / 1024 AS max_single_alloc_mb
+      FROM android_dmabuf_allocs
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY process_name
+      ORDER BY total_alloc_mb DESC;
+    interpretation:
+      key_metrics:
+        - name: "total_alloc_mb"
+          description: "DMA Buffer 总分配量"
+        - name: "net_alloc_mb"
+          description: "净分配量 (分配-释放)"
+          thresholds:
+            warning: 100
+            critical: 500
+      analysis_hints:
+        - condition: "net_alloc_mb > 200"
+          insight: "净分配量较大，可能存在 buffer 未释放"
+
+  # Step 2: DMA Buffer 累积使用
+  - id: dmabuf_cumulative
+    type: diagnostic
+    name: "DMA Buffer 累积使用"
+    description: "按进程追踪 DMA Buffer 累积使用量"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.dmabuf;
+
+      WITH latest_values AS (
+        SELECT
+          process_name,
+          MAX(ts) AS latest_ts,
+          value AS latest_value
+        FROM android_memory_cumulative_dmabuf
+        WHERE CASE WHEN '{{process_name}}' != ''
+                   THEN process_name GLOB '*{{process_name}}*'
+                   ELSE 1 END
+        GROUP BY upid
+      ),
+      peak_values AS (
+        SELECT
+          process_name,
+          MAX(value) AS peak_value
+        FROM android_memory_cumulative_dmabuf
+        WHERE CASE WHEN '{{process_name}}' != ''
+                   THEN process_name GLOB '*{{process_name}}*'
+                   ELSE 1 END
+        GROUP BY upid
+      )
+      SELECT
+        l.process_name,
+        l.latest_value / 1024 / 1024 AS current_mb,
+        p.peak_value / 1024 / 1024 AS peak_mb
+      FROM latest_values l
+      JOIN peak_values p ON l.process_name = p.process_name
+      ORDER BY current_mb DESC;
+    interpretation:
+      key_metrics:
+        - name: "current_mb"
+          description: "当前 DMA Buffer 使用量"
+        - name: "peak_mb"
+          description: "峰值 DMA Buffer 使用量"
+
+  # Step 3: 大型 Buffer 分配
+  - id: large_buffer_allocs
+    type: diagnostic
+    name: "大型 Buffer 分配"
+    description: "识别大型 DMA Buffer 分配"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.dmabuf;
+
+      SELECT
+        ts / 1e9 AS time_sec,
+        process_name,
+        thread_name,
+        buf_size / 1024 / 1024 AS size_mb,
+        inode
+      FROM android_dmabuf_allocs
+      WHERE buf_size / 1024 / 1024 >= COALESCE({{min_size_mb}}, 1)
+        AND CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      ORDER BY buf_size DESC
+      LIMIT 50;
+    interpretation:
+      key_metrics:
+        - name: "size_mb"
+          description: "Buffer 大小 (MB)"
+          thresholds:
+            warning: 10
+            critical: 50
+
+  # Step 4: Buffer 分配频率
+  - id: dmabuf_frequency
+    type: diagnostic
+    name: "Buffer 分配频率"
+    description: "按时间统计 DMA Buffer 分配频率"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.dmabuf;
+
+      SELECT
+        CAST(ts / 1e9 AS INTEGER) AS time_sec,
+        COUNT(CASE WHEN buf_size > 0 THEN 1 END) AS alloc_count,
+        COUNT(CASE WHEN buf_size < 0 THEN 1 END) AS free_count,
+        SUM(CASE WHEN buf_size > 0 THEN buf_size ELSE 0 END) / 1024 / 1024 AS alloc_mb,
+        SUM(CASE WHEN buf_size < 0 THEN -buf_size ELSE 0 END) / 1024 / 1024 AS free_mb
+      FROM android_dmabuf_allocs
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY time_sec
+      ORDER BY time_sec;
+    interpretation:
+      key_metrics:
+        - name: "alloc_count"
+          description: "每秒分配次数"
+        - name: "free_count"
+          description: "每秒释放次数"
+      analysis_hints:
+        - condition: "alloc_count > free_count * 1.5"
+          insight: "分配多于释放，可能存在累积"
+
+  # Step 5: 线程级分配统计
+  - id: thread_alloc_stats
+    type: diagnostic
+    name: "线程级分配统计"
+    description: "按线程统计 DMA Buffer 分配"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.dmabuf;
+
+      SELECT
+        process_name,
+        thread_name,
+        COUNT(*) AS alloc_count,
+        SUM(CASE WHEN buf_size > 0 THEN buf_size ELSE 0 END) / 1024 / 1024 AS total_alloc_mb
+      FROM android_dmabuf_allocs
+      WHERE buf_size > 0
+        AND CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY process_name, thread_name
+      ORDER BY total_alloc_mb DESC
+      LIMIT 30;
+    interpretation:
+      key_metrics:
+        - name: "total_alloc_mb"
+          description: "线程分配的 Buffer 总量"
+
+  # Step 6: Buffer 生命周期分析
+  - id: buffer_lifecycle
+    type: diagnostic
+    name: "Buffer 生命周期"
+    description: "分析 Buffer 从分配到释放的时间"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.dmabuf;
+
+      WITH allocs AS (
+        SELECT
+          inode,
+          ts AS alloc_ts,
+          buf_size,
+          process_name
+        FROM android_dmabuf_allocs
+        WHERE buf_size > 0
+      ),
+      frees AS (
+        SELECT
+          inode,
+          ts AS free_ts
+        FROM android_dmabuf_allocs
+        WHERE buf_size < 0
+      ),
+      lifecycles AS (
+        SELECT
+          a.process_name,
+          a.buf_size,
+          MIN(f.free_ts) AS free_ts,
+          a.alloc_ts,
+          MIN(f.free_ts) - a.alloc_ts AS lifetime
+        FROM allocs a
+        LEFT JOIN frees f ON a.inode = f.inode AND f.free_ts > a.alloc_ts
+        GROUP BY a.inode, a.alloc_ts
+      )
+      SELECT
+        process_name,
+        COUNT(*) AS buffer_count,
+        COUNT(free_ts) AS freed_count,
+        COUNT(*) - COUNT(free_ts) AS not_freed_count,
+        AVG(lifetime) / 1e9 AS avg_lifetime_sec,
+        MAX(lifetime) / 1e9 AS max_lifetime_sec
+      FROM lifecycles
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY process_name
+      ORDER BY not_freed_count DESC;
+    interpretation:
+      key_metrics:
+        - name: "not_freed_count"
+          description: "未释放的 Buffer 数量"
+          thresholds:
+            warning: 10
+            critical: 50
+      analysis_hints:
+        - condition: "not_freed_count > buffer_count * 0.3"
+          insight: "大量 Buffer 未释放，可能存在内存泄漏"
+
+  # Step 7: AI 综合分析
+  - id: dmabuf_ai_summary
+    type: ai_summary
+    name: "DMA Buffer AI 分析"
+    description: "综合分析 DMA Buffer 使用"
+    depends_on:
+      - dmabuf_overview
+      - dmabuf_cumulative
+      - large_buffer_allocs
+      - dmabuf_frequency
+      - buffer_lifecycle
+    prompt: |
+      请基于以下 DMA Buffer 分析数据，提供专业的分析：
+
+      ## DMA Buffer 概览
+      {{dmabuf_overview}}
+
+      ## 累积使用
+      {{dmabuf_cumulative}}
+
+      ## 大型 Buffer
+      {{large_buffer_allocs}}
+
+      ## 分配频率
+      {{dmabuf_frequency}}
+
+      ## 生命周期
+      {{buffer_lifecycle}}
+
+      请分析：
+      1. DMA Buffer 使用是否正常
+      2. 是否存在内存泄漏迹象
+      3. 主要 Buffer 分配来源
+      4. 对系统内存的影响
+      5. 优化建议
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "DMA Buffer 分析总结"
+      content: |
+        ## 概览
+        {{dmabuf_overview}}
+
+        ## 累积使用
+        {{dmabuf_cumulative}}
+
+        ## 生命周期分析
+        {{buffer_lifecycle}}
+
+        ## AI 综合分析
+        {{dmabuf_ai_summary}}

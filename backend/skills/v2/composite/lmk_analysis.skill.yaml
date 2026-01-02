@@ -1,0 +1,311 @@
+# LMK Analysis Skill v2.1
+# Uses Perfetto stdlib: android_lmk_events table
+# Key columns: ts, upid, pid, process_name, oom_score_adj, kill_reason, kill_reason_raw
+# Kill reasons: PRESSURE_AFTER_KILL, NOT_RESPONDING, LOW_SWAP_AND_THRASHING,
+#               LOW_MEM_AND_SWAP, LOW_MEM_AND_THRASHING, DIRECT_RECL_AND_THRASHING,
+#               LOW_MEM_AND_SWAP_UTIL, LOW_FILECACHE_AFTER_THRASHING, LOW_MEM,
+#               DIRECT_RECL_STUCK, VENDOR_REASON, UNKNOWN
+
+name: lmk_analysis
+version: "2.1"
+type: composite
+display:
+  name: "LMK 分析"
+  level: expert
+  description: "Low Memory Killer 事件分析，追踪内存压力、进程被杀原因及系统内存状态"
+
+triggers:
+  - pattern: "(LMK|lmk|Low Memory|低内存|内存不足|进程被杀)"
+    confidence: 0.95
+  - pattern: "(oom|OOM|out of memory)"
+    confidence: 0.9
+  - pattern: "(kill|被杀|进程死亡)"
+    confidence: 0.8
+
+parameters:
+  - name: process_name
+    type: string
+    required: false
+    description: "目标进程名，留空分析所有 LMK 事件"
+  - name: oom_adj_threshold
+    type: number
+    required: false
+    description: "OOM adj 阈值，过滤低于此值的进程 (更重要的进程)"
+
+analysis_steps:
+  # Step 1: LMK 事件概览
+  - id: lmk_overview
+    type: diagnostic
+    name: "LMK 事件概览"
+    description: "统计 trace 中所有 LMK 事件及原因分布"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.lmk;
+
+      SELECT
+        kill_reason,
+        COUNT(*) AS kill_count,
+        GROUP_CONCAT(DISTINCT process_name) AS killed_processes,
+        AVG(oom_score_adj) AS avg_oom_adj,
+        MIN(oom_score_adj) AS min_oom_adj
+      FROM android_lmk_events
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY kill_reason
+      ORDER BY kill_count DESC;
+    interpretation:
+      key_metrics:
+        - name: "kill_count"
+          description: "各原因的进程被杀数量"
+        - name: "min_oom_adj"
+          description: "最低 OOM adj 被杀进程 (越低越重要)"
+          thresholds:
+            warning: 200
+            critical: 0
+      analysis_hints:
+        - condition: "kill_reason = 'LOW_MEM' AND kill_count > 10"
+          insight: "频繁低内存杀进程，系统内存严重不足"
+        - condition: "kill_reason = 'LOW_SWAP_AND_THRASHING'"
+          insight: "内存 thrashing，系统在频繁换页"
+        - condition: "min_oom_adj <= 0"
+          insight: "前台/可见进程被杀，严重影响用户体验"
+
+  # Step 2: LMK 时间线
+  - id: lmk_timeline
+    type: diagnostic
+    name: "LMK 事件时间线"
+    description: "按时间顺序列出所有 LMK 事件"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.lmk;
+
+      SELECT
+        ts / 1e9 AS time_sec,
+        process_name,
+        pid,
+        oom_score_adj,
+        kill_reason,
+        CASE
+          WHEN oom_score_adj < 0 THEN 'SYSTEM'
+          WHEN oom_score_adj = 0 THEN 'FOREGROUND'
+          WHEN oom_score_adj <= 100 THEN 'VISIBLE'
+          WHEN oom_score_adj <= 200 THEN 'PERCEPTIBLE'
+          WHEN oom_score_adj <= 300 THEN 'BACKUP'
+          WHEN oom_score_adj <= 500 THEN 'HEAVY_WEIGHT'
+          WHEN oom_score_adj <= 700 THEN 'SERVICE'
+          WHEN oom_score_adj <= 800 THEN 'HOME'
+          WHEN oom_score_adj <= 900 THEN 'PREVIOUS'
+          ELSE 'CACHED'
+        END AS process_priority
+      FROM android_lmk_events
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+        AND CASE WHEN {{oom_adj_threshold}} IS NOT NULL
+                 THEN oom_score_adj <= {{oom_adj_threshold}}
+                 ELSE 1 END
+      ORDER BY ts;
+    interpretation:
+      key_metrics:
+        - name: "oom_score_adj"
+          description: "进程优先级 (越低越重要)"
+        - name: "process_priority"
+          description: "进程优先级分类"
+
+  # Step 3: 高优先级进程被杀分析
+  - id: high_priority_kills
+    type: diagnostic
+    name: "高优先级进程被杀"
+    description: "分析被杀的高优先级进程 (oom_adj <= 200)"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.lmk;
+
+      SELECT
+        process_name,
+        COUNT(*) AS kill_count,
+        MIN(oom_score_adj) AS min_oom_adj,
+        GROUP_CONCAT(DISTINCT kill_reason) AS kill_reasons,
+        MIN(ts / 1e9) AS first_kill_sec,
+        MAX(ts / 1e9) AS last_kill_sec
+      FROM android_lmk_events
+      WHERE oom_score_adj <= 200
+      GROUP BY process_name
+      ORDER BY min_oom_adj, kill_count DESC;
+    interpretation:
+      key_metrics:
+        - name: "kill_count"
+          description: "高优先级进程被杀次数"
+          thresholds:
+            warning: 1
+            critical: 3
+      analysis_hints:
+        - condition: "min_oom_adj = 0"
+          insight: "前台进程被杀，用户可能看到应用闪退"
+        - condition: "min_oom_adj <= 100"
+          insight: "可见进程被杀，用户可能感知到"
+
+  # Step 4: LMK 与内存状态关联
+  - id: lmk_memory_context
+    type: diagnostic
+    name: "LMK 时刻内存状态"
+    description: "分析 LMK 发生时的系统内存状态"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.lmk;
+      INCLUDE PERFETTO MODULE linux.memory.general;
+
+      WITH lmk_events AS (
+        SELECT ts, process_name, kill_reason
+        FROM android_lmk_events
+        LIMIT 10
+      )
+      SELECT
+        le.ts / 1e9 AS lmk_time_sec,
+        le.process_name,
+        le.kill_reason,
+        (
+          SELECT value / 1024 / 1024
+          FROM counter c
+          JOIN counter_track ct ON c.track_id = ct.id
+          WHERE ct.name = 'mem.free'
+            AND c.ts <= le.ts
+          ORDER BY c.ts DESC
+          LIMIT 1
+        ) AS free_mem_mb,
+        (
+          SELECT value / 1024 / 1024
+          FROM counter c
+          JOIN counter_track ct ON c.track_id = ct.id
+          WHERE ct.name = 'mem.available'
+            AND c.ts <= le.ts
+          ORDER BY c.ts DESC
+          LIMIT 1
+        ) AS available_mem_mb
+      FROM lmk_events le;
+    interpretation:
+      key_metrics:
+        - name: "free_mem_mb"
+          description: "LMK 时刻空闲内存"
+        - name: "available_mem_mb"
+          description: "LMK 时刻可用内存"
+
+  # Step 5: LMK 频率分析
+  - id: lmk_frequency
+    type: diagnostic
+    name: "LMK 发生频率"
+    description: "按时间窗口统计 LMK 频率"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.lmk;
+
+      SELECT
+        CAST(ts / 1e9 AS INTEGER) AS time_sec,
+        COUNT(*) AS lmk_count,
+        GROUP_CONCAT(process_name, ', ') AS killed_processes,
+        AVG(oom_score_adj) AS avg_oom_adj
+      FROM android_lmk_events
+      GROUP BY time_sec
+      HAVING lmk_count > 0
+      ORDER BY time_sec;
+    interpretation:
+      key_metrics:
+        - name: "lmk_count"
+          description: "每秒 LMK 次数"
+          thresholds:
+            warning: 3
+            critical: 10
+      analysis_hints:
+        - condition: "lmk_count > 5"
+          insight: "LMK 密集发生，系统处于严重内存压力"
+
+  # Step 6: 被杀进程重启分析
+  - id: process_restart_after_lmk
+    type: diagnostic
+    name: "进程重启分析"
+    description: "分析被杀进程是否很快重启"
+    sql: |
+      INCLUDE PERFETTO MODULE android.memory.lmk;
+
+      WITH lmk_events AS (
+        SELECT ts AS kill_ts, process_name, pid
+        FROM android_lmk_events
+      ),
+      restarts AS (
+        SELECT
+          le.process_name,
+          le.kill_ts,
+          MIN(p.start_ts) AS restart_ts
+        FROM lmk_events le
+        JOIN process p ON p.name = le.process_name
+        WHERE p.start_ts > le.kill_ts
+        GROUP BY le.process_name, le.kill_ts
+      )
+      SELECT
+        process_name,
+        COUNT(*) AS restart_count,
+        AVG((restart_ts - kill_ts) / 1e6) AS avg_restart_delay_ms
+      FROM restarts
+      GROUP BY process_name
+      ORDER BY restart_count DESC
+      LIMIT 20;
+    interpretation:
+      key_metrics:
+        - name: "restart_count"
+          description: "进程重启次数"
+        - name: "avg_restart_delay_ms"
+          description: "平均重启延迟"
+      analysis_hints:
+        - condition: "restart_count > 3 AND avg_restart_delay_ms < 1000"
+          insight: "进程频繁被杀并快速重启，形成杀-重启循环"
+
+  # Step 7: AI 综合分析
+  - id: lmk_ai_summary
+    type: ai_summary
+    name: "LMK 根因 AI 分析"
+    description: "综合分析 LMK 事件及根因"
+    depends_on:
+      - lmk_overview
+      - lmk_timeline
+      - high_priority_kills
+      - lmk_frequency
+      - process_restart_after_lmk
+    prompt: |
+      请基于以下 LMK 分析数据，提供专业的内存压力分析：
+
+      ## LMK 概览
+      {{lmk_overview}}
+
+      ## LMK 时间线
+      {{lmk_timeline}}
+
+      ## 高优先级进程被杀
+      {{high_priority_kills}}
+
+      ## LMK 频率
+      {{lmk_frequency}}
+
+      ## 进程重启分析
+      {{process_restart_after_lmk}}
+
+      请分析：
+      1. 内存压力程度评估
+      2. LMK 的主要触发原因
+      3. 是否影响用户体验 (前台/可见进程被杀)
+      4. 是否存在进程杀-重启循环
+      5. 内存优化建议
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "LMK 分析总结"
+      content: |
+        ## LMK 概览
+        {{lmk_overview}}
+
+        ## 高优先级进程被杀
+        {{high_priority_kills}}
+
+        ## LMK 频率
+        {{lmk_frequency}}
+
+        ## AI 综合分析
+        {{lmk_ai_summary}}

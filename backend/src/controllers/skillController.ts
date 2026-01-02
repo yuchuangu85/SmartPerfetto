@@ -7,22 +7,22 @@
 import { Request, Response } from 'express';
 import { getTraceProcessorService } from '../services/traceProcessorService';
 import {
-  SkillAnalysisAdapter,
-  SkillAnalysisRequest,
-  createSkillAnalysisAdapter,
-} from '../services/skillEngine/skillAnalysisAdapter';
+  SkillAnalysisAdapterV2,
+  SkillAnalysisRequestV2,
+  createSkillAnalysisAdapterV2,
+} from '../services/skillEngine/skillAnalysisAdapterV2';
 import { ErrorResponse } from '../types';
 
 class SkillController {
-  private adapter: SkillAnalysisAdapter | null = null;
+  private adapter: SkillAnalysisAdapterV2 | null = null;
 
   /**
    * Get or create the adapter instance
    */
-  private getAdapter(): SkillAnalysisAdapter {
+  private getAdapter(): SkillAnalysisAdapterV2 {
     if (!this.adapter) {
       const traceProcessor = getTraceProcessorService();
-      this.adapter = createSkillAnalysisAdapter(traceProcessor);
+      this.adapter = createSkillAnalysisAdapterV2(traceProcessor);
     }
     return this.adapter;
   }
@@ -76,26 +76,22 @@ class SkillController {
       }
 
       res.json({
-        id: skill.id,
-        name: skill.definition.name,
-        version: skill.definition.version,
-        meta: skill.definition.meta,
-        triggers: skill.definition.triggers,
-        prerequisites: skill.definition.prerequisites,
-        steps: (skill.definition.steps || skill.definition.layers?.flatMap(l => l.steps) || []).map(s => ({
+        id: skill.name,
+        name: skill.name,
+        version: skill.version,
+        type: skill.type,
+        meta: skill.meta,
+        triggers: skill.triggers,
+        prerequisites: skill.prerequisites,
+        steps: (skill.steps || []).map((s: any) => ({
           id: s.id,
           name: s.name,
+          type: s.type,
           description: s.description,
         })),
-        layers: skill.definition.layers?.map(l => ({
-          id: l.id,
-          name: l.name,
-          stepsCount: l.steps.length,
-        })),
-        thresholds: skill.definition.thresholds,
-        diagnostics: skill.definition.diagnostics,
-        hasVendorOverrides: skill.overrides && skill.overrides.length > 0,
-        sopContent: skill.sopContent,
+        inputs: skill.inputs,
+        thresholds: skill.thresholds,
+        output: skill.output,
       });
     } catch (error) {
       console.error('[SkillController] Error getting skill detail:', error);
@@ -133,7 +129,7 @@ class SkillController {
 
       const adapter = this.getAdapter();
 
-      const request: SkillAnalysisRequest = {
+      const request: SkillAnalysisRequestV2 = {
         traceId,
         skillId,
         packageName,
@@ -177,7 +173,7 @@ class SkillController {
 
       const adapter = this.getAdapter();
 
-      const request: SkillAnalysisRequest = {
+      const request: SkillAnalysisRequestV2 = {
         traceId,
         skillId,
         question,
@@ -231,8 +227,8 @@ class SkillController {
       res.json({
         matched: true,
         skillId,
-        skillName: skill?.definition.meta.display_name || skillId,
-        skillDescription: skill?.definition.meta.description,
+        skillName: skill?.meta.display_name || skillId,
+        skillDescription: skill?.meta.description,
       });
     } catch (error) {
       console.error('[SkillController] Error detecting intent:', error);
@@ -266,7 +262,6 @@ class SkillController {
       res.json({
         vendor: vendorResult.vendor,
         confidence: vendorResult.confidence,
-        matchedPatterns: vendorResult.matchedPatterns,
       });
     } catch (error) {
       console.error('[SkillController] Error detecting vendor:', error);

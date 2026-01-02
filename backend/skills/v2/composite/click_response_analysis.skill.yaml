@@ -1,0 +1,469 @@
+# =============================================================================
+# 点击响应分析 v2.2（组合 Skill）- 基于 Perfetto stdlib 优化版
+# =============================================================================
+# 使用 Perfetto stdlib 的 android_input_events 表进行深度分析
+#
+# v2.2 新增：
+# - Iterator 模式：逐个慢输入事件详细分析
+# - 大小核分析：输入处理期间 CPU 大小核占比
+# - 四大象限分析：Running/Runnable/Sleeping 状态分布
+# - Perfetto 跳转链接：点击跳转到输入事件区间
+#
+# 核心表：
+# - android_input_events: 输入事件完整延迟分解
+#   - dispatch_latency_dur: 系统分发延迟
+#   - handling_latency_dur: 应用处理延迟
+#   - ack_latency_dur: ACK 延迟
+#   - total_latency_dur: 端到端延迟
+#   - end_to_end_latency_dur: 输入到帧渲染延迟
+#   - frame_id: 关联的帧 ID
+# - android_motion_events: 触摸事件详情
+# - android_key_events: 按键事件详情
+
+name: click_response_analysis
+version: "2.2"
+type: composite
+
+meta:
+  display_name: "点击响应分析"
+  description: "分析输入事件处理延迟、点击响应速度和响应链路"
+  icon: "hand-pointer"
+  tags: [click, tap, input, response, latency, composite]
+
+triggers:
+  keywords:
+    zh: [点击, 点击响应, 触摸, 输入延迟, 点击慢, 响应慢, 点击卡顿]
+    en: [click, tap, touch, input latency, response time, click delay]
+  patterns:
+    - ".*点击.*慢.*"
+    - ".*点击.*卡.*"
+    - ".*响应.*延迟.*"
+    - ".*input.*latency.*"
+
+prerequisites:
+  modules:
+    - android.input
+
+inputs:
+  - name: package
+    type: string
+    required: false
+    description: "应用包名（可选）"
+
+steps:
+  # ========== 检查输入事件数据 ==========
+  - id: check_input_data
+    type: atomic
+    name: "检查输入事件数据"
+    display:
+      level: summary
+      title: "数据检查"
+    sql: |
+      SELECT
+        COUNT(*) as event_count,
+        CASE WHEN COUNT(*) > 0 THEN 'available' ELSE 'unavailable' END as status
+      FROM android_input_events
+      WHERE process_name GLOB '${package}*' OR '${package}' = ''
+    save_as: input_check
+
+  # ========== 输入延迟概览（使用 android_input_events）==========
+  - id: input_latency_overview
+    type: atomic
+    name: "输入延迟概览"
+    display:
+      level: key
+      title: "输入延迟概览"
+    sql: |
+      SELECT
+        COUNT(*) as total_events,
+        -- 分发延迟（系统责任）
+        ROUND(AVG(dispatch_latency_dur) / 1e6, 2) as avg_dispatch_ms,
+        ROUND(MAX(dispatch_latency_dur) / 1e6, 2) as max_dispatch_ms,
+        -- 处理延迟（应用责任）
+        ROUND(AVG(handling_latency_dur) / 1e6, 2) as avg_handling_ms,
+        ROUND(MAX(handling_latency_dur) / 1e6, 2) as max_handling_ms,
+        -- ACK 延迟
+        ROUND(AVG(ack_latency_dur) / 1e6, 2) as avg_ack_ms,
+        -- 总延迟
+        ROUND(AVG(total_latency_dur) / 1e6, 2) as avg_total_ms,
+        ROUND(MAX(total_latency_dur) / 1e6, 2) as max_total_ms,
+        -- 端到端延迟（到帧渲染）
+        ROUND(AVG(end_to_end_latency_dur) / 1e6, 2) as avg_e2e_ms,
+        ROUND(MAX(end_to_end_latency_dur) / 1e6, 2) as max_e2e_ms,
+        -- 评级
+        CASE
+          WHEN AVG(total_latency_dur) / 1e6 < 50 THEN '优秀 (<50ms)'
+          WHEN AVG(total_latency_dur) / 1e6 < 100 THEN '良好 (50-100ms)'
+          WHEN AVG(total_latency_dur) / 1e6 < 200 THEN '可接受 (100-200ms)'
+          ELSE '较差 (>200ms)'
+        END as rating
+      FROM android_input_events
+      WHERE process_name GLOB '${package}*' OR '${package}' = ''
+    save_as: latency_overview
+    condition: input_check.data[0]?.status === 'available'
+
+  # ========== 按事件类型分析 ==========
+  - id: latency_by_event_type
+    type: atomic
+    name: "按事件类型分析"
+    display:
+      level: key
+      title: "各事件类型延迟"
+    sql: |
+      SELECT
+        event_type,
+        event_action,
+        COUNT(*) as count,
+        ROUND(AVG(total_latency_dur) / 1e6, 2) as avg_latency_ms,
+        ROUND(MAX(total_latency_dur) / 1e6, 2) as max_latency_ms,
+        ROUND(AVG(handling_latency_dur) / 1e6, 2) as avg_handling_ms,
+        -- 慢事件数
+        SUM(CASE WHEN total_latency_dur / 1e6 > 100 THEN 1 ELSE 0 END) as slow_events
+      FROM android_input_events
+      WHERE process_name GLOB '${package}*' OR '${package}' = ''
+      GROUP BY event_type, event_action
+      ORDER BY avg_latency_ms DESC
+    save_as: latency_by_type
+    condition: input_check.data[0]?.status === 'available'
+
+  # ========== 慢输入事件详情 ==========
+  - id: slow_input_events
+    type: atomic
+    name: "慢输入事件"
+    display:
+      level: key
+      title: "慢输入事件详情 (>100ms)"
+    sql: |
+      SELECT
+        event_type,
+        event_action,
+        event_channel,
+        ROUND(total_latency_dur / 1e6, 2) as total_ms,
+        ROUND(dispatch_latency_dur / 1e6, 2) as dispatch_ms,
+        ROUND(handling_latency_dur / 1e6, 2) as handling_ms,
+        ROUND(ack_latency_dur / 1e6, 2) as ack_ms,
+        ROUND(end_to_end_latency_dur / 1e6, 2) as e2e_ms,
+        thread_name,
+        process_name,
+        frame_id,
+        -- 时间戳用于详细分析
+        printf('%d', dispatch_ts) as event_ts,
+        printf('%d', receive_ts + receive_dur) as event_end_ts,
+        -- Perfetto 跳转参数（前后各扩展 20ms）
+        printf('%d', CAST(dispatch_ts - 20000000 AS INTEGER)) as perfetto_start,
+        printf('%d', CAST(receive_ts + receive_dur + 20000000 AS INTEGER)) as perfetto_end,
+        CASE
+          WHEN total_latency_dur / 1e6 > 200 THEN 'critical'
+          WHEN total_latency_dur / 1e6 > 100 THEN 'warning'
+          ELSE 'notice'
+        END as severity,
+        -- 延迟主要来源
+        CASE
+          WHEN dispatch_latency_dur > handling_latency_dur AND dispatch_latency_dur > ack_latency_dur THEN '系统分发'
+          WHEN handling_latency_dur > ack_latency_dur THEN '应用处理'
+          ELSE 'ACK'
+        END as main_bottleneck
+      FROM android_input_events
+      WHERE (process_name GLOB '${package}*' OR '${package}' = '')
+        AND total_latency_dur > 100000000  -- > 100ms
+      ORDER BY total_latency_dur DESC
+      LIMIT 20
+    save_as: slow_events
+    condition: input_check.data[0]?.status === 'available'
+
+  # ========== 输入期间主线程状态分析（深度 JOIN）==========
+  - id: input_thread_state
+    type: atomic
+    name: "输入期间主线程状态"
+    display:
+      level: detail
+      title: "输入处理期间主线程状态"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid, p.name as process_name
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+          AND t.tid = p.pid
+        LIMIT 1
+      ),
+      slow_inputs AS (
+        SELECT
+          dispatch_ts as input_ts,
+          receive_ts + receive_dur as input_end_ts,
+          total_latency_dur,
+          event_type
+        FROM android_input_events
+        WHERE (process_name GLOB '${package}*' OR '${package}' = '')
+          AND total_latency_dur > 50000000  -- > 50ms
+        ORDER BY total_latency_dur DESC
+        LIMIT 10
+      )
+      SELECT
+        si.event_type,
+        si.total_latency_dur / 1e6 as input_dur_ms,
+        ts.state,
+        SUM(
+          CASE
+            WHEN ts.ts + ts.dur <= si.input_ts THEN 0
+            WHEN ts.ts >= si.input_end_ts THEN 0
+            ELSE MIN(ts.ts + ts.dur, si.input_end_ts) - MAX(ts.ts, si.input_ts)
+          END
+        ) / 1e6 as state_dur_ms,
+        ts.blocked_function
+      FROM slow_inputs si
+      JOIN thread_state ts ON ts.utid = (SELECT utid FROM main_thread)
+      WHERE ts.ts + ts.dur > si.input_ts
+        AND ts.ts < si.input_end_ts
+      GROUP BY si.input_ts, ts.state, ts.blocked_function
+      ORDER BY si.total_latency_dur DESC, state_dur_ms DESC
+      LIMIT 30
+    save_as: input_thread_state
+    condition: input_check.data[0]?.status === 'available'
+
+  # ========== 输入期间 Binder 调用 ==========
+  - id: input_binder_calls
+    type: atomic
+    name: "输入期间 Binder"
+    display:
+      level: detail
+      title: "输入处理期间 Binder 调用"
+    sql: |
+      WITH slow_inputs AS (
+        SELECT
+          dispatch_ts as input_ts,
+          receive_ts + receive_dur as input_end_ts,
+          total_latency_dur
+        FROM android_input_events
+        WHERE (process_name GLOB '${package}*' OR '${package}' = '')
+          AND total_latency_dur > 50000000
+        ORDER BY total_latency_dur DESC
+        LIMIT 10
+      )
+      SELECT
+        bt.server_process,
+        bt.aidl_name,
+        COUNT(*) as call_count,
+        SUM(bt.client_dur) / 1e6 as total_dur_ms,
+        ROUND(AVG(bt.client_dur) / 1e6, 2) as avg_dur_ms,
+        SUM(CASE WHEN bt.is_main_thread THEN 1 ELSE 0 END) as main_thread_calls
+      FROM android_binder_txns bt
+      JOIN slow_inputs si ON (
+        bt.client_ts >= si.input_ts AND bt.client_ts < si.input_end_ts
+      )
+      WHERE bt.client_process GLOB '${package}*'
+      GROUP BY bt.server_process, bt.aidl_name
+      ORDER BY total_dur_ms DESC
+      LIMIT 15
+    save_as: input_binder
+    condition: input_check.data[0]?.status === 'available'
+
+  # ========== 输入到帧关联分析 ==========
+  - id: input_to_frame
+    type: atomic
+    name: "输入到帧关联"
+    display:
+      level: detail
+      title: "输入到帧渲染延迟"
+    sql: |
+      SELECT
+        ie.event_type,
+        ie.event_action,
+        ie.end_to_end_latency_dur / 1e6 as e2e_latency_ms,
+        ie.frame_id,
+        -- 关联帧信息
+        af.dur / 1e6 as frame_dur_ms,
+        ie.total_latency_dur / 1e6 as input_latency_ms,
+        -- 输入到首帧的延迟
+        CASE
+          WHEN ie.end_to_end_latency_dur / 1e6 > 200 THEN 'critical'
+          WHEN ie.end_to_end_latency_dur / 1e6 > 100 THEN 'warning'
+          WHEN ie.end_to_end_latency_dur / 1e6 > 50 THEN 'notice'
+          ELSE 'good'
+        END as rating
+      FROM android_input_events ie
+      LEFT JOIN android_frames af ON ie.frame_id = af.frame_id
+      WHERE (ie.process_name GLOB '${package}*' OR '${package}' = '')
+        AND ie.frame_id IS NOT NULL
+        AND ie.end_to_end_latency_dur > 0
+      ORDER BY ie.end_to_end_latency_dur DESC
+      LIMIT 20
+    save_as: input_to_frame
+    condition: input_check.data[0]?.status === 'available'
+
+  # ========== 延迟分布分析 ==========
+  - id: latency_distribution
+    type: atomic
+    name: "延迟分布"
+    display:
+      level: summary
+      title: "输入延迟分布"
+    sql: |
+      SELECT
+        CASE
+          WHEN total_latency_dur / 1e6 < 16 THEN '<16ms (极快)'
+          WHEN total_latency_dur / 1e6 < 50 THEN '16-50ms (快)'
+          WHEN total_latency_dur / 1e6 < 100 THEN '50-100ms (正常)'
+          WHEN total_latency_dur / 1e6 < 200 THEN '100-200ms (慢)'
+          ELSE '>200ms (很慢)'
+        END as latency_bucket,
+        COUNT(*) as count,
+        ROUND(100.0 * COUNT(*) / (
+          SELECT COUNT(*) FROM android_input_events
+          WHERE process_name GLOB '${package}*' OR '${package}' = ''
+        ), 1) as percent
+      FROM android_input_events
+      WHERE process_name GLOB '${package}*' OR '${package}' = ''
+      GROUP BY latency_bucket
+      ORDER BY
+        CASE latency_bucket
+          WHEN '<16ms (极快)' THEN 1
+          WHEN '16-50ms (快)' THEN 2
+          WHEN '50-100ms (正常)' THEN 3
+          WHEN '100-200ms (慢)' THEN 4
+          ELSE 5
+        END
+    save_as: latency_distribution
+    condition: input_check.data[0]?.status === 'available'
+
+  # ========== 逐个慢输入事件详细分析 ==========
+  - id: analyze_slow_events
+    type: iterator
+    name: "慢输入事件详细分析"
+    display:
+      level: key
+      title: "慢输入事件详细分析"
+    source: slow_events
+    skill: click_response_detail
+    item_params:
+      event_ts: event_ts
+      event_end_ts: event_end_ts
+      total_ms: total_ms
+      dispatch_ms: dispatch_ms
+      handling_ms: handling_ms
+      event_type: event_type
+      event_action: event_action
+      process_name: process_name
+      perfetto_start: perfetto_start
+      perfetto_end: perfetto_end
+    condition: slow_events.data.length > 0
+
+  # ========== 点击响应诊断 ==========
+  - id: click_diagnosis
+    type: diagnostic
+    name: "点击响应诊断"
+    display:
+      level: key
+      title: "问题诊断"
+    inputs: [latency_overview, slow_events, input_thread_state, input_binder]
+    rules:
+      # 平均延迟过高
+      - condition: "${latency_overview.data[0]?.avg_total_ms > 100}"
+        severity: critical
+        diagnosis: "平均输入延迟过高 (${latency_overview.data[0].avg_total_ms}ms)"
+        confidence: high
+        suggestions:
+          - "检查主线程是否有耗时操作"
+          - "优化事件处理逻辑"
+          - "将耗时操作移到后台线程"
+
+      # 应用处理延迟高
+      - condition: "${latency_overview.data[0]?.avg_handling_ms > 50}"
+        severity: warning
+        diagnosis: "应用处理延迟偏高 (${latency_overview.data[0].avg_handling_ms}ms)"
+        confidence: high
+        suggestions:
+          - "优化 onClick/onTouchEvent 处理"
+          - "避免在事件处理中进行 IO 操作"
+
+      # 系统分发延迟高
+      - condition: "${latency_overview.data[0]?.avg_dispatch_ms > 20}"
+        severity: warning
+        diagnosis: "系统分发延迟偏高 (${latency_overview.data[0].avg_dispatch_ms}ms)"
+        confidence: medium
+        suggestions:
+          - "可能是系统负载过高"
+          - "检查输入系统是否有瓶颈"
+
+      # 存在严重慢事件
+      - condition: "${slow_events.data[0]?.total_ms > 200}"
+        severity: critical
+        diagnosis: "存在严重慢输入事件 (${slow_events.data[0].total_ms}ms)"
+        confidence: high
+        suggestions:
+          - "分析该事件期间主线程状态"
+          - "检查是否有 Binder/IO 阻塞"
+
+      # Binder 阻塞
+      - condition: "${input_binder.data[0]?.total_dur_ms > 30}"
+        severity: warning
+        diagnosis: "输入期间存在 Binder 阻塞 (${input_binder.data[0].total_dur_ms}ms)"
+        confidence: high
+        suggestions:
+          - "将 Binder 调用移到后台线程"
+          - "使用异步 Binder 接口"
+
+  # ========== AI 总结 ==========
+  - id: global_summary
+    type: ai_summary
+    name: "分析总结"
+    display:
+      level: key
+      title: "点击响应分析总结"
+    inputs: [input_check, latency_overview, latency_by_type, slow_events, analyze_slow_events, latency_distribution, click_diagnosis]
+    prompt: |
+      请基于以下点击响应分析结果，生成专业的性能评估总结。
+
+      ## 数据检查
+      ${input_check}
+
+      ## 输入延迟概览
+      ${latency_overview}
+
+      ## 各事件类型延迟
+      ${latency_by_type}
+
+      ## 慢输入事件
+      ${slow_events}
+
+      ## 逐个慢输入事件详细分析（大小核、四象限）
+      ${analyze_slow_events}
+
+      ## 延迟分布
+      ${latency_distribution}
+
+      ## 诊断结果
+      ${click_diagnosis}
+
+      ## 专业分析要求
+
+      如果无输入事件数据，请输出：
+      "未检测到输入事件数据。
+
+      可能原因：
+      - Trace 未包含输入事件（需要启用 android.input 模块）
+      - 采集期间未进行点击操作
+
+      建议：如需分析点击响应，请确保 Trace 包含输入事件数据，并在采集期间进行点击操作。"
+
+      如果有数据，请分析并输出：
+      1. **整体评价**：
+         - 总延迟：<50ms优秀，50-100ms良好，100-200ms可接受，>200ms较差
+         - 区分系统分发延迟 vs 应用处理延迟
+      2. **延迟分解**：
+         - dispatch_latency: 系统分发耗时
+         - handling_latency: 应用处理耗时
+         - ack_latency: ACK 耗时
+      3. **四象限分析**：大核/小核 Running 占比，Runnable 等待时间
+      4. **瓶颈定位**：延迟主要来自哪个环节
+      5. **优化建议**：基于实际问题给出1-3条具体建议
+
+      ## 严格要求
+      - 只基于提供的实际数据分析
+      - 使用 Perfetto 标准的延迟分解术语
+      - 格式清晰，不超过400字
+
+output:
+  display:
+    level: key
+    format: summary

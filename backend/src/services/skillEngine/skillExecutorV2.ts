@@ -40,7 +40,14 @@ class ExpressionEvaluator {
    * 支持：${variable}、${step.field}、比较运算符等
    */
   static evaluate(expression: string, context: SkillExecutionContextV2): any {
-    // 替换变量引用
+    // 检查是否是完整的 ${...} 表达式（整个字符串被包裹）
+    const fullExprMatch = expression.match(/^\$\{(.+)\}$/s);
+    if (fullExprMatch) {
+      // 这是一个 JavaScript 表达式，需要完整求值
+      return this.evaluateJsExpression(fullExprMatch[1], context);
+    }
+
+    // 否则，做简单的变量替换
     let result = expression;
 
     // 替换 ${xxx} 格式的变量
@@ -65,48 +72,199 @@ class ExpressionEvaluator {
   }
 
   /**
-   * 解析路径引用，如 "step1.field1" 或 "item.ts"
+   * 评估 JavaScript 表达式
+   * 例如: performance_summary.data[0]?.app_jank_rate > 10
+   */
+  private static evaluateJsExpression(expr: string, context: SkillExecutionContextV2): any {
+    try {
+      // 从表达式中提取根变量名
+      const rootVarNames = this.extractRootVariables(expr);
+
+      // 构建作用域对象
+      const scope: Record<string, any> = {};
+
+      for (const varName of rootVarNames) {
+        // 从步骤结果中获取
+        if (context.results[varName]) {
+          scope[varName] = { data: context.results[varName].data };
+        }
+        // 从变量中获取
+        else if (context.variables[varName] !== undefined) {
+          scope[varName] = { data: context.variables[varName] };
+        }
+        // 从参数中获取
+        else if (context.params[varName] !== undefined) {
+          scope[varName] = context.params[varName];
+        }
+        // 从继承上下文中获取
+        else if (context.inherited[varName] !== undefined) {
+          scope[varName] = context.inherited[varName];
+        }
+        // 当前迭代项
+        else if (varName === 'item' && context.currentItem) {
+          scope[varName] = context.currentItem;
+        }
+      }
+
+      // 构建并执行函数
+      const varNames = Object.keys(scope);
+      const varValues = Object.values(scope);
+
+      if (varNames.length === 0) {
+        // 没有变量，直接求值（纯表达式如 true, false, 数字比较）
+        return new Function(`return ${expr}`)();
+      }
+
+      const fn = new Function(...varNames, `return ${expr}`);
+      const result = fn(...varValues);
+
+      return result;
+    } catch (e: any) {
+      console.warn('[ExpressionEvaluator] JS expression failed:', expr, e.message);
+      return undefined;
+    }
+  }
+
+  /**
+   * 从表达式中提取根变量名
+   * "performance_summary.data[0]?.app_jank_rate > 10" => ["performance_summary"]
+   * "jank_stats.data.find(j => j.jank_type)" => ["jank_stats"]
+   */
+  private static extractRootVariables(expr: string): string[] {
+    const varNames = new Set<string>();
+
+    // 匹配标识符开头的词（不是关键字）
+    const identifierRegex = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+    const jsKeywords = new Set([
+      'true', 'false', 'null', 'undefined', 'if', 'else', 'return',
+      'function', 'var', 'let', 'const', 'new', 'this', 'typeof',
+      'instanceof', 'in', 'of', 'for', 'while', 'do', 'break', 'continue',
+      'switch', 'case', 'default', 'try', 'catch', 'finally', 'throw',
+      'async', 'await', 'class', 'extends', 'super', 'import', 'export',
+      'NaN', 'Infinity', 'Math', 'JSON', 'Array', 'Object', 'String',
+      'Number', 'Boolean', 'Date', 'RegExp', 'Error', 'Map', 'Set',
+    ]);
+
+    let match;
+    while ((match = identifierRegex.exec(expr)) !== null) {
+      const name = match[1];
+      // 跳过 JavaScript 关键字和内置对象
+      if (!jsKeywords.has(name)) {
+        // 检查是否是表达式开头或者在运算符后面（说明是根变量）
+        const beforeMatch = expr.substring(0, match.index);
+        const lastChar = beforeMatch.trim().slice(-1);
+        // 如果之前没有 . 则是根变量
+        if (lastChar !== '.') {
+          varNames.add(name);
+        }
+      }
+    }
+
+    return Array.from(varNames);
+  }
+
+  /**
+   * 解析路径引用，支持深层嵌套和数组索引
+   * 例如: "step1.data[0].field" 或 "performance_summary.data[0].app_jank_rate"
    */
   static resolvePath(path: string, context: SkillExecutionContextV2): any {
-    const parts = path.split('.');
+    // 解析路径为 token 数组，支持 . 分隔和 [n] 数组索引
+    const tokens = this.parsePath(path);
+    if (tokens.length === 0) return undefined;
 
-    // 尝试从不同来源解析
+    const rootKey = tokens[0];
+
+    // 获取根值
+    let value: any;
+
+    // 尝试从不同来源解析根值
     // 1. 当前迭代项
-    if (parts[0] === 'item' && context.currentItem) {
-      return parts.length === 1 ? context.currentItem : context.currentItem[parts[1]];
+    if (rootKey === 'item' && context.currentItem) {
+      value = context.currentItem;
     }
-
     // 2. 参数
-    if (context.params[parts[0]] !== undefined) {
-      const value = context.params[parts[0]];
-      return parts.length === 1 ? value : value?.[parts[1]];
+    else if (context.params[rootKey] !== undefined) {
+      value = context.params[rootKey];
     }
-
     // 3. 继承的上下文
-    if (context.inherited[parts[0]] !== undefined) {
-      const value = context.inherited[parts[0]];
-      return parts.length === 1 ? value : value?.[parts[1]];
+    else if (context.inherited[rootKey] !== undefined) {
+      value = context.inherited[rootKey];
     }
-
-    // 4. 变量（save_as 保存的）
-    if (context.variables[parts[0]] !== undefined) {
-      const value = context.variables[parts[0]];
-      if (parts.length === 1) return value;
-      // 如果是数组，取第一个元素的字段
-      if (Array.isArray(value) && value.length > 0) {
-        return value[0][parts[1]];
+    // 4. 变量（save_as 保存的）- 也需要包装以支持 .data[0].field 访问
+    else if (context.variables[rootKey] !== undefined) {
+      // 如果路径包含 .data，需要包装；否则直接返回
+      const nextToken = tokens[1];
+      if (nextToken === 'data') {
+        value = { data: context.variables[rootKey] };
+      } else {
+        // 直接访问数组元素，如 ${main_slices[0].name}
+        value = context.variables[rootKey];
       }
-      return value?.[parts[1]];
+    }
+    // 5. 步骤结果 - 返回包装对象以支持 .data[0].field 访问
+    else if (context.results[rootKey]) {
+      // 返回包含 data 属性的对象，这样 ${main_slices.data[0].name} 才能正确解析
+      value = { data: context.results[rootKey].data };
+    }
+    else {
+      return undefined;
     }
 
-    // 5. 步骤结果
-    if (context.results[parts[0]]) {
-      const stepResult = context.results[parts[0]];
-      if (parts.length === 1) return stepResult.data;
-      return stepResult.data?.[parts[1]];
+    // 遍历剩余 token 解析深层路径
+    for (let i = 1; i < tokens.length; i++) {
+      if (value == null) return undefined;
+      const token = tokens[i];
+
+      // 处理数组索引 (纯数字)
+      if (/^\d+$/.test(token)) {
+        const index = parseInt(token, 10);
+        if (!Array.isArray(value)) return undefined;
+        value = value[index];
+      } else {
+        // 处理对象属性
+        value = value[token];
+      }
     }
 
-    return undefined;
+    return value;
+  }
+
+  /**
+   * 解析路径字符串为 token 数组
+   * "step.data[0].field" => ["step", "data", "0", "field"]
+   */
+  private static parsePath(path: string): string[] {
+    const tokens: string[] = [];
+    let current = '';
+
+    for (let i = 0; i < path.length; i++) {
+      const char = path[i];
+
+      if (char === '.') {
+        if (current) {
+          tokens.push(current);
+          current = '';
+        }
+      } else if (char === '[') {
+        if (current) {
+          tokens.push(current);
+          current = '';
+        }
+      } else if (char === ']') {
+        if (current) {
+          tokens.push(current);
+          current = '';
+        }
+      } else {
+        current += char;
+      }
+    }
+
+    if (current) {
+      tokens.push(current);
+    }
+
+    return tokens;
   }
 
   /**
@@ -129,6 +287,11 @@ function substituteVariables(sql: string, context: SkillExecutionContextV2): str
   result = result.replace(/\$\{([^}]+)\}/g, (match, path) => {
     const value = ExpressionEvaluator.resolvePath(path, context);
     if (value === undefined) {
+      // 对于简单变量名（如 package），默认返回空字符串
+      // 这样 WHERE 子句中的 '${package}' = '' 会正确匹配
+      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(path)) {
+        return '';
+      }
       console.warn(`[SkillExecutorV2] Variable not found: ${path}`);
       return match;
     }
@@ -702,9 +865,12 @@ export class SkillExecutorV2 {
           ? rule.confidence
           : rule.confidence === 'high' ? 0.9 : rule.confidence === 'medium' ? 0.7 : 0.5;
 
+        // Substitute variables in diagnosis message
+        const diagnosis = ExpressionEvaluator.evaluate(rule.diagnosis, context);
+
         diagnostics.push({
           id: `${step.id}_${diagnostics.length}`,
-          diagnosis: rule.diagnosis,
+          diagnosis,
           confidence,
           severity: confidence >= 0.8 ? 'critical' : confidence >= 0.6 ? 'warning' : 'info',
           suggestions: rule.suggestions,
@@ -935,13 +1101,32 @@ export class SkillExecutorV2 {
     let displayData: DisplayResult['data'];
 
     if (Array.isArray(data) && data.length > 0) {
-      const columns = Object.keys(data[0]);
-      const rows = data.map(row => columns.map(col => row[col]));
-      displayData = { columns, rows };
+      // 检查是否是 iterator 结果（包含 itemIndex, item, result）
+      if (this.isIteratorResult(data)) {
+        displayData = this.flattenIteratorResults(data, stepResult.stepType === 'iterator');
+      } else {
+        // 普通数组 - 转换为表格格式
+        const firstItem = data[0];
+        if (typeof firstItem === 'object' && firstItem !== null) {
+          const columns = Object.keys(firstItem);
+          const rows = data.map(row => columns.map(col => this.formatCellValue(row[col])));
+          displayData = { columns, rows };
+        } else {
+          // 简单数组
+          displayData = { columns: ['value'], rows: data.map(v => [this.formatCellValue(v)]) };
+        }
+      }
     } else if (typeof data === 'string') {
       displayData = { text: data };
+    } else if (data === null || data === undefined) {
+      displayData = { text: '无数据' };
+    } else if (typeof data === 'object') {
+      // 单个对象 - 转换为键值对表格
+      const columns = ['属性', '值'];
+      const rows = Object.entries(data).map(([key, value]) => [key, this.formatCellValue(value)]);
+      displayData = { columns, rows };
     } else {
-      displayData = { text: JSON.stringify(data, null, 2) };
+      displayData = { text: String(data) };
     }
 
     return {
@@ -952,6 +1137,83 @@ export class SkillExecutorV2 {
       data: displayData,
       highlight: config.highlight,
     };
+  }
+
+  /**
+   * 检查数据是否是迭代器结果
+   */
+  private isIteratorResult(data: any[]): boolean {
+    if (data.length === 0) return false;
+    const first = data[0];
+    return typeof first === 'object' && first !== null &&
+           'itemIndex' in first && 'item' in first && 'result' in first;
+  }
+
+  /**
+   * 将迭代器结果展平为可显示的表格
+   */
+  private flattenIteratorResults(data: any[], _isIterator: boolean): DisplayResult['data'] {
+    if (data.length === 0) {
+      return { text: '无迭代结果' };
+    }
+
+    // 从 item 中提取关键字段用于显示
+    const firstItem = data[0].item;
+    const itemKeys = Object.keys(firstItem).filter(key => {
+      // 过滤掉太长的字段（如 ts_str 可以保留，但很长的 JSON 字段不要）
+      const value = firstItem[key];
+      if (typeof value === 'string' && value.length > 200) return false;
+      if (typeof value === 'object' && value !== null) return false;
+      return true;
+    }).slice(0, 6); // 最多显示 6 列
+
+    // 添加一个"状态"列
+    const columns = ['#', ...itemKeys, '分析状态'];
+    const rows = data.map((iterItem, idx) => {
+      const row: (string | number)[] = [idx + 1];
+      for (const key of itemKeys) {
+        row.push(this.formatCellValue(iterItem.item[key]));
+      }
+      // 添加状态
+      row.push(iterItem.result?.success ? '✓ 完成' : '✗ 失败');
+      return row;
+    });
+
+    return { columns, rows };
+  }
+
+  /**
+   * 格式化单元格值用于显示
+   */
+  private formatCellValue(value: any): string | number {
+    if (value === null || value === undefined) {
+      return '-';
+    }
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    if (typeof value === 'string') {
+      // 截断过长的字符串
+      if (value.length > 100) {
+        return value.substring(0, 97) + '...';
+      }
+      return value;
+    }
+    if (typeof value === 'boolean') {
+      return value ? '是' : '否';
+    }
+    if (typeof value === 'object') {
+      // 对象/数组简化显示
+      const str = JSON.stringify(value);
+      if (str.length > 50) {
+        return str.substring(0, 47) + '...';
+      }
+      return str;
+    }
+    return String(value);
   }
 
   /**

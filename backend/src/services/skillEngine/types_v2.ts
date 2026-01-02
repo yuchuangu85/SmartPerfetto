@@ -414,3 +414,43 @@ export interface AIResponseEvent extends SkillEvent {
     tokens?: number;
   };
 }
+
+// =============================================================================
+// Vendor Types (migrated from v1)
+// =============================================================================
+
+export type VendorType = 'oppo' | 'vivo' | 'xiaomi' | 'honor' | 'transsion' | 'mtk' | 'qualcomm' | 'samsung' | 'aosp' | 'unknown';
+
+export interface VendorDetectionResult {
+  vendor: VendorType;
+  confidence: ConfidenceLevel;
+  matchedPatterns?: string[];
+}
+
+// =============================================================================
+// Legacy Compatibility Types (for migration)
+// =============================================================================
+
+/**
+ * Loaded Skill - unified format for both atomic and composite skills
+ */
+export interface LoadedSkill {
+  id: string;
+  definition: SkillDefinitionV2;
+  filePath: string;
+}
+
+/**
+ * Skill Execution Result - simplified result type
+ */
+export interface SkillExecutionResult {
+  skillId: string;
+  skillName: string;
+  success: boolean;
+  sections: Record<string, any>;
+  diagnostics: DiagnosticResult[];
+  summary: string;
+  executionTimeMs: number;
+  displayResults?: DisplayResult[];
+  aiSummary?: string;
+}

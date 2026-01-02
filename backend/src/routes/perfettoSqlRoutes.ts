@@ -13,7 +13,7 @@ import express from 'express';
 import { PerfettoSqlSkill } from '../services/perfettoSqlSkill';
 import { PerfettoSkillType } from '../types/perfettoSql';
 import type { PerfettoSqlRequest } from '../types/perfettoSql';
-import { SkillAnalysisAdapter, createSkillAnalysisAdapter } from '../services/skillEngine/skillAnalysisAdapter';
+import { SkillAnalysisAdapterV2, createSkillAnalysisAdapterV2 } from '../services/skillEngine/skillAnalysisAdapterV2';
 
 const router = express.Router();
 
@@ -24,13 +24,13 @@ import { getTraceProcessorService } from '../services/traceProcessorService';
 const traceProcessorService = getTraceProcessorService();
 const perfettoSqlSkill = new PerfettoSqlSkill(traceProcessorService);
 
-// Skill Engine adapter (uses YAML-based skills)
-let skillAdapter: SkillAnalysisAdapter | null = null;
-const getSkillAdapter = (): SkillAnalysisAdapter => {
-  if (!skillAdapter) {
-    skillAdapter = createSkillAnalysisAdapter(traceProcessorService);
+// Skill Engine adapter V2 (uses YAML-based skills from skills/v2/)
+let skillAdapterV2: SkillAnalysisAdapterV2 | null = null;
+const getSkillAdapter = (): SkillAnalysisAdapterV2 => {
+  if (!skillAdapterV2) {
+    skillAdapterV2 = createSkillAnalysisAdapterV2(traceProcessorService);
   }
-  return skillAdapter;
+  return skillAdapterV2;
 };
 
 // Mapping from route skill names to YAML skill IDs
@@ -82,10 +82,11 @@ async function executeWithSkillEngine(
 
     console.log(`[PerfettoSql] Skill ${skillId} completed in ${Date.now() - startTime}ms`);
 
-    // Convert to legacy format with enhanced data
+    // Convert to response format with v2 enhanced data
     return {
       analysisType: skillId,
       skillEngine: true,
+      skillEngineVersion: 'v2',
       skillName: result.skillName,
       vendor: result.vendor,
       sections: result.sections,
@@ -93,6 +94,12 @@ async function executeWithSkillEngine(
       summary: result.summary,
       executionTimeMs: result.executionTimeMs,
       success: result.success,
+      // v2 新增字段
+      displayResults: result.displayResults,
+      aiSummary: result.aiSummary,
+      directAnswer: result.directAnswer,
+      questionType: result.questionType,
+      answerConfidence: result.answerConfidence,
     };
   } catch (error: any) {
     console.error(`[PerfettoSql] Skill Engine error for ${skillId}:`, error.message);

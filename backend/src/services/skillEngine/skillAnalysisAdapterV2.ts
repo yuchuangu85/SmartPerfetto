@@ -378,11 +378,11 @@ export class SkillAnalysisAdapterV2 {
       return {
         id: skill.name,
         name: skill.name,
-        displayName: skill.meta.display_name,
-        description: skill.meta.description,
+        displayName: skill.meta?.display_name || skill.name,
+        description: skill.meta?.description || '',
         type: skill.type,
         keywords,
-        tags: skill.meta.tags,
+        tags: skill.meta?.tags,
       };
     });
   }

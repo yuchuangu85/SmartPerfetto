@@ -1,0 +1,313 @@
+# =============================================================================
+# 慢点击事件详细分析（组合 Skill）v2.0
+# =============================================================================
+# 分析单个慢输入事件的详细信息，包括：
+# - 延迟分解（dispatch/handling/ack）
+# - CPU 大小核占比
+# - 四大象限分析：Running/Runnable/Sleeping 分布
+# - 主线程阻塞原因
+# - Binder 调用分析
+
+name: click_response_detail
+version: "2.0"
+type: composite
+
+meta:
+  display_name: "慢点击事件详细分析"
+  description: "分析单个慢输入事件的线程状态、Binder、大小核、四象限等详细信息"
+  icon: "hand-pointer"
+  tags: [click, input, detail, analysis, cpu, core, quadrant]
+
+prerequisites:
+  modules:
+    - android.binder
+
+inputs:
+  - name: event_ts
+    type: timestamp
+    required: true
+    description: "事件开始时间戳(ns)"
+  - name: event_end_ts
+    type: timestamp
+    required: true
+    description: "事件结束时间戳(ns)"
+  - name: total_ms
+    type: number
+    required: true
+    description: "总延迟(ms)"
+  - name: dispatch_ms
+    type: number
+    required: false
+    description: "分发延迟(ms)"
+  - name: handling_ms
+    type: number
+    required: false
+    description: "处理延迟(ms)"
+  - name: event_type
+    type: string
+    required: false
+    description: "事件类型"
+  - name: event_action
+    type: string
+    required: false
+    description: "事件动作"
+  - name: process_name
+    type: string
+    required: true
+    description: "进程名"
+  # Perfetto 跳转参数
+  - name: perfetto_start
+    type: timestamp
+    required: false
+    description: "Perfetto 跳转开始时间"
+  - name: perfetto_end
+    type: timestamp
+    required: false
+    description: "Perfetto 跳转结束时间"
+
+steps:
+  # ========== 事件基本信息 ==========
+  - id: event_info
+    type: atomic
+    name: "事件基本信息"
+    display:
+      level: key
+      title: "事件详情"
+    sql: |
+      SELECT
+        '${event_type}' as event_type,
+        '${event_action}' as event_action,
+        '${process_name}' as process_name,
+        ROUND(${total_ms}, 2) as total_ms,
+        ROUND(COALESCE(${dispatch_ms}, 0), 2) as dispatch_ms,
+        ROUND(COALESCE(${handling_ms}, 0), 2) as handling_ms,
+        printf('%d', ${event_ts}) as event_ts,
+        printf('%d', ${event_end_ts}) as event_end_ts,
+        -- Perfetto 跳转链接参数
+        printf('%d', COALESCE(${perfetto_start}, ${event_ts})) as perfetto_start,
+        printf('%d', COALESCE(${perfetto_end}, ${event_end_ts})) as perfetto_end,
+        -- 延迟主要来源
+        CASE
+          WHEN COALESCE(${dispatch_ms}, 0) > COALESCE(${handling_ms}, 0) THEN '系统分发'
+          ELSE '应用处理'
+        END as main_bottleneck,
+        -- 评级
+        CASE
+          WHEN ${total_ms} > 200 THEN '严重'
+          WHEN ${total_ms} > 100 THEN '较慢'
+          ELSE '偏慢'
+        END as rating
+    save_as: event_basic
+
+  # ========== 大小核占比分析 ==========
+  - id: cpu_core_analysis
+    type: atomic
+    name: "大小核占比分析"
+    display:
+      level: key
+      title: "大小核占比"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid, t.tid, p.pid
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${process_name}*'
+          AND t.tid = p.pid
+      ),
+      cpu_time AS (
+        SELECT
+          ss.cpu,
+          SUM(
+            MIN(ss.ts + ss.dur, ${event_end_ts}) - MAX(ss.ts, ${event_ts})
+          ) / 1e6 as dur_ms,
+          CASE
+            WHEN ss.cpu >= 4 THEN 'big'
+            ELSE 'little'
+          END as core_type
+        FROM sched_slice ss
+        JOIN main_thread mt ON ss.utid = mt.utid
+        WHERE ss.ts < ${event_end_ts}
+          AND ss.ts + ss.dur > ${event_ts}
+        GROUP BY ss.cpu
+      )
+      SELECT
+        'MainThread' as thread_type,
+        ROUND(SUM(CASE WHEN core_type = 'big' THEN dur_ms ELSE 0 END), 2) as big_core_ms,
+        ROUND(SUM(CASE WHEN core_type = 'little' THEN dur_ms ELSE 0 END), 2) as little_core_ms,
+        ROUND(SUM(dur_ms), 2) as total_running_ms,
+        ROUND(100.0 * SUM(CASE WHEN core_type = 'big' THEN dur_ms ELSE 0 END) /
+              NULLIF(SUM(dur_ms), 0), 1) as big_core_pct,
+        ROUND(100.0 * SUM(dur_ms) / ${total_ms}, 1) as running_pct
+      FROM cpu_time
+      GROUP BY 1
+    save_as: cpu_core
+
+  # ========== 四大象限分析 ==========
+  - id: quadrant_analysis
+    type: atomic
+    name: "四大象限分析"
+    display:
+      level: key
+      title: "四大象限分析"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid, t.tid, p.pid
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${process_name}*'
+          AND t.tid = p.pid
+      ),
+      thread_states AS (
+        SELECT
+          ts.state,
+          ts.cpu,
+          ts.blocked_function,
+          SUM(
+            MIN(ts.ts + ts.dur, ${event_end_ts}) - MAX(ts.ts, ${event_ts})
+          ) / 1e6 as dur_ms
+        FROM thread_state ts
+        JOIN main_thread mt ON ts.utid = mt.utid
+        WHERE ts.ts < ${event_end_ts}
+          AND ts.ts + ts.dur > ${event_ts}
+        GROUP BY ts.state, ts.cpu, ts.blocked_function
+      ),
+      quadrant_data AS (
+        SELECT
+          CASE
+            WHEN state = 'Running' AND cpu >= 4 THEN 'Q1_big_running'
+            WHEN state = 'Running' AND cpu < 4 THEN 'Q2_little_running'
+            WHEN state IN ('R', 'R+') THEN 'Q3_runnable'
+            WHEN state IN ('S', 'D', 'I') THEN 'Q4_sleeping'
+            ELSE 'other'
+          END as quadrant,
+          dur_ms
+        FROM thread_states
+      )
+      SELECT
+        'MainThread' as thread_type,
+        ROUND(SUM(CASE WHEN quadrant = 'Q1_big_running' THEN dur_ms ELSE 0 END), 2) as q1_big_running_ms,
+        ROUND(SUM(CASE WHEN quadrant = 'Q2_little_running' THEN dur_ms ELSE 0 END), 2) as q2_little_running_ms,
+        ROUND(SUM(CASE WHEN quadrant = 'Q3_runnable' THEN dur_ms ELSE 0 END), 2) as q3_runnable_ms,
+        ROUND(SUM(CASE WHEN quadrant = 'Q4_sleeping' THEN dur_ms ELSE 0 END), 2) as q4_sleeping_ms,
+        ROUND(SUM(dur_ms), 2) as total_ms,
+        -- 百分比
+        ROUND(100.0 * SUM(CASE WHEN quadrant = 'Q3_runnable' THEN dur_ms ELSE 0 END) /
+              NULLIF(SUM(dur_ms), 0), 1) as runnable_pct,
+        ROUND(100.0 * SUM(CASE WHEN quadrant = 'Q4_sleeping' THEN dur_ms ELSE 0 END) /
+              NULLIF(SUM(dur_ms), 0), 1) as sleeping_pct
+      FROM quadrant_data
+      GROUP BY 1
+    save_as: quadrant
+
+  # ========== 主线程阻塞原因 ==========
+  - id: blocking_analysis
+    type: atomic
+    name: "阻塞原因分析"
+    display:
+      level: key
+      title: "阻塞原因 Top5"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid, t.tid, p.pid
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${process_name}*'
+          AND t.tid = p.pid
+      )
+      SELECT
+        ts.state,
+        CASE ts.state
+          WHEN 'Running' THEN 'Running (CPU执行)'
+          WHEN 'R' THEN 'Runnable (等待调度)'
+          WHEN 'S' THEN 'Sleeping (主动睡眠)'
+          WHEN 'D' THEN 'Disk Sleep (IO等待)'
+          ELSE ts.state
+        END as state_desc,
+        ts.blocked_function,
+        ROUND(SUM(
+          MIN(ts.ts + ts.dur, ${event_end_ts}) - MAX(ts.ts, ${event_ts})
+        ) / 1e6, 2) as dur_ms,
+        COUNT(*) as count
+      FROM thread_state ts
+      JOIN main_thread mt ON ts.utid = mt.utid
+      WHERE ts.ts < ${event_end_ts}
+        AND ts.ts + ts.dur > ${event_ts}
+      GROUP BY ts.state, ts.blocked_function
+      ORDER BY dur_ms DESC
+      LIMIT 5
+    save_as: blocking
+
+  # ========== Binder 调用分析 ==========
+  - id: binder_analysis
+    type: atomic
+    name: "Binder 调用分析"
+    display:
+      level: key
+      title: "Binder 调用"
+    sql: |
+      SELECT
+        bt.server_process,
+        bt.aidl_name,
+        COUNT(*) as call_count,
+        ROUND(SUM(bt.client_dur) / 1e6, 2) as total_ms,
+        ROUND(MAX(bt.client_dur) / 1e6, 2) as max_ms,
+        SUM(CASE WHEN bt.is_main_thread THEN 1 ELSE 0 END) as main_thread_calls
+      FROM android_binder_txns bt
+      WHERE bt.client_process GLOB '${process_name}*'
+        AND bt.client_ts >= ${event_ts}
+        AND bt.client_ts < ${event_end_ts}
+        AND bt.is_main_thread = 1
+      GROUP BY bt.server_process, bt.aidl_name
+      ORDER BY total_ms DESC
+      LIMIT 5
+    save_as: binder_calls
+
+  # ========== 慢点击诊断 ==========
+  - id: click_diagnosis
+    type: diagnostic
+    name: "慢点击诊断"
+    display:
+      level: key
+      title: "问题诊断"
+    inputs: [event_basic, cpu_core, quadrant, blocking, binder_calls]
+    rules:
+      # Runnable 等待过长
+      - condition: "${quadrant.data[0]?.q3_runnable_ms > 20}"
+        severity: warning
+        diagnosis: "主线程 Runnable 等待 ${quadrant.data[0].q3_runnable_ms}ms"
+        confidence: high
+        suggestions:
+          - "CPU 资源争抢，检查后台线程负载"
+          - "减少并发任务"
+
+      # Sleeping 占比过高
+      - condition: "${quadrant.data[0]?.sleeping_pct > 50}"
+        severity: warning
+        diagnosis: "主线程 Sleeping 占比 ${quadrant.data[0].sleeping_pct}%"
+        confidence: medium
+        suggestions:
+          - "检查主线程阻塞原因"
+          - "将阻塞操作移到后台线程"
+
+      # 大核占比过低
+      - condition: "${cpu_core.data[0]?.big_core_pct < 30 && cpu_core.data[0]?.total_running_ms > 20}"
+        severity: warning
+        diagnosis: "主线程大核占比仅 ${cpu_core.data[0].big_core_pct}%"
+        confidence: medium
+        suggestions:
+          - "主线程被调度到小核"
+          - "检查大核占用情况"
+
+      # Binder 阻塞
+      - condition: "${binder_calls.data[0]?.total_ms > 30}"
+        severity: warning
+        diagnosis: "Binder 调用 ${binder_calls.data[0].server_process} 耗时 ${binder_calls.data[0].total_ms}ms"
+        confidence: high
+        suggestions:
+          - "将 Binder 调用移到后台线程"
+          - "使用异步 Binder"
+
+output:
+  display:
+    level: key
+    format: detail
