@@ -1,0 +1,313 @@
+# GC Analysis Skill v2.1
+# Uses Perfetto stdlib: android_garbage_collection_events table
+# Key columns: tid, pid, utid, upid, thread_name, process_name, gc_type, is_mark_compact,
+#              reclaimed_mb, min_heap_mb, max_heap_mb, gc_id, gc_ts, gc_dur,
+#              gc_running_dur, gc_runnable_dur, gc_unint_io_dur, gc_unint_non_io_dur, gc_int_dur
+# GC types: native_alloc, alloc, young, collector_transition, explicit, full
+# Related tables: _android_garbage_collection_process_stats, _android_garbage_collection_stats
+
+name: gc_analysis
+version: "2.1"
+type: composite
+display:
+  name: "GC 分析"
+  level: expert
+  description: "Java 垃圾回收分析，包含 GC 类型分布、耗时分解、内存回收效率和帧影响"
+
+triggers:
+  - pattern: "(GC|gc|垃圾回收|garbage collection)"
+    confidence: 0.95
+  - pattern: "(内存|memory|heap|堆)"
+    confidence: 0.8
+  - pattern: "(卡顿|jank|掉帧)"
+    confidence: 0.7
+
+parameters:
+  - name: process_name
+    type: string
+    required: false
+    description: "目标进程名，留空分析所有 GC 事件"
+  - name: min_gc_dur_ms
+    type: number
+    required: false
+    default: 5
+    description: "最小 GC 时长阈值 (毫秒)"
+
+analysis_steps:
+  # Step 1: GC 概览
+  - id: gc_overview
+    type: diagnostic
+    name: "GC 概览"
+    description: "统计 GC 事件数量和类型分布"
+    sql: |
+      INCLUDE PERFETTO MODULE android.garbage_collection;
+
+      SELECT
+        process_name,
+        gc_type,
+        is_mark_compact,
+        COUNT(*) AS gc_count,
+        SUM(gc_dur) / 1e6 AS total_gc_dur_ms,
+        AVG(gc_dur) / 1e6 AS avg_gc_dur_ms,
+        MAX(gc_dur) / 1e6 AS max_gc_dur_ms,
+        SUM(reclaimed_mb) AS total_reclaimed_mb,
+        AVG(reclaimed_mb) AS avg_reclaimed_mb
+      FROM android_garbage_collection_events
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+        AND gc_dur / 1e6 >= COALESCE({{min_gc_dur_ms}}, 5)
+      GROUP BY process_name, gc_type, is_mark_compact
+      ORDER BY total_gc_dur_ms DESC;
+    interpretation:
+      key_metrics:
+        - name: "gc_type"
+          description: "GC 类型: young=年轻代, alloc=分配触发, full=完整GC, explicit=显式调用"
+        - name: "total_gc_dur_ms"
+          description: "GC 总耗时"
+          thresholds:
+            warning: 100
+            critical: 500
+        - name: "avg_reclaimed_mb"
+          description: "平均每次 GC 回收内存"
+      analysis_hints:
+        - condition: "gc_type = 'alloc' AND gc_count > 20"
+          insight: "频繁分配触发 GC，内存压力大或分配过快"
+        - condition: "gc_type = 'explicit' AND gc_count > 5"
+          insight: "显式 GC 调用，检查是否有 System.gc() 调用"
+
+  # Step 2: GC 耗时分解
+  - id: gc_time_breakdown
+    type: diagnostic
+    name: "GC 耗时分解"
+    description: "分析 GC 期间时间花在哪里"
+    sql: |
+      INCLUDE PERFETTO MODULE android.garbage_collection;
+
+      SELECT
+        process_name,
+        gc_type,
+        COUNT(*) AS gc_count,
+        SUM(gc_running_dur) / 1e6 AS total_running_ms,
+        SUM(gc_runnable_dur) / 1e6 AS total_runnable_ms,
+        SUM(gc_unint_io_dur) / 1e6 AS total_io_wait_ms,
+        SUM(gc_unint_non_io_dur) / 1e6 AS total_kernel_wait_ms,
+        SUM(gc_int_dur) / 1e6 AS total_sleep_ms,
+        SUM(gc_dur) / 1e6 AS total_wall_ms
+      FROM android_garbage_collection_events
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY process_name, gc_type
+      ORDER BY total_wall_ms DESC;
+    interpretation:
+      key_metrics:
+        - name: "total_running_ms"
+          description: "GC 实际 CPU 运行时间"
+        - name: "total_runnable_ms"
+          description: "GC 等待 CPU 调度时间"
+        - name: "total_io_wait_ms"
+          description: "GC 等待 IO 时间"
+      analysis_hints:
+        - condition: "total_runnable_ms > total_running_ms * 0.2"
+          insight: "GC 线程 CPU 调度延迟较高，CPU 可能繁忙"
+        - condition: "total_io_wait_ms > total_running_ms * 0.1"
+          insight: "GC 期间有 IO 等待，可能是内存换页"
+
+  # Step 3: 长耗时 GC 事件
+  - id: long_gc_events
+    type: diagnostic
+    name: "长耗时 GC 事件"
+    description: "识别耗时较长的 GC 事件"
+    sql: |
+      INCLUDE PERFETTO MODULE android.garbage_collection;
+
+      SELECT
+        gc_ts / 1e9 AS time_sec,
+        process_name,
+        thread_name,
+        gc_type,
+        gc_dur / 1e6 AS gc_dur_ms,
+        gc_running_dur / 1e6 AS running_ms,
+        gc_runnable_dur / 1e6 AS runnable_ms,
+        reclaimed_mb,
+        max_heap_mb,
+        min_heap_mb
+      FROM android_garbage_collection_events
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+        AND gc_dur / 1e6 >= COALESCE({{min_gc_dur_ms}}, 5) * 2  -- 2x threshold
+      ORDER BY gc_dur DESC
+      LIMIT 30;
+    interpretation:
+      key_metrics:
+        - name: "gc_dur_ms"
+          description: "GC 耗时 (毫秒)"
+          thresholds:
+            warning: 50
+            critical: 200
+
+  # Step 4: GC 与帧影响关联
+  - id: gc_frame_impact
+    type: diagnostic
+    name: "GC 对帧的影响"
+    description: "分析 GC 发生时对帧渲染的影响"
+    sql: |
+      INCLUDE PERFETTO MODULE android.garbage_collection;
+      INCLUDE PERFETTO MODULE android.frames;
+
+      WITH gc_periods AS (
+        SELECT
+          gc_ts AS ts,
+          gc_dur AS dur,
+          process_name
+        FROM android_garbage_collection_events
+        WHERE CASE WHEN '{{process_name}}' != ''
+                   THEN process_name GLOB '*{{process_name}}*'
+                   ELSE 1 END
+      ),
+      overlapping_frames AS (
+        SELECT
+          gp.process_name,
+          f.jank_type,
+          COUNT(*) AS frame_count
+        FROM gc_periods gp
+        JOIN actual_frame_timeline_slice f
+          ON f.ts < gp.ts + gp.dur
+          AND f.ts + f.dur > gp.ts
+        GROUP BY gp.process_name, f.jank_type
+      )
+      SELECT *
+      FROM overlapping_frames
+      ORDER BY frame_count DESC;
+    interpretation:
+      key_metrics:
+        - name: "jank_type"
+          description: "GC 期间发生的 jank 类型"
+        - name: "frame_count"
+          description: "受影响帧数"
+      analysis_hints:
+        - condition: "jank_type != 'None' AND frame_count > 10"
+          insight: "GC 期间有较多 Jank 帧，GC 可能导致掉帧"
+
+  # Step 5: 进程级 GC 统计
+  - id: process_gc_stats
+    type: diagnostic
+    name: "进程 GC 统计"
+    description: "按进程统计 GC 效率和内存使用"
+    sql: |
+      INCLUDE PERFETTO MODULE android.garbage_collection;
+
+      SELECT
+        process.name AS process_name,
+        s.heap_size_mb,
+        s.heap_allocation_rate AS alloc_rate_mb_per_sec,
+        s.heap_utilization,
+        s.gc_running_dur / 1e9 AS gc_cpu_sec,
+        s.gc_running_rate * 100 AS gc_cpu_pct,
+        s.gc_running_efficiency
+      FROM _android_garbage_collection_process_stats s
+      JOIN process ON s.upid = process.id
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process.name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      ORDER BY gc_cpu_sec DESC;
+    interpretation:
+      key_metrics:
+        - name: "heap_utilization"
+          description: "堆利用率 (越高表示 GC 越激进)"
+        - name: "gc_cpu_pct"
+          description: "GC CPU 占用百分比"
+          thresholds:
+            warning: 5
+            critical: 15
+        - name: "gc_running_efficiency"
+          description: "GC 效率 (越高越好)"
+
+  # Step 6: GC 频率分析
+  - id: gc_frequency
+    type: diagnostic
+    name: "GC 频率分析"
+    description: "按时间统计 GC 频率"
+    sql: |
+      INCLUDE PERFETTO MODULE android.garbage_collection;
+
+      SELECT
+        CAST(gc_ts / 1e9 AS INTEGER) AS time_sec,
+        COUNT(*) AS gc_count,
+        SUM(gc_dur) / 1e6 AS gc_dur_ms,
+        SUM(reclaimed_mb) AS reclaimed_mb
+      FROM android_garbage_collection_events
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY time_sec
+      HAVING gc_count > 0
+      ORDER BY time_sec;
+    interpretation:
+      key_metrics:
+        - name: "gc_count"
+          description: "每秒 GC 次数"
+          thresholds:
+            warning: 3
+            critical: 10
+
+  # Step 7: AI 综合分析
+  - id: gc_ai_summary
+    type: ai_summary
+    name: "GC 性能 AI 分析"
+    description: "综合分析 GC 行为"
+    depends_on:
+      - gc_overview
+      - gc_time_breakdown
+      - long_gc_events
+      - gc_frame_impact
+      - process_gc_stats
+      - gc_frequency
+    prompt: |
+      请基于以下 GC 分析数据，提供专业的分析：
+
+      ## GC 概览
+      {{gc_overview}}
+
+      ## 耗时分解
+      {{gc_time_breakdown}}
+
+      ## 长耗时 GC
+      {{long_gc_events}}
+
+      ## 帧影响
+      {{gc_frame_impact}}
+
+      ## 进程统计
+      {{process_gc_stats}}
+
+      ## 频率分析
+      {{gc_frequency}}
+
+      请分析：
+      1. GC 负载评估
+      2. GC 类型分布是否正常
+      3. GC 对应用性能的影响
+      4. 是否存在内存泄漏迹象
+      5. 优化建议
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "GC 分析总结"
+      content: |
+        ## GC 概览
+        {{gc_overview}}
+
+        ## 耗时分解
+        {{gc_time_breakdown}}
+
+        ## 帧影响
+        {{gc_frame_impact}}
+
+        ## AI 综合分析
+        {{gc_ai_summary}}

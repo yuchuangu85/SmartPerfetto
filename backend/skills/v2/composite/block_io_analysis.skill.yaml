@@ -1,0 +1,267 @@
+# Block IO Analysis Skill v2.1
+# Uses Perfetto stdlib: linux_active_block_io_operations_by_device view
+# Key columns: ts, ops_in_queue_or_device, dev
+# Helper functions: linux_device_major_id(), linux_device_minor_id()
+# Also uses block_io track slices for detailed IO operations
+
+name: block_io_analysis
+version: "2.1"
+type: composite
+display:
+  name: "Block IO 分析"
+  level: expert
+  description: "块设备 I/O 分析，识别 I/O 瓶颈、队列深度和设备负载"
+
+triggers:
+  - pattern: "(IO|I/O|磁盘|disk|存储|storage)"
+    confidence: 0.95
+  - pattern: "(块设备|block device|读写|read write)"
+    confidence: 0.9
+  - pattern: "(IO 延迟|IO latency|IO 等待)"
+    confidence: 0.85
+
+parameters:
+  - name: device
+    type: string
+    required: false
+    description: "设备名过滤"
+  - name: min_queue_depth
+    type: number
+    required: false
+    default: 5
+    description: "最小队列深度阈值"
+
+analysis_steps:
+  # Step 1: IO 操作概览
+  - id: io_overview
+    type: diagnostic
+    name: "IO 操作概览"
+    description: "统计块设备 I/O 操作"
+    sql: |
+      SELECT
+        track.name AS io_type,
+        COUNT(*) AS operation_count,
+        SUM(slice.dur) / 1e6 AS total_dur_ms,
+        AVG(slice.dur) / 1e6 AS avg_dur_ms,
+        MAX(slice.dur) / 1e6 AS max_dur_ms
+      FROM slice
+      JOIN track ON slice.track_id = track.id
+      WHERE track.type = 'block_io'
+      GROUP BY track.name
+      ORDER BY total_dur_ms DESC;
+    interpretation:
+      key_metrics:
+        - name: "operation_count"
+          description: "IO 操作次数"
+        - name: "avg_dur_ms"
+          description: "平均 IO 耗时 (毫秒)"
+          thresholds:
+            warning: 10
+            critical: 50
+        - name: "max_dur_ms"
+          description: "最大 IO 耗时 (毫秒)"
+          thresholds:
+            warning: 100
+            critical: 500
+
+  # Step 2: 设备级 IO 分析
+  - id: device_io_stats
+    type: diagnostic
+    name: "设备级 IO 统计"
+    description: "按设备统计 IO 操作"
+    sql: |
+      WITH io_slices AS (
+        SELECT
+          slice.ts,
+          slice.dur,
+          extract_arg(track.dimension_arg_set_id, 'block_device') AS dev
+        FROM slice
+        JOIN track ON slice.track_id = track.id
+        WHERE track.type = 'block_io'
+      )
+      SELECT
+        dev,
+        COUNT(*) AS io_count,
+        SUM(dur) / 1e6 AS total_io_ms,
+        AVG(dur) / 1e6 AS avg_io_ms,
+        MAX(dur) / 1e6 AS max_io_ms
+      FROM io_slices
+      WHERE dev IS NOT NULL
+      GROUP BY dev
+      ORDER BY total_io_ms DESC;
+    interpretation:
+      key_metrics:
+        - name: "dev"
+          description: "设备标识"
+        - name: "total_io_ms"
+          description: "设备总 IO 时间"
+
+  # Step 3: IO 队列深度分析
+  - id: io_queue_depth
+    type: diagnostic
+    name: "IO 队列深度"
+    description: "分析块设备队列深度变化"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.block_io;
+
+      SELECT
+        dev,
+        MAX(ops_in_queue_or_device) AS max_queue_depth,
+        AVG(ops_in_queue_or_device) AS avg_queue_depth
+      FROM linux_active_block_io_operations_by_device
+      GROUP BY dev
+      ORDER BY max_queue_depth DESC;
+    interpretation:
+      key_metrics:
+        - name: "max_queue_depth"
+          description: "最大队列深度"
+          thresholds:
+            warning: 32
+            critical: 128
+        - name: "avg_queue_depth"
+          description: "平均队列深度"
+      analysis_hints:
+        - condition: "max_queue_depth > 64"
+          insight: "IO 队列积压严重，存在 IO 瓶颈"
+
+  # Step 4: 高队列深度时段
+  - id: high_queue_periods
+    type: diagnostic
+    name: "高队列深度时段"
+    description: "识别 IO 队列深度较高的时段"
+    sql: |
+      INCLUDE PERFETTO MODULE linux.block_io;
+
+      SELECT
+        ts / 1e9 AS time_sec,
+        dev,
+        ops_in_queue_or_device AS queue_depth
+      FROM linux_active_block_io_operations_by_device
+      WHERE ops_in_queue_or_device >= COALESCE({{min_queue_depth}}, 5)
+      ORDER BY ops_in_queue_or_device DESC
+      LIMIT 100;
+    interpretation:
+      key_metrics:
+        - name: "queue_depth"
+          description: "队列深度"
+
+  # Step 5: 长耗时 IO 操作
+  - id: long_io_operations
+    type: diagnostic
+    name: "长耗时 IO"
+    description: "识别耗时较长的 IO 操作"
+    sql: |
+      SELECT
+        slice.ts / 1e9 AS time_sec,
+        track.name AS io_type,
+        slice.dur / 1e6 AS dur_ms,
+        extract_arg(track.dimension_arg_set_id, 'block_device') AS dev
+      FROM slice
+      JOIN track ON slice.track_id = track.id
+      WHERE track.type = 'block_io'
+        AND slice.dur / 1e6 > 10  -- > 10ms
+      ORDER BY slice.dur DESC
+      LIMIT 50;
+    interpretation:
+      key_metrics:
+        - name: "dur_ms"
+          description: "IO 耗时 (毫秒)"
+          thresholds:
+            warning: 50
+            critical: 200
+
+  # Step 6: IO 与线程阻塞关联
+  - id: io_thread_blocking
+    type: diagnostic
+    name: "IO 阻塞线程分析"
+    description: "分析因 IO 阻塞的线程"
+    sql: |
+      SELECT
+        t.name AS thread_name,
+        p.name AS process_name,
+        ts.blocked_function,
+        COUNT(*) AS block_count,
+        SUM(ts.dur) / 1e6 AS total_blocked_ms,
+        AVG(ts.dur) / 1e6 AS avg_blocked_ms
+      FROM thread_state ts
+      JOIN thread t ON ts.utid = t.utid
+      LEFT JOIN process p ON t.upid = p.upid
+      WHERE ts.state = 'D'
+        AND (
+          ts.blocked_function LIKE '%io%'
+          OR ts.blocked_function LIKE '%read%'
+          OR ts.blocked_function LIKE '%write%'
+          OR ts.blocked_function LIKE '%sync%'
+          OR ts.blocked_function LIKE '%block%'
+        )
+      GROUP BY t.name, p.name, ts.blocked_function
+      HAVING total_blocked_ms > 10
+      ORDER BY total_blocked_ms DESC
+      LIMIT 30;
+    interpretation:
+      key_metrics:
+        - name: "total_blocked_ms"
+          description: "IO 阻塞总时间"
+          thresholds:
+            warning: 100
+            critical: 1000
+      analysis_hints:
+        - condition: "blocked_function LIKE '%sync%'"
+          insight: "线程被同步 IO 阻塞，检查是否可改为异步"
+        - condition: "process_name LIKE '%main%' OR thread_name = 'main'"
+          insight: "主线程被 IO 阻塞，影响 UI 响应"
+
+  # Step 7: AI 综合分析
+  - id: io_ai_summary
+    type: ai_summary
+    name: "IO 性能 AI 分析"
+    description: "综合分析 IO 性能"
+    depends_on:
+      - io_overview
+      - device_io_stats
+      - io_queue_depth
+      - long_io_operations
+      - io_thread_blocking
+    prompt: |
+      请基于以下 IO 分析数据，提供专业的分析：
+
+      ## IO 概览
+      {{io_overview}}
+
+      ## 设备 IO 统计
+      {{device_io_stats}}
+
+      ## 队列深度
+      {{io_queue_depth}}
+
+      ## 长耗时 IO
+      {{long_io_operations}}
+
+      ## 线程阻塞分析
+      {{io_thread_blocking}}
+
+      请分析：
+      1. IO 负载评估
+      2. 是否存在 IO 瓶颈
+      3. 主要 IO 来源
+      4. 对应用性能的影响
+      5. 优化建议（异步 IO、缓存策略等）
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "IO 分析总结"
+      content: |
+        ## IO 概览
+        {{io_overview}}
+
+        ## 队列深度
+        {{io_queue_depth}}
+
+        ## 线程阻塞
+        {{io_thread_blocking}}
+
+        ## AI 综合分析
+        {{io_ai_summary}}

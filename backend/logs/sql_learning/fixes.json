@@ -1,0 +1,28 @@
+[
+  {
+    "id": "fix_1767267549336_jmqajkdr5",
+    "timestamp": "2026-01-01T11:39:09.336Z",
+    "errorId": "err_1767267549335_s10l6tsls",
+    "originalSQL": "SELECT DISTINCT name FROM slice WHERE name LIKE \"%Scroll%\" OR name LIKE \"%scroll%\" OR name LIKE \"%Fling%\" LIMIT 30",
+    "fixedSQL": "SELECT DISTINCT name FROM slice WHERE name LIKE \"%Scroll%\" OR name LIKE \"%scroll%\" OR name LIKE \"%Fling%\" LIMIT 30",
+    "fixMethod": "auto",
+    "success": true,
+    "validationResult": {
+      "isValid": true,
+      "errors": []
+    }
+  },
+  {
+    "id": "fix_1767267570380_u9008w7vq",
+    "timestamp": "2026-01-01T11:39:30.380Z",
+    "errorId": "err_1767267570380_9jzuu9e4d",
+    "originalSQL": "SELECT DISTINCT name FROM slice WHERE name LIKE \"%Scroll%\" OR name LIKE \"%scroll%\" OR name LIKE \"%Fling%\" LIMIT 30",
+    "fixedSQL": "SELECT DISTINCT name FROM slice WHERE name LIKE \"%Scroll%\" OR name LIKE \"%scroll%\" OR name LIKE \"%Fling%\" LIMIT 30",
+    "fixMethod": "auto",
+    "success": true,
+    "validationResult": {
+      "isValid": true,
+      "errors": []
+    }
+  }
+]

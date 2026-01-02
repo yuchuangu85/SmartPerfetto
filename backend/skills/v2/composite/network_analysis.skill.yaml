@@ -1,0 +1,309 @@
+# Network Analysis Skill v2.1
+# Uses Perfetto stdlib: android_network_packets view
+# Key columns: ts, dur, track_name, package_name, iface, direction, packet_count,
+#              packet_length, packet_transport, packet_tcp_flags, socket_tag,
+#              socket_uid, local_port, remote_port
+# Macros: android_network_uptime_spans, android_network_uptime_cost
+
+name: network_analysis
+version: "2.1"
+type: composite
+display:
+  name: "网络分析"
+  level: expert
+  description: "网络流量分析，包括流量统计、接口使用、传输协议和功耗影响"
+
+triggers:
+  - pattern: "(网络|network|流量|traffic)"
+    confidence: 0.95
+  - pattern: "(wifi|WiFi|移动网络|cellular|4G|5G)"
+    confidence: 0.9
+  - pattern: "(TCP|UDP|packet|数据包)"
+    confidence: 0.85
+  - pattern: "(网络唤醒|network wakeup|数据传输)"
+    confidence: 0.8
+
+parameters:
+  - name: package_name
+    type: string
+    required: false
+    description: "目标应用包名，留空分析所有网络流量"
+  - name: interface
+    type: string
+    required: false
+    description: "网络接口过滤 (wlan0, rmnet_data0 等)"
+
+analysis_steps:
+  # Step 1: 网络流量概览
+  - id: network_overview
+    type: diagnostic
+    name: "网络流量概览"
+    description: "按接口和方向统计网络流量"
+    sql: |
+      INCLUDE PERFETTO MODULE android.network_packets;
+
+      SELECT
+        iface,
+        direction,
+        COUNT(*) AS event_count,
+        SUM(packet_count) AS total_packets,
+        SUM(packet_length) / 1024 AS total_kb,
+        SUM(packet_length) / 1024 / 1024 AS total_mb
+      FROM android_network_packets
+      WHERE CASE WHEN '{{interface}}' != ''
+                 THEN iface GLOB '*{{interface}}*'
+                 ELSE 1 END
+      GROUP BY iface, direction
+      ORDER BY total_kb DESC;
+    interpretation:
+      key_metrics:
+        - name: "total_mb"
+          description: "总流量 (MB)"
+        - name: "total_packets"
+          description: "总数据包数"
+
+  # Step 2: 应用流量排行
+  - id: app_traffic_ranking
+    type: diagnostic
+    name: "应用流量排行"
+    description: "按应用统计网络流量使用"
+    sql: |
+      INCLUDE PERFETTO MODULE android.network_packets;
+
+      SELECT
+        package_name,
+        direction,
+        COUNT(*) AS event_count,
+        SUM(packet_count) AS total_packets,
+        SUM(packet_length) / 1024 AS total_kb
+      FROM android_network_packets
+      WHERE CASE WHEN '{{package_name}}' != ''
+                 THEN package_name GLOB '*{{package_name}}*'
+                 ELSE 1 END
+        AND CASE WHEN '{{interface}}' != ''
+                 THEN iface GLOB '*{{interface}}*'
+                 ELSE 1 END
+      GROUP BY package_name, direction
+      ORDER BY total_kb DESC
+      LIMIT 30;
+    interpretation:
+      key_metrics:
+        - name: "total_kb"
+          description: "流量使用 (KB)"
+
+  # Step 3: 传输协议分布
+  - id: transport_distribution
+    type: diagnostic
+    name: "传输协议分布"
+    description: "分析各传输协议的使用情况"
+    sql: |
+      INCLUDE PERFETTO MODULE android.network_packets;
+
+      SELECT
+        packet_transport,
+        COUNT(*) AS event_count,
+        SUM(packet_count) AS total_packets,
+        SUM(packet_length) / 1024 AS total_kb
+      FROM android_network_packets
+      WHERE CASE WHEN '{{package_name}}' != ''
+                 THEN package_name GLOB '*{{package_name}}*'
+                 ELSE 1 END
+      GROUP BY packet_transport
+      ORDER BY total_kb DESC;
+    interpretation:
+      key_metrics:
+        - name: "packet_transport"
+          description: "传输协议"
+      analysis_hints:
+        - condition: "packet_transport = 'TCP'"
+          insight: "TCP 流量占主导，适用于可靠传输"
+        - condition: "packet_transport = 'UDP'"
+          insight: "UDP 流量，可能是音视频或游戏"
+
+  # Step 4: 端口使用分析
+  - id: port_analysis
+    type: diagnostic
+    name: "端口使用分析"
+    description: "分析常用端口的流量"
+    sql: |
+      INCLUDE PERFETTO MODULE android.network_packets;
+
+      SELECT
+        remote_port,
+        CASE remote_port
+          WHEN 80 THEN 'HTTP'
+          WHEN 443 THEN 'HTTPS'
+          WHEN 53 THEN 'DNS'
+          WHEN 8080 THEN 'HTTP-ALT'
+          WHEN 5228 THEN 'GCM/FCM'
+          WHEN 5229 THEN 'GCM/FCM'
+          WHEN 5230 THEN 'GCM/FCM'
+          ELSE 'OTHER'
+        END AS service,
+        COUNT(*) AS event_count,
+        SUM(packet_count) AS total_packets,
+        SUM(packet_length) / 1024 AS total_kb
+      FROM android_network_packets
+      WHERE remote_port IS NOT NULL
+        AND CASE WHEN '{{package_name}}' != ''
+                 THEN package_name GLOB '*{{package_name}}*'
+                 ELSE 1 END
+      GROUP BY remote_port
+      ORDER BY total_kb DESC
+      LIMIT 20;
+    interpretation:
+      analysis_hints:
+        - condition: "service = 'HTTPS'"
+          insight: "HTTPS 流量占主导，加密传输"
+        - condition: "remote_port = 53"
+          insight: "DNS 查询，检查是否过于频繁"
+
+  # Step 5: TCP 标志分析
+  - id: tcp_flags_analysis
+    type: diagnostic
+    name: "TCP 标志分析"
+    description: "分析 TCP 连接状态"
+    sql: |
+      INCLUDE PERFETTO MODULE android.network_packets;
+
+      SELECT
+        packet_tcp_flags,
+        COUNT(*) AS flag_count,
+        SUM(packet_count) AS total_packets
+      FROM android_network_packets
+      WHERE packet_transport = 'TCP'
+        AND packet_tcp_flags IS NOT NULL
+        AND CASE WHEN '{{package_name}}' != ''
+                 THEN package_name GLOB '*{{package_name}}*'
+                 ELSE 1 END
+      GROUP BY packet_tcp_flags
+      ORDER BY flag_count DESC
+      LIMIT 15;
+    interpretation:
+      analysis_hints:
+        - condition: "packet_tcp_flags LIKE '%SYN%'"
+          insight: "TCP 连接建立"
+        - condition: "packet_tcp_flags LIKE '%FIN%' OR packet_tcp_flags LIKE '%RST%'"
+          insight: "TCP 连接关闭或重置"
+
+  # Step 6: 流量时间分布
+  - id: traffic_timeline
+    type: diagnostic
+    name: "流量时间分布"
+    description: "按时间统计网络流量"
+    sql: |
+      INCLUDE PERFETTO MODULE android.network_packets;
+
+      SELECT
+        CAST(ts / 1e9 AS INTEGER) AS time_sec,
+        SUM(packet_count) AS packets_per_sec,
+        SUM(packet_length) / 1024 AS kb_per_sec,
+        SUM(CASE WHEN direction = 'Transmitted' THEN packet_length ELSE 0 END) / 1024 AS tx_kb,
+        SUM(CASE WHEN direction = 'Received' THEN packet_length ELSE 0 END) / 1024 AS rx_kb
+      FROM android_network_packets
+      WHERE CASE WHEN '{{package_name}}' != ''
+                 THEN package_name GLOB '*{{package_name}}*'
+                 ELSE 1 END
+      GROUP BY time_sec
+      ORDER BY time_sec;
+    interpretation:
+      key_metrics:
+        - name: "kb_per_sec"
+          description: "每秒流量 (KB)"
+        - name: "packets_per_sec"
+          description: "每秒数据包数"
+
+  # Step 7: 网络唤醒成本分析
+  - id: network_uptime_cost
+    type: diagnostic
+    name: "网络功耗影响"
+    description: "分析网络活动对功耗的影响 (使用 10 秒空闲超时模型)"
+    sql: |
+      INCLUDE PERFETTO MODULE android.network_packets;
+
+      WITH uptime_spans AS (
+        SELECT *
+        FROM android_network_uptime_spans!(
+          android_network_packets,
+          (iface),
+          10000000000  -- 10 second timeout
+        )
+      )
+      SELECT
+        iface,
+        COUNT(*) AS active_periods,
+        SUM(dur) / 1e9 AS total_active_sec,
+        AVG(dur) / 1e9 AS avg_active_sec,
+        SUM(packet_count) AS total_packets,
+        SUM(packet_length) / 1024 / 1024 AS total_mb
+      FROM uptime_spans
+      GROUP BY iface
+      ORDER BY total_active_sec DESC;
+    interpretation:
+      key_metrics:
+        - name: "total_active_sec"
+          description: "网络活跃总时间 (秒)"
+        - name: "active_periods"
+          description: "独立活跃周期数"
+      analysis_hints:
+        - condition: "active_periods > total_mb * 10"
+          insight: "频繁小量传输，建议批量处理以节省功耗"
+
+  # Step 8: AI 综合分析
+  - id: network_ai_summary
+    type: ai_summary
+    name: "网络性能 AI 分析"
+    description: "综合分析网络使用模式"
+    depends_on:
+      - network_overview
+      - app_traffic_ranking
+      - transport_distribution
+      - port_analysis
+      - traffic_timeline
+      - network_uptime_cost
+    prompt: |
+      请基于以下网络分析数据，提供专业的分析：
+
+      ## 流量概览
+      {{network_overview}}
+
+      ## 应用流量排行
+      {{app_traffic_ranking}}
+
+      ## 传输协议分布
+      {{transport_distribution}}
+
+      ## 端口使用
+      {{port_analysis}}
+
+      ## 流量时间分布
+      {{traffic_timeline}}
+
+      ## 功耗影响
+      {{network_uptime_cost}}
+
+      请分析：
+      1. 网络流量使用模式
+      2. 主要流量来源应用
+      3. 传输协议和端口使用情况
+      4. 对功耗的影响评估
+      5. 优化建议（批量传输、减少唤醒等）
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "网络分析总结"
+      content: |
+        ## 流量概览
+        {{network_overview}}
+
+        ## 应用流量排行
+        {{app_traffic_ranking}}
+
+        ## 功耗影响
+        {{network_uptime_cost}}
+
+        ## AI 综合分析
+        {{network_ai_summary}}

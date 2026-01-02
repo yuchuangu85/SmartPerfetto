@@ -1,0 +1,585 @@
+# =============================================================================
+# 掉帧帧详细分析（组合 Skill）v2.1
+# =============================================================================
+# 分析单个掉帧帧的详细信息，包括：
+# - 主线程耗时操作
+# - Binder 调用
+# - CPU 调度
+# - 锁竞争
+# - 大小核占比和频率（新增）
+# - 四大象限分析（新增）：主线程和渲染线程的运行状态分布
+#
+# 四大象限说明：
+# 1. Running on Big Core - 在大核上运行的时间
+# 2. Running on Little Core - 在小核上运行的时间
+# 3. Runnable - 等待 CPU 调度的时间
+# 4. Sleeping/Blocked - 睡眠或阻塞的时间
+#
+# 大小核判定（通用规则）：
+# - 4+4 配置：CPU 0-3 小核，CPU 4-7 大核
+# - 2+2+4 配置：CPU 0-3 小核，CPU 4-5 中核，CPU 6-7 大核
+
+name: jank_frame_detail
+version: "2.1"
+type: composite
+
+meta:
+  display_name: "掉帧帧详细分析"
+  description: "分析单个掉帧帧的 CPU、Binder、锁、大小核、四象限等详细信息"
+  icon: "bug_report"
+  tags: [jank, frame, detail, analysis, cpu, core, quadrant]
+
+prerequisites:
+  modules:
+    - android.binder
+    - android.slices
+
+inputs:
+  # 完整区间（主线程开始 → RenderThread 结束）
+  - name: start_ts
+    type: timestamp
+    required: true
+    description: "完整区间开始时间戳(ns)"
+  - name: end_ts
+    type: timestamp
+    required: true
+    description: "完整区间结束时间戳(ns)"
+  # 主线程区间
+  - name: main_start_ts
+    type: timestamp
+    required: false
+    description: "主线程开始时间戳(ns)"
+  - name: main_end_ts
+    type: timestamp
+    required: false
+    description: "主线程结束时间戳(ns)"
+  - name: main_dur_ms
+    type: number
+    required: false
+    description: "主线程耗时(ms)"
+  # RenderThread 区间
+  - name: render_start_ts
+    type: timestamp
+    required: false
+    description: "RenderThread开始时间戳(ns)"
+  - name: render_end_ts
+    type: timestamp
+    required: false
+    description: "RenderThread结束时间戳(ns)"
+  - name: render_dur_ms
+    type: number
+    required: false
+    description: "RenderThread耗时(ms)"
+  # 帧信息
+  - name: package
+    type: string
+    required: false
+    description: "应用包名"
+  - name: pid
+    type: integer
+    required: false
+    description: "进程 ID"
+  - name: frame_id
+    type: integer
+    required: true
+    description: "帧 ID"
+  - name: frame_index
+    type: integer
+    required: false
+    description: "帧序号"
+  - name: jank_type
+    type: string
+    required: true
+    description: "掉帧类型"
+  - name: dur_ms
+    type: number
+    required: true
+    description: "帧耗时(ms)"
+  # Perfetto 跳转参数
+  - name: perfetto_start
+    type: timestamp
+    required: false
+    description: "Perfetto 跳转开始时间"
+  - name: perfetto_end
+    type: timestamp
+    required: false
+    description: "Perfetto 跳转结束时间"
+
+steps:
+  # ========== 帧基本信息 ==========
+  - id: frame_info
+    type: atomic
+    name: "帧基本信息"
+    display:
+      level: key
+      title: "帧 #${frame_id} 详情"
+    sql: |
+      SELECT
+        '帧 #' || ${frame_id} as frame_label,
+        COALESCE(${frame_index}, 0) as frame_index,
+        '${jank_type}' as jank_type,
+        ROUND(${dur_ms}, 2) as total_dur_ms,
+        -- 主线程耗时
+        ROUND(COALESCE(${main_dur_ms}, 0), 2) as main_dur_ms,
+        -- RenderThread 耗时
+        ROUND(COALESCE(${render_dur_ms}, 0), 2) as render_dur_ms,
+        -- 时间戳
+        printf('%d', ${start_ts}) as start_ts,
+        printf('%d', ${end_ts}) as end_ts,
+        printf('%d', COALESCE(${main_start_ts}, ${start_ts})) as main_start_ts,
+        printf('%d', COALESCE(${main_end_ts}, ${end_ts})) as main_end_ts,
+        printf('%d', COALESCE(${render_start_ts}, ${start_ts})) as render_start_ts,
+        printf('%d', COALESCE(${render_end_ts}, ${end_ts})) as render_end_ts,
+        -- Perfetto 跳转链接参数
+        printf('%d', COALESCE(${perfetto_start}, ${start_ts})) as perfetto_start,
+        printf('%d', COALESCE(${perfetto_end}, ${end_ts})) as perfetto_end,
+        '${package}' as process_name,
+        COALESCE(${pid}, 0) as pid
+    save_as: frame_basic
+
+  # ========== 主线程 Slice 分析 ==========
+  - id: main_thread_slices
+    type: atomic
+    name: "主线程耗时操作"
+    display:
+      level: key
+      title: "主线程耗时操作"
+    sql: |
+      -- 使用主线程区间 (main_start_ts → main_end_ts)
+      WITH main_thread AS (
+        SELECT t.utid, t.tid, t.name as thread_name, p.pid, p.name as process_name
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+          AND t.tid = p.pid  -- 主线程
+      ),
+      slices_in_range AS (
+        SELECT
+          s.name,
+          s.dur / 1e6 as dur_ms,
+          s.depth,
+          s.ts
+        FROM slice s
+        JOIN thread_track tt ON s.track_id = tt.id
+        WHERE tt.utid IN (SELECT utid FROM main_thread)
+          AND s.ts >= COALESCE(${main_start_ts}, ${start_ts})
+          AND s.ts < COALESCE(${main_end_ts}, ${end_ts})
+          AND s.dur > 1000000  -- > 1ms
+      )
+      SELECT
+        name,
+        COUNT(*) as count,
+        ROUND(SUM(dur_ms), 2) as total_ms,
+        ROUND(MAX(dur_ms), 2) as max_ms,
+        ROUND(AVG(dur_ms), 2) as avg_ms
+      FROM slices_in_range
+      GROUP BY name
+      HAVING total_ms > 1
+      ORDER BY total_ms DESC
+      LIMIT 15
+    save_as: main_slices
+
+  # ========== Binder 调用分析 ==========
+  - id: binder_calls
+    type: atomic
+    name: "Binder 调用"
+    display:
+      level: detail
+      title: "Binder 调用"
+    sql: |
+      SELECT
+        client_process,
+        server_process,
+        COUNT(*) as call_count,
+        ROUND(SUM(client_dur) / 1e6, 2) as total_ms,
+        ROUND(MAX(client_dur) / 1e6, 2) as max_ms,
+        SUM(CASE WHEN client_dur > 5000000 THEN 1 ELSE 0 END) as slow_calls
+      FROM android_binder_txns
+      WHERE client_ts >= ${start_ts}
+        AND client_ts < ${end_ts}
+        AND (client_process GLOB '${package}*' OR '${package}' = '')
+      GROUP BY client_process, server_process
+      HAVING total_ms > 0.5
+      ORDER BY total_ms DESC
+      LIMIT 5
+    save_as: binder_analysis
+    optional: true
+
+  # ========== RenderThread Slice 分析 ==========
+  - id: render_thread_slices
+    type: atomic
+    name: "RenderThread耗时操作"
+    display:
+      level: key
+      title: "RenderThread耗时操作"
+    sql: |
+      -- 使用 RenderThread 区间 (render_start_ts → render_end_ts)
+      WITH render_thread AS (
+        SELECT t.utid, t.tid, t.name as thread_name, p.pid, p.name as process_name
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+          AND t.name = 'RenderThread'
+      ),
+      slices_in_range AS (
+        SELECT
+          s.name,
+          s.dur / 1e6 as dur_ms,
+          s.depth,
+          s.ts
+        FROM slice s
+        JOIN thread_track tt ON s.track_id = tt.id
+        WHERE tt.utid IN (SELECT utid FROM render_thread)
+          AND s.ts >= COALESCE(${render_start_ts}, ${start_ts})
+          AND s.ts < COALESCE(${render_end_ts}, ${end_ts})
+          AND s.dur > 500000  -- > 0.5ms
+      )
+      SELECT
+        name,
+        COUNT(*) as count,
+        ROUND(SUM(dur_ms), 2) as total_ms,
+        ROUND(MAX(dur_ms), 2) as max_ms,
+        ROUND(AVG(dur_ms), 2) as avg_ms
+      FROM slices_in_range
+      GROUP BY name
+      HAVING total_ms > 0.5
+      ORDER BY total_ms DESC
+      LIMIT 10
+    save_as: render_slices
+
+  # ========== CPU 调度分析 ==========
+  - id: cpu_scheduling
+    type: atomic
+    name: "CPU 调度"
+    display:
+      level: detail
+      title: "线程调度"
+    sql: |
+      WITH target_threads AS (
+        SELECT t.utid, t.tid, t.name as thread_name, p.pid, p.name as process_name
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${package}*' OR '${package}' = ''
+      ),
+      thread_states AS (
+        SELECT
+          ts.utid,
+          ts.state,
+          ts.dur
+        FROM thread_state ts
+        WHERE ts.ts >= ${start_ts}
+          AND ts.ts < ${end_ts}
+          AND ts.utid IN (SELECT utid FROM target_threads)
+      )
+      SELECT
+        tt.thread_name,
+        CASE WHEN tt.tid = tt.pid THEN 1 ELSE 0 END as is_main,
+        ROUND(SUM(CASE WHEN tst.state = 'Running' THEN tst.dur ELSE 0 END) / 1e6, 2) as running_ms,
+        ROUND(SUM(CASE WHEN tst.state = 'R' THEN tst.dur ELSE 0 END) / 1e6, 2) as runnable_ms,
+        ROUND(SUM(CASE WHEN tst.state IN ('S', 'D') THEN tst.dur ELSE 0 END) / 1e6, 2) as blocked_ms,
+        ROUND(MAX(CASE WHEN tst.state = 'R' THEN tst.dur ELSE 0 END) / 1e6, 2) as max_wait_ms
+      FROM target_threads tt
+      LEFT JOIN thread_states tst ON tt.utid = tst.utid
+      GROUP BY tt.utid
+      HAVING running_ms > 0 OR runnable_ms > 0.5
+      ORDER BY runnable_ms DESC
+      LIMIT 5
+    save_as: scheduling
+
+  # ========== 锁竞争分析 ==========
+  - id: lock_contention
+    type: atomic
+    name: "锁竞争"
+    display:
+      level: detail
+      title: "锁竞争"
+    sql: |
+      SELECT
+        s.name as lock_name,
+        COUNT(*) as contention_count,
+        ROUND(SUM(s.dur) / 1e6, 2) as total_wait_ms,
+        ROUND(MAX(s.dur) / 1e6, 2) as max_wait_ms
+      FROM slice s
+      JOIN thread_track tt ON s.track_id = tt.id
+      JOIN thread t ON tt.utid = t.utid
+      JOIN process p ON t.upid = p.upid
+      WHERE s.ts >= ${start_ts}
+        AND s.ts < ${end_ts}
+        AND (p.name GLOB '${package}*' OR '${package}' = '')
+        AND (s.name LIKE '%Lock%' OR s.name LIKE '%contention%' OR s.name LIKE '%monitor%')
+        AND s.dur > 100000  -- > 0.1ms
+      GROUP BY s.name
+      HAVING total_wait_ms > 0.1
+      ORDER BY total_wait_ms DESC
+      LIMIT 5
+    save_as: locks
+    optional: true
+
+  # ========== 大小核占比分析 ==========
+  - id: cpu_core_analysis
+    type: atomic
+    name: "大小核分析"
+    display:
+      level: key
+      title: "大小核占比"
+    sql: |
+      -- 分析主线程和渲染线程在大小核上的运行时间
+      -- 大小核判定：CPU 0-3 小核，CPU 4-7 大核（通用 4+4 配置）
+      -- 主线程使用 main_start_ts → main_end_ts
+      -- RenderThread 使用 render_start_ts → render_end_ts
+      WITH target_threads AS (
+        SELECT t.utid, t.tid, t.name as thread_name, p.pid, p.name as process_name,
+          CASE
+            WHEN t.tid = p.pid THEN 'MainThread'
+            WHEN t.name = 'RenderThread' THEN 'RenderThread'
+            ELSE 'Other'
+          END as thread_type,
+          -- 每个线程使用对应的时间区间
+          CASE
+            WHEN t.tid = p.pid THEN COALESCE(${main_start_ts}, ${start_ts})
+            WHEN t.name = 'RenderThread' THEN COALESCE(${render_start_ts}, ${start_ts})
+            ELSE ${start_ts}
+          END as thread_start_ts,
+          CASE
+            WHEN t.tid = p.pid THEN COALESCE(${main_end_ts}, ${end_ts})
+            WHEN t.name = 'RenderThread' THEN COALESCE(${render_end_ts}, ${end_ts})
+            ELSE ${end_ts}
+          END as thread_end_ts
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+          AND (t.tid = p.pid OR t.name = 'RenderThread')
+      ),
+      running_on_cpu AS (
+        SELECT
+          tt.thread_type,
+          tt.thread_name,
+          ts.cpu,
+          ts.dur,
+          CASE
+            WHEN ts.cpu >= 4 THEN 'big'
+            WHEN ts.cpu >= 0 THEN 'little'
+            ELSE 'unknown'
+          END as core_type
+        FROM thread_state ts
+        JOIN target_threads tt ON ts.utid = tt.utid
+        WHERE ts.ts >= tt.thread_start_ts
+          AND ts.ts < tt.thread_end_ts
+          AND ts.state = 'Running'
+          AND ts.cpu IS NOT NULL
+      )
+      SELECT
+        thread_type,
+        thread_name,
+        ROUND(SUM(dur) / 1e6, 2) as total_running_ms,
+        ROUND(SUM(CASE WHEN core_type = 'big' THEN dur ELSE 0 END) / 1e6, 2) as big_core_ms,
+        ROUND(SUM(CASE WHEN core_type = 'little' THEN dur ELSE 0 END) / 1e6, 2) as little_core_ms,
+        ROUND(100.0 * SUM(CASE WHEN core_type = 'big' THEN dur ELSE 0 END) / NULLIF(SUM(dur), 0), 1) as big_core_pct,
+        ROUND(100.0 * SUM(CASE WHEN core_type = 'little' THEN dur ELSE 0 END) / NULLIF(SUM(dur), 0), 1) as little_core_pct,
+        GROUP_CONCAT(DISTINCT cpu) as used_cpus
+      FROM running_on_cpu
+      GROUP BY thread_type, thread_name
+      ORDER BY thread_type
+    save_as: core_analysis
+
+  # ========== CPU 频率分析 ==========
+  - id: cpu_freq_analysis
+    type: atomic
+    name: "CPU频率分析"
+    display:
+      level: detail
+      title: "大小核频率"
+    sql: |
+      -- 获取掉帧期间的 CPU 频率统计
+      WITH freq_data AS (
+        SELECT
+          cpu,
+          CASE
+            WHEN cpu >= 4 THEN 'big'
+            WHEN cpu >= 0 THEN 'little'
+            ELSE 'unknown'
+          END as core_type,
+          value as freq_khz,
+          dur
+        FROM counter c
+        JOIN cpu_counter_track t ON c.track_id = t.id
+        WHERE t.name = 'cpufreq'
+          AND c.ts >= ${start_ts}
+          AND c.ts < ${end_ts}
+      )
+      SELECT
+        core_type,
+        ROUND(AVG(freq_khz) / 1000, 0) as avg_freq_mhz,
+        ROUND(MAX(freq_khz) / 1000, 0) as max_freq_mhz,
+        ROUND(MIN(freq_khz) / 1000, 0) as min_freq_mhz,
+        COUNT(DISTINCT cpu) as core_count
+      FROM freq_data
+      WHERE core_type != 'unknown'
+      GROUP BY core_type
+      ORDER BY core_type DESC
+    save_as: freq_analysis
+    optional: true
+
+  # ========== 四大象限分析（主线程 + 渲染线程）==========
+  - id: quadrant_analysis
+    type: atomic
+    name: "四象限分析"
+    display:
+      level: key
+      title: "四大象限（线程状态分布）"
+    sql: |
+      -- 四大象限分析：Running(大核)/Running(小核)/Runnable/Sleeping
+      -- 主线程使用 main_start_ts → main_end_ts
+      -- RenderThread 使用 render_start_ts → render_end_ts
+      WITH target_threads AS (
+        SELECT t.utid, t.tid, t.name as thread_name, p.pid, p.name as process_name,
+          CASE
+            WHEN t.tid = p.pid THEN 'MainThread'
+            WHEN t.name = 'RenderThread' THEN 'RenderThread'
+            ELSE 'Other'
+          END as thread_type,
+          -- 每个线程使用对应的时间区间
+          CASE
+            WHEN t.tid = p.pid THEN COALESCE(${main_start_ts}, ${start_ts})
+            WHEN t.name = 'RenderThread' THEN COALESCE(${render_start_ts}, ${start_ts})
+            ELSE ${start_ts}
+          END as thread_start_ts,
+          CASE
+            WHEN t.tid = p.pid THEN COALESCE(${main_end_ts}, ${end_ts})
+            WHEN t.name = 'RenderThread' THEN COALESCE(${render_end_ts}, ${end_ts})
+            ELSE ${end_ts}
+          END as thread_end_ts
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+          AND (t.tid = p.pid OR t.name = 'RenderThread')
+      ),
+      thread_states AS (
+        SELECT
+          tt.thread_type,
+          tt.thread_name,
+          ts.state,
+          ts.cpu,
+          ts.dur,
+          CASE
+            WHEN ts.state = 'Running' AND ts.cpu >= 4 THEN 'Q1_BigCore'
+            WHEN ts.state = 'Running' AND ts.cpu < 4 THEN 'Q2_LittleCore'
+            WHEN ts.state = 'R' THEN 'Q3_Runnable'
+            WHEN ts.state IN ('S', 'D', 'I') THEN 'Q4_Sleeping'
+            ELSE 'Other'
+          END as quadrant
+        FROM thread_state ts
+        JOIN target_threads tt ON ts.utid = tt.utid
+        WHERE ts.ts >= tt.thread_start_ts
+          AND ts.ts < tt.thread_end_ts
+      )
+      SELECT
+        thread_type,
+        thread_name,
+        -- 四大象限时间
+        ROUND(SUM(CASE WHEN quadrant = 'Q1_BigCore' THEN dur ELSE 0 END) / 1e6, 2) as q1_big_core_ms,
+        ROUND(SUM(CASE WHEN quadrant = 'Q2_LittleCore' THEN dur ELSE 0 END) / 1e6, 2) as q2_little_core_ms,
+        ROUND(SUM(CASE WHEN quadrant = 'Q3_Runnable' THEN dur ELSE 0 END) / 1e6, 2) as q3_runnable_ms,
+        ROUND(SUM(CASE WHEN quadrant = 'Q4_Sleeping' THEN dur ELSE 0 END) / 1e6, 2) as q4_sleeping_ms,
+        -- 总时间
+        ROUND(SUM(dur) / 1e6, 2) as total_ms,
+        -- 百分比
+        ROUND(100.0 * SUM(CASE WHEN quadrant = 'Q1_BigCore' THEN dur ELSE 0 END) / NULLIF(SUM(dur), 0), 1) as q1_pct,
+        ROUND(100.0 * SUM(CASE WHEN quadrant = 'Q2_LittleCore' THEN dur ELSE 0 END) / NULLIF(SUM(dur), 0), 1) as q2_pct,
+        ROUND(100.0 * SUM(CASE WHEN quadrant = 'Q3_Runnable' THEN dur ELSE 0 END) / NULLIF(SUM(dur), 0), 1) as q3_pct,
+        ROUND(100.0 * SUM(CASE WHEN quadrant = 'Q4_Sleeping' THEN dur ELSE 0 END) / NULLIF(SUM(dur), 0), 1) as q4_pct,
+        -- Running 总计（大核+小核）
+        ROUND(SUM(CASE WHEN quadrant IN ('Q1_BigCore', 'Q2_LittleCore') THEN dur ELSE 0 END) / 1e6, 2) as running_total_ms
+      FROM thread_states
+      GROUP BY thread_type, thread_name
+      ORDER BY thread_type
+    save_as: quadrant
+
+  # ========== 诊断总结 ==========
+  - id: frame_diagnosis
+    type: diagnostic
+    name: "帧诊断"
+    display:
+      level: key
+      title: "掉帧原因诊断"
+    inputs: [frame_basic, main_slices, binder_analysis, scheduling, locks, core_analysis, quadrant, freq_analysis]
+    rules:
+      # Binder 调用耗时过长
+      - condition: "${binder_analysis.data[0]?.total_ms > 5}"
+        severity: warning
+        diagnosis: "Binder 调用耗时 ${binder_analysis.data[0].total_ms}ms"
+        confidence: high
+        suggestions:
+          - "检查是否可以异步调用"
+          - "考虑使用缓存减少调用次数"
+
+      # 主线程耗时操作
+      - condition: "${main_slices.data[0]?.total_ms > 10}"
+        severity: warning
+        diagnosis: "主线程操作 '${main_slices.data[0].name}' 耗时 ${main_slices.data[0].total_ms}ms"
+        confidence: high
+        suggestions:
+          - "考虑将耗时操作移到后台线程"
+          - "优化该操作的执行效率"
+
+      # 调度等待过长（Runnable 时间）
+      - condition: "${quadrant.data[0]?.q3_runnable_ms > 5}"
+        severity: warning
+        diagnosis: "主线程 Runnable 等待 ${quadrant.data[0].q3_runnable_ms}ms (${quadrant.data[0].q3_pct}%)"
+        confidence: high
+        suggestions:
+          - "CPU 资源争抢严重，检查后台任务"
+          - "考虑提高线程优先级"
+          - "检查是否有其他进程占用 CPU"
+
+      # 主线程大核占比低
+      - condition: "${core_analysis.data[0]?.big_core_pct < 30}"
+        severity: warning
+        diagnosis: "主线程大核占比过低 (${core_analysis.data[0].big_core_pct}%)，主要运行在小核"
+        confidence: medium
+        suggestions:
+          - "线程可能未被调度到大核"
+          - "检查系统温控是否限制了大核使用"
+          - "考虑使用 SCHED_FIFO 或提高优先级"
+
+      # RenderThread 大核占比低
+      - condition: "${core_analysis.data[1]?.big_core_pct < 30}"
+        severity: warning
+        diagnosis: "RenderThread 大核占比过低 (${core_analysis.data[1].big_core_pct}%)"
+        confidence: medium
+        suggestions:
+          - "渲染线程应运行在大核以获得最佳性能"
+          - "检查系统是否处于低功耗模式"
+
+      # 大核频率偏低
+      - condition: "${freq_analysis.data.find(f => f.core_type === 'big')?.avg_freq_mhz < 1500}"
+        severity: warning
+        diagnosis: "大核平均频率偏低 (${freq_analysis.data.find(f => f.core_type === 'big').avg_freq_mhz}MHz)"
+        confidence: medium
+        suggestions:
+          - "系统可能处于省电模式"
+          - "检查温控是否限频"
+          - "确保性能模式已开启"
+
+      # 锁竞争
+      - condition: "${locks.data[0]?.total_wait_ms > 2}"
+        severity: warning
+        diagnosis: "锁竞争等待 ${locks.data[0].total_wait_ms}ms"
+        confidence: medium
+        suggestions:
+          - "减少锁的持有时间"
+          - "考虑使用更细粒度的锁"
+
+      # Sleeping 时间过长
+      - condition: "${quadrant.data[0]?.q4_pct > 50}"
+        severity: info
+        diagnosis: "主线程 Sleeping 占比 ${quadrant.data[0].q4_pct}%"
+        confidence: medium
+        suggestions:
+          - "主线程可能在等待其他线程完成"
+          - "检查是否有不必要的 wait/sleep 调用"
+
+output:
+  display:
+    level: key
+    format: detail

@@ -1,0 +1,323 @@
+# Lock Contention Analysis Skill v2.1
+# Uses Perfetto stdlib: android_monitor_contention, android_monitor_contention_chain tables
+# Key columns: blocking_method, blocked_method, short_blocking_method, short_blocked_method,
+#              blocking_src, blocked_src, waiter_count, blocked_utid, blocking_utid,
+#              blocking_thread_name, blocked_thread_name, is_blocked_thread_main, is_blocking_thread_main,
+#              dur, monotonic_dur, binder_reply_id, binder_reply_ts
+# Related tables: android_monitor_contention_chain_thread_state, android_monitor_contention_chain_thread_state_by_txn
+
+name: lock_contention_analysis
+version: "2.1"
+type: composite
+display:
+  name: "锁竞争分析"
+  level: expert
+  description: "Java Monitor 锁竞争分析，包含锁链路追踪、持锁线程状态分析和死锁检测"
+
+triggers:
+  - pattern: "(锁|lock|contention|竞争|monitor|同步)"
+    confidence: 0.95
+  - pattern: "(死锁|deadlock|等待锁)"
+    confidence: 0.9
+  - pattern: "(synchronized|mutex|futex)"
+    confidence: 0.85
+
+parameters:
+  - name: process_name
+    type: string
+    required: false
+    description: "目标进程名，留空分析所有锁竞争"
+  - name: min_duration_ms
+    type: number
+    required: false
+    default: 10
+    description: "最小锁等待时间阈值 (毫秒)"
+
+analysis_steps:
+  # Step 1: 锁竞争概览
+  - id: contention_overview
+    type: diagnostic
+    name: "锁竞争概览"
+    description: "统计 trace 中所有锁竞争事件"
+    sql: |
+      INCLUDE PERFETTO MODULE android.monitor_contention;
+
+      SELECT
+        process_name,
+        COUNT(*) AS contention_count,
+        SUM(dur) / 1e6 AS total_blocked_time_ms,
+        AVG(dur) / 1e6 AS avg_blocked_time_ms,
+        MAX(dur) / 1e6 AS max_blocked_time_ms,
+        SUM(CASE WHEN is_blocked_thread_main THEN 1 ELSE 0 END) AS main_thread_contentions,
+        AVG(waiter_count) AS avg_waiters
+      FROM android_monitor_contention
+      WHERE
+        CASE WHEN '{{process_name}}' != ''
+             THEN process_name GLOB '*{{process_name}}*'
+             ELSE 1 END
+        AND dur / 1e6 >= COALESCE({{min_duration_ms}}, 10)
+      GROUP BY process_name
+      ORDER BY total_blocked_time_ms DESC;
+    interpretation:
+      key_metrics:
+        - name: "total_blocked_time_ms"
+          description: "总阻塞时间"
+          thresholds:
+            warning: 100
+            critical: 1000
+        - name: "main_thread_contentions"
+          description: "主线程被阻塞次数"
+          thresholds:
+            warning: 5
+            critical: 20
+        - name: "avg_waiters"
+          description: "平均等待者数量"
+          thresholds:
+            warning: 3
+            critical: 10
+
+  # Step 2: 主线程锁竞争详情
+  - id: main_thread_contentions
+    type: diagnostic
+    name: "主线程锁竞争"
+    description: "分析阻塞主线程的锁竞争"
+    sql: |
+      INCLUDE PERFETTO MODULE android.monitor_contention;
+
+      SELECT
+        process_name,
+        short_blocking_method,
+        blocking_thread_name,
+        is_blocking_thread_main AS blocker_is_main,
+        COUNT(*) AS contention_count,
+        SUM(dur) / 1e6 AS total_blocked_ms,
+        AVG(dur) / 1e6 AS avg_blocked_ms,
+        MAX(dur) / 1e6 AS max_blocked_ms,
+        AVG(waiter_count) AS avg_waiters
+      FROM android_monitor_contention
+      WHERE is_blocked_thread_main = 1
+        AND CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+        AND dur / 1e6 >= COALESCE({{min_duration_ms}}, 10)
+      GROUP BY process_name, short_blocking_method, blocking_thread_name
+      ORDER BY total_blocked_ms DESC
+      LIMIT 30;
+    interpretation:
+      key_metrics:
+        - name: "total_blocked_ms"
+          description: "主线程被阻塞总时间"
+          thresholds:
+            warning: 50
+            critical: 200
+      analysis_hints:
+        - condition: "blocker_is_main = 0 AND total_blocked_ms > 100"
+          insight: "主线程被后台线程持锁阻塞，检查持锁线程的优先级"
+        - condition: "avg_waiters > 5"
+          insight: "多线程争抢同一把锁，考虑拆分锁或使用无锁数据结构"
+
+  # Step 3: 热点锁分析
+  - id: hot_locks
+    type: diagnostic
+    name: "热点锁分析"
+    description: "识别竞争最激烈的锁"
+    sql: |
+      INCLUDE PERFETTO MODULE android.monitor_contention;
+
+      SELECT
+        short_blocking_method,
+        blocking_src,
+        COUNT(*) AS contention_count,
+        COUNT(DISTINCT blocked_utid) AS unique_waiters,
+        SUM(dur) / 1e6 AS total_contention_ms,
+        MAX(waiter_count) AS max_waiters
+      FROM android_monitor_contention
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      GROUP BY short_blocking_method, blocking_src
+      ORDER BY total_contention_ms DESC
+      LIMIT 20;
+    interpretation:
+      key_metrics:
+        - name: "contention_count"
+          description: "锁争用次数"
+        - name: "unique_waiters"
+          description: "不同等待线程数"
+      analysis_hints:
+        - condition: "unique_waiters > 5"
+          insight: "多线程争抢热点锁，是并发瓶颈"
+
+  # Step 4: 锁链分析 (锁传递链)
+  - id: lock_chain_analysis
+    type: diagnostic
+    name: "锁链分析"
+    description: "分析锁等待链，识别锁传递"
+    sql: |
+      INCLUDE PERFETTO MODULE android.monitor_contention;
+
+      SELECT
+        c.short_blocked_method AS blocked_at,
+        c.short_blocking_method AS waiting_for,
+        c.blocking_thread_name,
+        c.parent_id IS NOT NULL AS has_parent,
+        c.child_id IS NOT NULL AS has_child,
+        c.dur / 1e6 AS blocked_ms,
+        c.waiter_count
+      FROM android_monitor_contention_chain c
+      WHERE (c.parent_id IS NOT NULL OR c.child_id IS NOT NULL)
+        AND CASE WHEN '{{process_name}}' != ''
+                 THEN c.process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+      ORDER BY c.dur DESC
+      LIMIT 50;
+    interpretation:
+      analysis_hints:
+        - condition: "has_parent = 1 AND has_child = 1"
+          insight: "锁链中间节点，既在等锁又持有其他锁"
+        - condition: "has_parent = 0 AND has_child = 1"
+          insight: "锁链头部，是锁竞争的最终阻塞者"
+
+  # Step 5: 持锁线程状态分析
+  - id: blocking_thread_state
+    type: diagnostic
+    name: "持锁线程状态"
+    description: "分析持锁线程在锁竞争期间的状态"
+    sql: |
+      INCLUDE PERFETTO MODULE android.monitor_contention;
+
+      SELECT
+        thread_state,
+        COUNT(*) AS count,
+        SUM(thread_state_dur) / 1e6 AS total_dur_ms,
+        AVG(thread_state_dur) / 1e6 AS avg_dur_ms
+      FROM android_monitor_contention_chain_thread_state_by_txn
+      GROUP BY thread_state
+      ORDER BY total_dur_ms DESC;
+    interpretation:
+      key_metrics:
+        - name: "total_dur_ms"
+          description: "各状态总时间"
+      analysis_hints:
+        - condition: "thread_state = 'D' AND total_dur_ms > 100"
+          insight: "持锁线程被内核阻塞 (D状态)，锁等待时间取决于内核操作"
+        - condition: "thread_state = 'R' AND total_dur_ms > 50"
+          insight: "持锁线程可运行但未被调度，CPU 可能繁忙"
+        - condition: "thread_state = 'S'"
+          insight: "持锁线程主动睡眠，检查是否在等待其他资源"
+
+  # Step 6: 持锁线程阻塞函数分析
+  - id: blocking_functions
+    type: diagnostic
+    name: "持锁时阻塞函数"
+    description: "分析持锁线程在内核中被哪些函数阻塞"
+    sql: |
+      INCLUDE PERFETTO MODULE android.monitor_contention;
+
+      SELECT
+        blocked_function,
+        SUM(blocked_function_dur) / 1e6 AS total_dur_ms,
+        COUNT(*) AS count,
+        AVG(blocked_function_dur) / 1e6 AS avg_dur_ms
+      FROM android_monitor_contention_chain_blocked_functions_by_txn
+      WHERE blocked_function IS NOT NULL
+      GROUP BY blocked_function
+      ORDER BY total_dur_ms DESC
+      LIMIT 20;
+    interpretation:
+      key_metrics:
+        - name: "blocked_function"
+          description: "内核阻塞函数"
+      analysis_hints:
+        - condition: "blocked_function LIKE '%binder%'"
+          insight: "持锁线程在做 Binder 调用，锁延迟取决于 Binder 目标"
+        - condition: "blocked_function LIKE '%futex%'"
+          insight: "持锁线程在等待其他锁 (futex)"
+        - condition: "blocked_function LIKE '%io%' OR blocked_function LIKE '%read%' OR blocked_function LIKE '%write%'"
+          insight: "持锁线程在做 I/O 操作"
+
+  # Step 7: 锁竞争与 Binder 关联
+  - id: contention_binder_correlation
+    type: diagnostic
+    name: "锁竞争与 Binder 关联"
+    description: "分析锁竞争期间的 Binder 调用"
+    sql: |
+      INCLUDE PERFETTO MODULE android.monitor_contention;
+
+      SELECT
+        c.process_name,
+        c.short_blocking_method,
+        c.binder_reply_tid IS NOT NULL AS in_binder_txn,
+        COUNT(*) AS contention_count,
+        AVG(c.dur) / 1e6 AS avg_contention_ms
+      FROM android_monitor_contention c
+      WHERE CASE WHEN '{{process_name}}' != ''
+                 THEN c.process_name GLOB '*{{process_name}}*'
+                 ELSE 1 END
+        AND c.dur / 1e6 >= COALESCE({{min_duration_ms}}, 10)
+      GROUP BY c.process_name, c.short_blocking_method, in_binder_txn
+      ORDER BY contention_count DESC
+      LIMIT 30;
+    interpretation:
+      analysis_hints:
+        - condition: "in_binder_txn = 1"
+          insight: "锁竞争发生在 Binder 处理期间，影响 Binder 响应时间"
+
+  # Step 8: AI 综合分析
+  - id: contention_ai_summary
+    type: ai_summary
+    name: "锁竞争 AI 分析"
+    description: "综合分析锁竞争问题"
+    depends_on:
+      - contention_overview
+      - main_thread_contentions
+      - hot_locks
+      - lock_chain_analysis
+      - blocking_thread_state
+      - blocking_functions
+    prompt: |
+      请基于以下锁竞争分析数据，提供专业的分析：
+
+      ## 锁竞争概览
+      {{contention_overview}}
+
+      ## 主线程锁竞争
+      {{main_thread_contentions}}
+
+      ## 热点锁
+      {{hot_locks}}
+
+      ## 锁链分析
+      {{lock_chain_analysis}}
+
+      ## 持锁线程状态
+      {{blocking_thread_state}}
+
+      ## 阻塞函数分析
+      {{blocking_functions}}
+
+      请分析：
+      1. 锁竞争严重程度评估
+      2. 主要热点锁识别
+      3. 持锁线程为何长时间持锁
+      4. 是否存在锁链或潜在死锁风险
+      5. 优化建议（减少锁粒度、避免持锁做耗时操作等）
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "锁竞争分析总结"
+      content: |
+        ## 锁竞争概览
+        {{contention_overview}}
+
+        ## 主线程锁竞争
+        {{main_thread_contentions}}
+
+        ## 热点锁
+        {{hot_locks}}
+
+        ## AI 综合分析
+        {{contention_ai_summary}}

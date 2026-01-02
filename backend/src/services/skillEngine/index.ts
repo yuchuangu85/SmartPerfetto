@@ -5,45 +5,23 @@
  * analysis workflows in YAML files without modifying code.
  *
  * Features:
- * - YAML-based skill definitions
- * - SOP documentation support (Markdown)
- * - Vendor-specific overrides (OPPO, vivo, Xiaomi, etc.)
+ * - YAML-based skill definitions (v2 format)
+ * - Composite skills with multi-step analysis
+ * - AI-assisted diagnostics and summaries
  * - Automatic skill matching based on keywords and patterns
  * - Variable substitution in SQL queries
- * - Threshold-based evaluation and diagnostics
+ * - Real-time execution events
  */
 
-export * from './types';
-export * from './skillLoader';
-export * from './skillExecutor';
-
-// Re-export commonly used items
-export {
-  skillRegistry,
-  initializeSkills,
-  getSkillRegistry,
-} from './skillLoader';
-
-export {
-  SkillExecutor,
-  createSkillExecutor,
-} from './skillExecutor';
-
-export {
-  SkillAnalysisAdapter,
-  createSkillAnalysisAdapter,
-  getSkillAnalysisAdapter,
-} from './skillAnalysisAdapter';
+// =============================================================================
+// Types
+// =============================================================================
+export * from './types_v2';
 
 // =============================================================================
-// v2 Skill Engine Exports
+// Skill Loader
 // =============================================================================
-
-// Note: types_v2 not re-exported to avoid naming conflicts with types.ts
-// Import directly from './types_v2' if needed
 export * from './skillLoaderV2';
-export * from './skillExecutorV2';
-export * from './skillAnalysisAdapterV2';
 
 export {
   skillRegistryV2,
@@ -51,16 +29,30 @@ export {
   getSkillsDir,
 } from './skillLoaderV2';
 
+// =============================================================================
+// Skill Executor
+// =============================================================================
+export * from './skillExecutorV2';
+
 export {
   SkillExecutorV2,
   createSkillExecutorV2,
 } from './skillExecutorV2';
+
+// =============================================================================
+// Skill Analysis Adapter
+// =============================================================================
+export * from './skillAnalysisAdapterV2';
 
 export {
   SkillAnalysisAdapterV2,
   createSkillAnalysisAdapterV2,
   getSkillAnalysisAdapterV2,
 } from './skillAnalysisAdapterV2';
+
+// =============================================================================
+// Utilities
+// =============================================================================
 
 // 智能摘要和回答生成器
 export { smartSummaryGenerator, SmartSummaryGenerator } from './smartSummaryGenerator';
@@ -73,3 +65,16 @@ export {
   EventSummary,
   ProgressInfo,
 } from './eventCollector';
+
+// =============================================================================
+// Legacy Aliases (for backwards compatibility during migration)
+// =============================================================================
+
+// Alias V2 as the default
+export { skillRegistryV2 as skillRegistry } from './skillLoaderV2';
+export { ensureSkillRegistryV2Initialized as initializeSkills } from './skillLoaderV2';
+export { SkillAnalysisAdapterV2 as SkillAnalysisAdapter } from './skillAnalysisAdapterV2';
+export { createSkillAnalysisAdapterV2 as createSkillAnalysisAdapter } from './skillAnalysisAdapterV2';
+export { getSkillAnalysisAdapterV2 as getSkillAnalysisAdapter } from './skillAnalysisAdapterV2';
+export { SkillExecutorV2 as SkillExecutor } from './skillExecutorV2';
+export { createSkillExecutorV2 as createSkillExecutor } from './skillExecutorV2';

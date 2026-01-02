@@ -135,6 +135,16 @@ class SkillRegistryV2 {
   isInitialized(): boolean {
     return this.initialized;
   }
+
+  /**
+   * 重新加载所有 skills
+   */
+  async reload(): Promise<void> {
+    this.skills.clear();
+    this.initialized = false;
+    const skillsDir = path.resolve(__dirname, '../../../skills');
+    await this.loadSkills(skillsDir);
+  }
 }
 
 // 单例

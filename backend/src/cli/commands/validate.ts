@@ -8,7 +8,7 @@ import { Command } from 'commander';
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
-import { SkillDefinition, SkillStep } from '../../services/skillEngine/types';
+import { SkillDefinitionV2, SkillStep } from '../../services/skillEngine/types_v2';
 
 // ANSI color codes (fallback for chalk ESM issues)
 const colors = {
@@ -32,7 +32,7 @@ const SKILLS_DIR = path.join(__dirname, '../../../skills');
 /**
  * Validate a skill definition
  */
-function validateSkillDefinition(skill: SkillDefinition, filePath: string): ValidationResult {
+function validateSkillDefinition(skill: SkillDefinitionV2, filePath: string): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -83,38 +83,42 @@ function validateSkillDefinition(skill: SkillDefinition, filePath: string): Vali
         stepIds.add(step.id);
       }
 
-      if (!step.name) {
-        errors.push(`${stepPath}: Missing required field: name`);
-      }
+      // Validate based on step type
+      const stepType = 'type' in step ? step.type : 'skill';
 
-      if (!step.sql) {
-        errors.push(`${stepPath}: Missing required field: sql`);
-      } else {
-        // Validate SQL syntax (basic checks)
-        const sqlErrors = validateSql(step.sql, step.id);
-        errors.push(...sqlErrors.map(e => `${stepPath}: ${e}`));
+      // SQL validation for atomic steps
+      if (stepType === 'atomic' && 'sql' in step) {
+        if (!step.sql) {
+          errors.push(`${stepPath}: Missing required field: sql for atomic step`);
+        } else {
+          // Validate SQL syntax (basic checks)
+          const sqlErrors = validateSql(step.sql, step.id);
+          errors.push(...sqlErrors.map(e => `${stepPath}: ${e}`));
 
-        // Validate variable references
-        const varRefs = extractVariableReferences(step.sql);
-        for (const ref of varRefs) {
-          if (ref.startsWith('prev.') || ref.startsWith('item.')) {
-            // These are valid context references
-            continue;
-          }
-          if (ref !== 'package' && ref !== 'vendor' && !savedVariables.has(ref.split('.')[0])) {
-            warnings.push(`${stepPath}: Variable reference '${ref}' may not be defined`);
+          // Validate variable references
+          const varRefs = extractVariableReferences(step.sql);
+          for (const ref of varRefs) {
+            if (ref.startsWith('prev.') || ref.startsWith('item.')) {
+              // These are valid context references
+              continue;
+            }
+            if (ref !== 'package' && ref !== 'vendor' && !savedVariables.has(ref.split('.')[0])) {
+              warnings.push(`${stepPath}: Variable reference '${ref}' may not be defined`);
+            }
           }
         }
       }
 
       // Track saved variables
-      if (step.save_as) {
+      if ('save_as' in step && step.save_as) {
         savedVariables.add(step.save_as);
       }
 
-      // Validate for_each references
-      if (step.for_each && !savedVariables.has(step.for_each)) {
-        errors.push(`${stepPath}: for_each references undefined variable: ${step.for_each}`);
+      // Validate iterator source references
+      if (stepType === 'iterator' && 'source' in step) {
+        if (step.source && !savedVariables.has(step.source)) {
+          errors.push(`${stepPath}: iterator source references undefined variable: ${step.source}`);
+        }
       }
     }
   }
@@ -128,24 +132,8 @@ function validateSkillDefinition(skill: SkillDefinition, filePath: string): Vali
     }
   }
 
-  // Validate diagnostics
-  if (skill.diagnostics) {
-    for (let i = 0; i < skill.diagnostics.length; i++) {
-      const diag = skill.diagnostics[i];
-      if (!diag.id) {
-        errors.push(`diagnostics[${i}]: Missing required field: id`);
-      }
-      if (!diag.condition) {
-        errors.push(`diagnostics[${i}]: Missing required field: condition`);
-      }
-      if (!diag.severity) {
-        errors.push(`diagnostics[${i}]: Missing required field: severity`);
-      }
-      if (!diag.message) {
-        errors.push(`diagnostics[${i}]: Missing required field: message`);
-      }
-    }
-  }
+  // Validate diagnostic rules (in diagnostic steps, not skill-level)
+  // V2 diagnostics are defined within DiagnosticStep, not at skill level
 
   return {
     file: filePath,
@@ -203,7 +191,7 @@ function extractVariableReferences(sql: string): string[] {
 function validateFile(filePath: string): ValidationResult {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
-    const skill = yaml.load(content) as SkillDefinition;
+    const skill = yaml.load(content) as SkillDefinitionV2;
 
     if (!skill) {
       return {
@@ -264,17 +252,24 @@ export const validateCommand = new Command('validate')
     let files: string[] = [];
 
     if (skillId) {
-      // Validate specific skill
-      const baseFile = path.join(SKILLS_DIR, 'base', `${skillId}.skill.yaml`);
-      if (fs.existsSync(baseFile)) {
-        files.push(baseFile);
+      // Validate specific skill - check V2 directories first
+      const possiblePaths = [
+        path.join(SKILLS_DIR, 'v2', 'composite', `${skillId}.skill.yaml`),
+        path.join(SKILLS_DIR, 'v2', 'atomic', `${skillId}.skill.yaml`),
+        path.join(SKILLS_DIR, 'custom', `${skillId}.skill.yaml`),
+      ];
+
+      const foundPath = possiblePaths.find(p => fs.existsSync(p));
+      if (foundPath) {
+        files.push(foundPath);
       } else {
         console.log(colors.red(`Skill not found: ${skillId}`));
         process.exit(1);
       }
     } else {
-      // Validate all skills
-      files = findSkillFiles(path.join(SKILLS_DIR, 'base'), /\.skill\.ya?ml$/);
+      // Validate all V2 skills
+      files = findSkillFiles(path.join(SKILLS_DIR, 'v2', 'composite'), /\.skill\.ya?ml$/);
+      files.push(...findSkillFiles(path.join(SKILLS_DIR, 'v2', 'atomic'), /\.skill\.ya?ml$/));
 
       if (options.all) {
         files.push(...findSkillFiles(path.join(SKILLS_DIR, 'vendors'), /\.override\.ya?ml$/));

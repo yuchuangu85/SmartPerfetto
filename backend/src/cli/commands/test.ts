@@ -41,22 +41,22 @@ export const testCommand = new Command('test')
 
     try {
       // Dynamic imports to avoid loading heavy dependencies at CLI startup
-      const { skillRegistry, initializeSkills } = await import('../../services/skillEngine/skillLoader');
-      const { SkillExecutor } = await import('../../services/skillEngine/skillExecutor');
+      const { skillRegistryV2, ensureSkillRegistryV2Initialized } = await import('../../services/skillEngine/skillLoaderV2');
+      const { SkillExecutorV2, createSkillExecutorV2 } = await import('../../services/skillEngine/skillExecutorV2');
       const { getTraceProcessorService } = await import('../../services/traceProcessorService');
 
       // Initialize
       console.log(colors.gray('Initializing skill registry...'));
-      await initializeSkills();
+      await ensureSkillRegistryV2Initialized();
 
       // Check if skill exists
-      const skill = skillRegistry.getSkill(skillId);
+      const skill = skillRegistryV2.getSkill(skillId);
       if (!skill) {
         console.log(colors.red(`\nSkill not found: ${skillId}`));
         console.log(colors.gray('\nAvailable skills:'));
-        const allSkills = skillRegistry.getAllSkills();
+        const allSkills = skillRegistryV2.getAllSkills();
         for (const s of allSkills) {
-          console.log(`  - ${s.id}`);
+          console.log(`  - ${s.name}`);
         }
         process.exit(1);
       }
@@ -71,18 +71,13 @@ export const testCommand = new Command('test')
 
       console.log(colors.gray(`Trace loaded with ID: ${traceId}`));
 
-      // Detect vendor
-      console.log(colors.gray('Detecting vendor...'));
-      const vendorResult = await skillRegistry.detectVendor(traceProcessor, traceId);
-      console.log(`Vendor:  ${colors.cyan(vendorResult.vendor)} (${vendorResult.confidence} confidence)`);
-      console.log('');
-
       // Execute skill
       console.log(colors.bold('Executing skill...\n'));
       const startTime = Date.now();
 
-      const executor = new SkillExecutor(traceProcessor);
-      const result = await executor.execute(skillId, traceId, options.package, vendorResult.vendor);
+      const executor = createSkillExecutorV2(traceProcessor);
+      executor.registerSkills(skillRegistryV2.getAllSkills());
+      const result = await executor.execute(skillId, traceId, { package: options.package });
 
       const executionTime = Date.now() - startTime;
 
@@ -98,43 +93,47 @@ export const testCommand = new Command('test')
       console.log(`Time:   ${executionTime}ms`);
       console.log('');
 
-      // Display sections
-      if (options.verbose) {
-        console.log(colors.bold('Sections:'));
-        for (const [sectionId, sectionData] of Object.entries(result.sections)) {
-          const data = sectionData as { title?: string; rowCount?: number; data?: any[] };
-          console.log(`\n  ${colors.cyan(sectionId)}:`);
-          console.log(`    Title: ${data.title || 'N/A'}`);
-          console.log(`    Rows:  ${data.rowCount || (data.data ? data.data.length : 0)}`);
+      // Display results
+      if (result.displayResults && result.displayResults.length > 0) {
+        if (options.verbose) {
+          console.log(colors.bold('Display Results:'));
+          for (const display of result.displayResults) {
+            console.log(`\n  ${colors.cyan(display.stepId)}:`);
+            console.log(`    Title: ${display.title || 'N/A'}`);
+            console.log(`    Format: ${display.format}`);
+            console.log(`    Level: ${display.level}`);
 
-          if (data.data && data.data.length > 0) {
-            console.log('    Sample:');
-            const sample = data.data.slice(0, 3);
-            for (const row of sample) {
-              console.log(`      ${JSON.stringify(row).substring(0, 100)}...`);
+            if (display.data.rows && display.data.rows.length > 0) {
+              console.log(`    Rows: ${display.data.rows.length}`);
+              console.log('    Sample:');
+              const sample = display.data.rows.slice(0, 3);
+              for (const row of sample) {
+                console.log(`      ${JSON.stringify(row).substring(0, 100)}...`);
+              }
+            } else if (display.data.text) {
+              console.log(`    Text: ${display.data.text.substring(0, 100)}...`);
             }
           }
+          console.log('');
+        } else {
+          console.log(colors.bold('Display Results:'));
+          for (const display of result.displayResults) {
+            const rowCount = display.data.rows?.length || 0;
+            console.log(`  ${display.stepId}: ${rowCount > 0 ? `${rowCount} rows` : display.format}`);
+          }
+          console.log('');
         }
-        console.log('');
-      } else {
-        console.log(colors.bold('Sections:'));
-        for (const [sectionId, sectionData] of Object.entries(result.sections)) {
-          const data = sectionData as { rowCount?: number; data?: any[] };
-          const rowCount = data.rowCount || (data.data ? data.data.length : 0);
-          console.log(`  ${sectionId}: ${rowCount} rows`);
-        }
-        console.log('');
       }
 
       // Display diagnostics
-      if (result.diagnostics.length > 0) {
+      if (result.diagnostics && result.diagnostics.length > 0) {
         console.log(colors.bold('Diagnostics:'));
         for (const diag of result.diagnostics) {
           const severityColor =
             diag.severity === 'critical' ? colors.red :
             diag.severity === 'warning' ? colors.yellow :
             colors.blue;
-          console.log(`  ${severityColor(`[${diag.severity.toUpperCase()}]`)} ${diag.message}`);
+          console.log(`  ${severityColor(`[${diag.severity.toUpperCase()}]`)} ${diag.diagnosis}`);
           if (diag.suggestions && diag.suggestions.length > 0) {
             for (const suggestion of diag.suggestions) {
               console.log(`    - ${suggestion}`);
@@ -146,7 +145,7 @@ export const testCommand = new Command('test')
 
       // Display summary
       console.log(colors.bold('Summary:'));
-      console.log(colors.gray(result.summary));
+      console.log(colors.gray(result.aiSummary || 'No summary available'));
 
       // Cleanup
       await traceProcessor.deleteTrace(traceId);

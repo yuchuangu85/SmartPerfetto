@@ -545,23 +545,23 @@ export class AnswerGenerator {
       const row = section.data[0];
 
       // 提取关键证据
-      if (row.jank_rate !== undefined && row.jank_rate > 5) {
+      if (row.jank_rate != null && row.jank_rate > 5) {
         evidence.push(`掉帧率 ${row.jank_rate}%`);
       }
-      if (row.max_frame_ms !== undefined && row.max_frame_ms > 33.33) {
-        evidence.push(`最大帧耗时 ${row.max_frame_ms.toFixed(1)}ms（超过 2 帧）`);
+      if (row.max_frame_ms != null && row.max_frame_ms > 33.33) {
+        evidence.push(`最大帧耗时 ${Number(row.max_frame_ms).toFixed(1)}ms（超过 2 帧）`);
       }
-      if (row.estimated_fps !== undefined && row.estimated_fps < 55) {
+      if (row.estimated_fps != null && row.estimated_fps < 55) {
         evidence.push(`帧率仅 ${Math.round(row.estimated_fps)} fps`);
       }
-      if (row.max_delay_ms !== undefined && row.max_delay_ms > 10) {
-        evidence.push(`Binder 最大延迟 ${row.max_delay_ms.toFixed(1)}ms`);
+      if (row.max_delay_ms != null && row.max_delay_ms > 10) {
+        evidence.push(`Binder 最大延迟 ${Number(row.max_delay_ms).toFixed(1)}ms`);
       }
-      if (row.max_runnable_ms !== undefined && row.max_runnable_ms > 5) {
-        evidence.push(`调度延迟最高 ${row.max_runnable_ms.toFixed(1)}ms`);
+      if (row.max_runnable_ms != null && row.max_runnable_ms > 5) {
+        evidence.push(`调度延迟最高 ${Number(row.max_runnable_ms).toFixed(1)}ms`);
       }
-      if (row.total_cpu_ms !== undefined && row.total_cpu_ms > 100) {
-        evidence.push(`CPU 累计耗时 ${row.total_cpu_ms.toFixed(1)}ms`);
+      if (row.total_cpu_ms != null && row.total_cpu_ms > 100) {
+        evidence.push(`CPU 累计耗时 ${Number(row.total_cpu_ms).toFixed(1)}ms`);
       }
     }
 
@@ -582,25 +582,25 @@ export class AnswerGenerator {
       const row = section.data[0];
 
       // 帧相关
-      if (row.total_frames !== undefined) {
+      if (row.total_frames != null) {
         metrics.push(`总帧数: ${row.total_frames}`);
       }
-      if (row.janky_frames !== undefined) {
+      if (row.janky_frames != null) {
         metrics.push(`掉帧数: ${row.janky_frames}`);
       }
-      if (row.jank_rate !== undefined) {
+      if (row.jank_rate != null) {
         metrics.push(`掉帧率: ${row.jank_rate}%`);
       }
-      if (row.estimated_fps !== undefined) {
+      if (row.estimated_fps != null) {
         metrics.push(`帧率: ${Math.round(row.estimated_fps)} fps`);
       }
-      if (row.avg_frame_ms !== undefined) {
-        metrics.push(`平均帧耗时: ${row.avg_frame_ms.toFixed(2)}ms`);
+      if (row.avg_frame_ms != null) {
+        metrics.push(`平均帧耗时: ${Number(row.avg_frame_ms).toFixed(2)}ms`);
       }
 
       // 启动相关
-      if (row.startup_time_ms !== undefined) {
-        metrics.push(`启动耗时: ${row.startup_time_ms.toFixed(0)}ms`);
+      if (row.startup_time_ms != null) {
+        metrics.push(`启动耗时: ${Number(row.startup_time_ms).toFixed(0)}ms`);
       }
     }
 
@@ -623,16 +623,16 @@ export class AnswerGenerator {
         if (row.function_name || row.method_name) {
           const name = row.function_name || row.method_name;
           const time = row.dur_ms || row.time_ms;
-          locations.push(`${name}${time ? ` (耗时 ${time.toFixed(1)}ms)` : ''}`);
+          locations.push(`${name}${time != null ? ` (耗时 ${Number(time).toFixed(1)}ms)` : ''}`);
         }
 
         // 线程位置
-        if (row.thread_name && row.total_cpu_ms) {
-          locations.push(`线程 ${row.thread_name}: CPU ${row.total_cpu_ms.toFixed(1)}ms`);
+        if (row.thread_name && row.total_cpu_ms != null) {
+          locations.push(`线程 ${row.thread_name}: CPU ${Number(row.total_cpu_ms).toFixed(1)}ms`);
         }
 
         // 帧位置
-        if (row.frame_number !== undefined && row.ts_str) {
+        if (row.frame_number != null && row.ts_str) {
           locations.push(`第 ${row.frame_number} 帧 @ ${row.ts_str}`);
         }
       }

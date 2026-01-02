@@ -1,0 +1,494 @@
+# =============================================================================
+# CPU 分析 v2.1（组合 Skill）- 基于 Perfetto stdlib 优化版
+# =============================================================================
+# 使用 Perfetto stdlib 的 cpu 表和调度相关表
+# 充分利用多表 JOIN 获取深度分析数据
+#
+# 核心表：
+# - cpu: 包含 capacity 列，用于动态判断大小核（不再硬编码 CPU 编号）
+# - sched_slice: 调度切片信息
+# - thread_state: 线程状态，包含 blocked_function, waker_utid
+# - cpu_frequency_counters: CPU 频率信息
+#
+# 核心函数：
+# - sched_state_to_human_readable_string(state): 状态码转可读字符串
+# - cpu_cycles_per_thread: 线程 CPU 周期统计
+#
+# 关键 JOIN：
+# - sched_slice + cpu: 使用 capacity 分析大小核分布
+# - thread_state + thread_state (waker): 分析唤醒链路
+# - sched_slice + cpu_frequency_counters: 关联频率信息
+
+name: cpu_analysis
+version: "2.1"
+type: composite
+
+meta:
+  display_name: "CPU 性能分析"
+  description: "分析应用 CPU 使用率、线程调度、大小核分布"
+  icon: "cpu"
+  tags: [cpu, thread, scheduling, core, composite]
+
+triggers:
+  keywords:
+    zh: [CPU, CPU利用率, CPU占用, 线程调度, 大核, 小核, 调度延迟]
+    en: [cpu, cpu usage, thread scheduling, frequency, core, big core, little]
+  patterns:
+    - ".*CPU.*"
+    - ".*cpu.*"
+    - ".*核心.*"
+    - ".*调度.*"
+
+prerequisites:
+  modules:
+    - sched
+
+inputs:
+  - name: package
+    type: string
+    required: false
+    description: "应用包名（可选）"
+  - name: start_ts
+    type: timestamp
+    required: false
+    description: "分析起始时间（可选）"
+  - name: end_ts
+    type: timestamp
+    required: false
+    description: "分析结束时间（可选）"
+
+steps:
+  # ========== 获取目标进程 ==========
+  - id: get_process
+    type: atomic
+    name: "获取目标进程"
+    display:
+      level: summary
+      title: "目标进程"
+    sql: |
+      SELECT
+        upid,
+        pid,
+        name as process_name
+      FROM process
+      WHERE name GLOB '${package}*' OR '${package}' = ''
+      ORDER BY
+        CASE WHEN name GLOB '${package}*' THEN 0 ELSE 1 END,
+        pid DESC
+      LIMIT 1
+    save_as: target_process
+    on_empty: "未找到目标进程"
+
+  # ========== 核心类型统计（使用 cpu.capacity 动态分类）==========
+  - id: core_type_stats
+    type: atomic
+    name: "核心类型统计"
+    display:
+      level: key
+      title: "大小核分布（基于 capacity）"
+    sql: |
+      WITH cpu_classification AS (
+        -- 根据 capacity 动态分类 CPU
+        SELECT
+          cpu,
+          capacity,
+          CASE
+            WHEN capacity >= (SELECT MAX(capacity) FROM cpu) THEN 'prime (超大核)'
+            WHEN capacity >= (SELECT MAX(capacity) * 0.7 FROM cpu) THEN 'big (大核)'
+            WHEN capacity >= (SELECT MAX(capacity) * 0.4 FROM cpu) THEN 'medium (中核)'
+            ELSE 'little (小核)'
+          END as core_type
+        FROM cpu
+      )
+      SELECT
+        cc.core_type,
+        cc.capacity,
+        SUM(ss.dur) / 1e6 as total_time_ms,
+        ROUND(100.0 * SUM(ss.dur) / (
+          SELECT SUM(dur) FROM sched_slice ss2
+          JOIN thread t2 ON ss2.utid = t2.utid
+          JOIN process p2 ON t2.upid = p2.upid
+          WHERE p2.name GLOB '${package}*'
+        ), 1) as percent,
+        COUNT(*) as slice_count,
+        COUNT(DISTINCT ss.cpu) as core_count
+      FROM sched_slice ss
+      JOIN thread t ON ss.utid = t.utid
+      JOIN process p ON t.upid = p.upid
+      JOIN cpu_classification cc ON ss.cpu = cc.cpu
+      WHERE p.name GLOB '${package}*'
+      GROUP BY cc.core_type
+      ORDER BY cc.capacity DESC
+    save_as: core_stats
+    condition: target_process.data.length > 0
+
+  # ========== 线程 CPU 使用 Top10（关联核心类型）==========
+  - id: thread_cpu_usage
+    type: atomic
+    name: "线程 CPU 使用"
+    display:
+      level: key
+      title: "线程 CPU 使用 Top10"
+    sql: |
+      WITH cpu_classification AS (
+        SELECT
+          cpu,
+          CASE
+            WHEN capacity >= (SELECT MAX(capacity) FROM cpu) THEN 'prime'
+            WHEN capacity >= (SELECT MAX(capacity) * 0.7 FROM cpu) THEN 'big'
+            ELSE 'little'
+          END as core_type
+        FROM cpu
+      )
+      SELECT
+        t.tid,
+        t.name as thread_name,
+        SUM(ss.dur) / 1e6 as cpu_time_ms,
+        COUNT(*) as sched_count,
+        ROUND(AVG(ss.dur) / 1e6, 3) as avg_slice_ms,
+        CASE t.tid WHEN p.pid THEN 'main' ELSE 'worker' END as thread_type,
+        -- 大核使用率
+        ROUND(100.0 * SUM(CASE WHEN cc.core_type IN ('big', 'prime') THEN ss.dur ELSE 0 END) / SUM(ss.dur), 1) as big_core_percent
+      FROM sched_slice ss
+      JOIN thread t ON ss.utid = t.utid
+      JOIN process p ON t.upid = p.upid
+      JOIN cpu_classification cc ON ss.cpu = cc.cpu
+      WHERE p.name GLOB '${package}*'
+      GROUP BY t.utid
+      ORDER BY cpu_time_ms DESC
+      LIMIT 10
+    save_as: thread_usage
+    condition: target_process.data.length > 0
+
+  # ========== 主线程状态分布（使用 sched_state_to_human_readable_string）==========
+  - id: main_thread_states
+    type: atomic
+    name: "主线程状态分布"
+    display:
+      level: key
+      title: "主线程状态"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${package}*' AND t.tid = p.pid
+        LIMIT 1
+      )
+      SELECT
+        ts.state,
+        CASE ts.state
+          WHEN 'Running' THEN 'Running (CPU执行中)'
+          WHEN 'R' THEN 'Runnable (等待调度)'
+          WHEN 'R+' THEN 'Runnable+ (抢占等待)'
+          WHEN 'S' THEN 'Sleeping (主动睡眠)'
+          WHEN 'D' THEN 'Disk Sleep (IO等待)'
+          WHEN 'I' THEN 'Idle (空闲)'
+          ELSE ts.state
+        END as state_desc,
+        SUM(ts.dur) / 1e6 as total_dur_ms,
+        ROUND(100.0 * SUM(ts.dur) / (
+          SELECT SUM(dur) FROM thread_state WHERE utid = (SELECT utid FROM main_thread)
+        ), 1) as percent,
+        COUNT(*) as count,
+        -- IO 等待详情
+        CASE WHEN ts.state = 'D' THEN ts.io_wait ELSE NULL END as io_wait
+      FROM thread_state ts
+      WHERE ts.utid = (SELECT utid FROM main_thread)
+      GROUP BY ts.state
+      ORDER BY total_dur_ms DESC
+    save_as: main_thread_states
+    condition: target_process.data.length > 0
+
+  # ========== 调度延迟分析（关联唤醒者）==========
+  - id: runnable_latency
+    type: atomic
+    name: "调度延迟分析"
+    display:
+      level: key
+      title: "调度延迟分析（Runnable 等待）"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid, t.name
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${package}*' AND t.tid = p.pid
+        LIMIT 1
+      )
+      SELECT
+        ts.dur / 1e6 as wait_ms,
+        ts.ts / 1e6 as ts_ms,
+        printf('%d', ts.ts) as ts_str,
+        printf('%d', ts.dur) as dur_str,
+        (SELECT name FROM main_thread) as thread_name,
+        -- 关联唤醒者信息
+        waker_t.name as waker_thread,
+        waker_p.name as waker_process,
+        CASE
+          WHEN ts.dur / 1e6 > 16 THEN 'critical'
+          WHEN ts.dur / 1e6 > 8 THEN 'warning'
+          ELSE 'normal'
+        END as severity
+      FROM thread_state ts
+      LEFT JOIN thread waker_t ON ts.waker_utid = waker_t.utid
+      LEFT JOIN process waker_p ON waker_t.upid = waker_p.upid
+      WHERE ts.utid = (SELECT utid FROM main_thread)
+        AND ts.state IN ('R', 'R+')
+        AND ts.dur > 1000000  -- > 1ms
+      ORDER BY ts.dur DESC
+      LIMIT 20
+    save_as: runnable_delays
+    condition: target_process.data.length > 0
+
+  # ========== 主线程核心分布（关联 capacity 和频率）==========
+  - id: main_thread_cores
+    type: atomic
+    name: "主线程核心分布"
+    display:
+      level: detail
+      title: "主线程运行核心分布"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${package}*' AND t.tid = p.pid
+        LIMIT 1
+      )
+      SELECT
+        ss.cpu,
+        c.capacity,
+        CASE
+          WHEN c.capacity >= (SELECT MAX(capacity) FROM cpu) THEN 'prime'
+          WHEN c.capacity >= (SELECT MAX(capacity) * 0.7 FROM cpu) THEN 'big'
+          WHEN c.capacity >= (SELECT MAX(capacity) * 0.4 FROM cpu) THEN 'medium'
+          ELSE 'little'
+        END as core_type,
+        SUM(ss.dur) / 1e6 as total_time_ms,
+        ROUND(100.0 * SUM(ss.dur) / (
+          SELECT SUM(dur) FROM sched_slice WHERE utid = (SELECT utid FROM main_thread)
+        ), 1) as percent,
+        COUNT(*) as slice_count
+      FROM sched_slice ss
+      JOIN cpu c ON ss.cpu = c.cpu
+      WHERE ss.utid = (SELECT utid FROM main_thread)
+      GROUP BY ss.cpu
+      ORDER BY total_time_ms DESC
+    save_as: main_thread_cores
+    condition: target_process.data.length > 0
+
+  # ========== 阻塞函数分析（深度分析）==========
+  - id: blocked_functions
+    type: atomic
+    name: "阻塞函数分析"
+    display:
+      level: detail
+      title: "主线程阻塞函数"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${package}*' AND t.tid = p.pid
+        LIMIT 1
+      )
+      SELECT
+        ts.blocked_function,
+        ts.state,
+        COUNT(*) as count,
+        SUM(ts.dur) / 1e6 as total_dur_ms,
+        ROUND(AVG(ts.dur) / 1e6, 2) as avg_dur_ms,
+        ROUND(MAX(ts.dur) / 1e6, 2) as max_dur_ms
+      FROM thread_state ts
+      WHERE ts.utid = (SELECT utid FROM main_thread)
+        AND ts.blocked_function IS NOT NULL
+        AND ts.dur > 1000000  -- > 1ms
+      GROUP BY ts.blocked_function, ts.state
+      ORDER BY total_dur_ms DESC
+      LIMIT 15
+    save_as: blocked_functions
+    condition: target_process.data.length > 0
+
+  # ========== CPU 频率分布（关联核心类型）==========
+  - id: cpu_frequency_distribution
+    type: atomic
+    name: "CPU 频率分布"
+    display:
+      level: detail
+      title: "CPU 频率使用分布"
+    sql: |
+      SELECT
+        cf.cpu,
+        c.capacity,
+        CASE
+          WHEN c.capacity >= (SELECT MAX(capacity) FROM cpu) THEN 'prime'
+          WHEN c.capacity >= (SELECT MAX(capacity) * 0.7 FROM cpu) THEN 'big'
+          ELSE 'little'
+        END as core_type,
+        cf.freq / 1000 as freq_mhz,
+        SUM(cf.dur) / 1e6 as duration_ms,
+        ROUND(100.0 * SUM(cf.dur) / (
+          SELECT SUM(dur) FROM cpu_frequency_counters WHERE cpu = cf.cpu
+        ), 1) as percent
+      FROM cpu_frequency_counters cf
+      JOIN cpu c ON cf.cpu = c.cpu
+      GROUP BY cf.cpu, cf.freq
+      HAVING duration_ms > 10  -- 过滤太短的
+      ORDER BY cf.cpu, freq_mhz DESC
+      LIMIT 30
+    save_as: cpu_freq
+    condition: target_process.data.length > 0
+
+  # ========== 唤醒链分析（who wakes whom）==========
+  - id: wakeup_chain
+    type: atomic
+    name: "唤醒链分析"
+    display:
+      level: detail
+      title: "主线程唤醒者分析"
+    sql: |
+      WITH main_thread AS (
+        SELECT t.utid
+        FROM thread t
+        JOIN process p ON t.upid = p.upid
+        WHERE p.name GLOB '${package}*' AND t.tid = p.pid
+        LIMIT 1
+      )
+      SELECT
+        waker_t.name as waker_thread,
+        waker_p.name as waker_process,
+        COUNT(*) as wakeup_count,
+        SUM(ts.dur) / 1e6 as total_wait_before_wakeup_ms,
+        ROUND(AVG(ts.dur) / 1e6, 2) as avg_wait_ms,
+        -- IRQ context
+        SUM(CASE WHEN ts.irq_context = 1 THEN 1 ELSE 0 END) as irq_wakeups
+      FROM thread_state ts
+      JOIN thread waker_t ON ts.waker_utid = waker_t.utid
+      JOIN process waker_p ON waker_t.upid = waker_p.upid
+      WHERE ts.utid = (SELECT utid FROM main_thread)
+        AND ts.state IN ('R', 'R+')
+      GROUP BY waker_t.utid
+      ORDER BY wakeup_count DESC
+      LIMIT 15
+    save_as: wakeup_chain
+    condition: target_process.data.length > 0
+
+  # ========== CPU 诊断 ==========
+  - id: cpu_diagnosis
+    type: diagnostic
+    name: "CPU 诊断"
+    display:
+      level: key
+      title: "问题诊断"
+    inputs: [core_stats, main_thread_states, runnable_delays, blocked_functions]
+    rules:
+      # 大核使用率低
+      - condition: |
+          ${core_stats.data.find(c => c.core_type.includes('big') || c.core_type.includes('prime'))?.percent || 0} < 30
+        severity: warning
+        diagnosis: "大核使用率偏低 (<30%)"
+        confidence: medium
+        suggestions:
+          - "检查线程优先级设置"
+          - "考虑使用 PowerHint 提升调度"
+          - "确认系统功耗策略配置"
+
+      # 主线程 Running 比例低
+      - condition: |
+          ${main_thread_states.data.find(s => s.state === 'Running')?.percent || 0} < 50
+        severity: warning
+        diagnosis: "主线程 CPU 利用率偏低 (Running ${main_thread_states.data.find(s => s.state === 'Running')?.percent}%)"
+        confidence: medium
+        suggestions:
+          - "检查主线程是否存在等待或阻塞"
+          - "分析 Sleeping/IO 等待原因"
+
+      # 严重调度延迟
+      - condition: "${runnable_delays.data[0]?.wait_ms > 16}"
+        severity: critical
+        diagnosis: "存在严重调度延迟 (${runnable_delays.data[0].wait_ms}ms)"
+        confidence: high
+        suggestions:
+          - "检查系统 CPU 负载是否过高"
+          - "考虑减少后台线程数量"
+          - "检查是否有高优先级任务抢占"
+
+      # 频繁调度延迟
+      - condition: "${runnable_delays.data.length} > 10"
+        severity: warning
+        diagnosis: "调度延迟频繁发生 (${runnable_delays.data.length} 次 >1ms)"
+        confidence: medium
+        suggestions:
+          - "优化线程模型，减少线程切换"
+          - "合并短任务，减少调度开销"
+
+      # 阻塞函数问题
+      - condition: "${blocked_functions.data[0]?.total_dur_ms > 50}"
+        severity: warning
+        diagnosis: "主线程阻塞在 ${blocked_functions.data[0].blocked_function} 上 ${blocked_functions.data[0].total_dur_ms}ms"
+        confidence: high
+        suggestions:
+          - "分析阻塞原因，考虑异步化"
+          - "检查锁竞争或 IO 操作"
+
+  # ========== AI 总结 ==========
+  - id: global_summary
+    type: ai_summary
+    name: "分析总结"
+    display:
+      level: key
+      title: "CPU 分析总结"
+    inputs: [target_process, core_stats, thread_usage, main_thread_states, runnable_delays, blocked_functions, cpu_diagnosis]
+    prompt: |
+      请基于以下 CPU 分析结果，生成专业的性能评估总结。
+
+      ## 目标进程
+      ${target_process}
+
+      ## 大小核分布（基于 capacity）
+      ${core_stats}
+
+      ## 线程 CPU 使用
+      ${thread_usage}
+
+      ## 主线程状态
+      ${main_thread_states}
+
+      ## 调度延迟
+      ${runnable_delays}
+
+      ## 阻塞函数
+      ${blocked_functions}
+
+      ## 诊断结果
+      ${cpu_diagnosis}
+
+      ## 专业分析要求
+
+      如果目标进程为空，请输出：
+      "未找到目标进程的 CPU 数据。
+
+      可能原因：
+      - 进程包名不匹配
+      - Trace 中未包含该进程的调度数据
+
+      建议：请确认包名正确，并确保 Trace 包含 sched 数据。"
+
+      如果有数据，请分析并输出：
+      1. **整体评价**：
+         - 大核使用率：>70%优秀，50-70%良好，30-50%一般，<30%较差
+         - 主线程Running比例：>80%优秀，60-80%良好，<60%需关注
+      2. **核心分布**：基于 capacity 的动态核心分类分析
+      3. **调度问题**：是否存在调度延迟，唤醒链路分析
+      4. **阻塞分析**：主线程阻塞在哪些内核函数上
+      5. **优化建议**：基于实际问题给出1-3条具体建议
+
+      ## 严格要求
+      - 只基于提供的实际数据分析
+      - 关注主线程的 CPU 使用和调度情况
+      - 格式清晰，不超过300字
+
+output:
+  display:
+    level: key
+    format: summary

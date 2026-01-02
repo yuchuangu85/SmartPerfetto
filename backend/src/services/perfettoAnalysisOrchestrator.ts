@@ -16,7 +16,6 @@ import { TraceProcessorService } from './traceProcessorService';
 import { AnalysisSessionService } from './analysisSessionService';
 import SQLValidator from './sqlValidator';
 import { PerfettoSqlSkill } from './perfettoSqlSkill';
-import { SkillAnalysisAdapter, getSkillAnalysisAdapter } from './skillEngine/skillAnalysisAdapter';
 import { SkillAnalysisAdapterV2, getSkillAnalysisAdapterV2 } from './skillEngine/skillAnalysisAdapterV2';
 import { SkillEventCollector, createEventCollector } from './skillEngine/eventCollector';
 import { SkillEvent } from './skillEngine/types_v2';
@@ -51,10 +50,8 @@ export class PerfettoAnalysisOrchestrator {
   private openai?: OpenAI;
   private isConfigured: boolean;
   private perfettoSqlSkill?: PerfettoSqlSkill;
-  private skillAdapter: SkillAnalysisAdapter;
-  private skillAdapterV2: SkillAnalysisAdapterV2;
+  private skillAdapter: SkillAnalysisAdapterV2;
   private skillEngineInitialized: boolean = false;
-  private skillEngineV2Initialized: boolean = false;
 
   constructor(
     traceProcessor: TraceProcessorService,
@@ -66,8 +63,7 @@ export class PerfettoAnalysisOrchestrator {
     this.sessionService = sessionService;
     this.sqlValidator = new SQLValidator();
     this.perfettoSqlSkill = perfettoSqlSkill;
-    this.skillAdapter = getSkillAnalysisAdapter(traceProcessor);
-    this.skillAdapterV2 = getSkillAnalysisAdapterV2(traceProcessor);
+    this.skillAdapter = getSkillAnalysisAdapterV2(traceProcessor);
 
     // Default configuration
     this.config = {
@@ -522,19 +518,19 @@ export class PerfettoAnalysisOrchestrator {
 
     if (isFirstIteration) {
       // =========================================================================
-      // Try v2 Skill Engine first (new composable skills)
+      // Try Skill Engine (YAML-based skills)
       // =========================================================================
       try {
-        if (!this.skillEngineV2Initialized) {
-          await this.skillAdapterV2.ensureInitialized();
+        if (!this.skillEngineInitialized) {
+          await this.skillAdapter.ensureInitialized();
 
-          // 注入 AI 服务到 v2 skill engine
+          // 注入 AI 服务到 skill engine
           if (this.openai && this.isConfigured) {
             const aiModel = this.config.aiService === 'deepseek'
               ? (process.env.DEEPSEEK_MODEL || 'deepseek-chat')
               : (process.env.OPENAI_MODEL || 'gpt-4');
 
-            this.skillAdapterV2.setAIService({
+            this.skillAdapter.setAIService({
               chat: async (prompt: string) => {
                 try {
                   const completion = await this.openai!.chat.completions.create({
@@ -556,78 +552,11 @@ export class PerfettoAnalysisOrchestrator {
                 }
               },
             });
-            console.log('[Orchestrator] AI service injected to Skill Engine v2');
+            console.log('[Orchestrator] AI service injected to Skill Engine');
           }
 
-          this.skillEngineV2Initialized = true;
-          console.log('[Orchestrator] Skill Engine v2 initialized');
-        }
-
-        // Detect intent from question using v2 skill registry
-        const skillIdV2 = this.skillAdapterV2.detectIntent(question);
-
-        if (skillIdV2) {
-          console.log(`[Orchestrator] Skill Engine v2 matched: ${skillIdV2} for question: "${question}"`);
-
-          // Extract package name from question if present
-          const packageMatch = question.match(/([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+)/);
-          const packageName = packageMatch ? packageMatch[1] : undefined;
-
-          const skillResultV2 = await this.skillAdapterV2.analyze({
-            traceId: session.traceId,
-            skillId: skillIdV2,
-            question,
-            packageName,
-          });
-
-          if (skillResultV2.success && Object.keys(skillResultV2.sections).length > 0) {
-            console.log(`[Orchestrator] Skill Engine v2 executed successfully: ${skillIdV2}`);
-
-            // Generate summary SQL from skill sections for display
-            const sectionKeys = Object.keys(skillResultV2.sections);
-            const firstSection = skillResultV2.sections[sectionKeys[0]];
-            const displaySql = firstSection?.sql || `-- Skill v2: ${skillIdV2}\n-- Executed ${sectionKeys.length} analysis steps`;
-
-            // 优先使用 directAnswer（直接回答用户问题），否则使用 summary
-            const explanation = skillResultV2.directAnswer || skillResultV2.summary;
-
-            return {
-              sql: displaySql,
-              explanation,
-              skillEngineResult: {
-                skillId: skillResultV2.skillId,
-                skillName: skillResultV2.skillName,
-                sections: skillResultV2.sections,
-                diagnostics: skillResultV2.diagnostics,
-                vendor: skillResultV2.vendor,
-                executionTimeMs: skillResultV2.executionTimeMs,
-                // v2 新增字段
-                directAnswer: skillResultV2.directAnswer,
-                summary: skillResultV2.summary,
-                questionType: skillResultV2.questionType,
-                answerConfidence: skillResultV2.answerConfidence,
-              },
-            };
-          } else {
-            console.log(`[Orchestrator] Skill Engine v2 returned no data for: ${skillIdV2}, falling back to v1`);
-          }
-        } else {
-          console.log(`[Orchestrator] Skill Engine v2 no match for: "${question}", trying v1`);
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.log('[Orchestrator] Skill Engine v2 failed:', errorMessage, '- falling back to v1');
-      }
-
-      // =========================================================================
-      // Try v1 Skill Engine (legacy YAML skills)
-      // =========================================================================
-      try {
-        // Initialize skill registry if needed
-        if (!this.skillEngineInitialized) {
-          await this.skillAdapter.ensureInitialized();
           this.skillEngineInitialized = true;
-          console.log('[Orchestrator] Skill Engine v1 initialized');
+          console.log('[Orchestrator] Skill Engine initialized');
         }
 
         // Detect intent from question
@@ -658,9 +587,12 @@ export class PerfettoAnalysisOrchestrator {
             const firstSection = skillResult.sections[sectionKeys[0]];
             const displaySql = firstSection?.sql || `-- Skill: ${skillId}\n-- Executed ${sectionKeys.length} analysis steps`;
 
+            // 优先使用 directAnswer（直接回答用户问题），否则使用 summary
+            const explanation = skillResult.directAnswer || skillResult.summary;
+
             return {
               sql: displaySql,
-              explanation: skillResult.summary,
+              explanation,
               skillEngineResult: {
                 skillId: skillResult.skillId,
                 skillName: skillResult.skillName,
@@ -668,6 +600,10 @@ export class PerfettoAnalysisOrchestrator {
                 diagnostics: skillResult.diagnostics,
                 vendor: skillResult.vendor,
                 executionTimeMs: skillResult.executionTimeMs,
+                directAnswer: skillResult.directAnswer,
+                summary: skillResult.summary,
+                questionType: skillResult.questionType,
+                answerConfidence: skillResult.answerConfidence,
               },
             };
           } else {

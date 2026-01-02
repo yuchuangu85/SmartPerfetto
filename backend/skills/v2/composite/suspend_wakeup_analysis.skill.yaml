@@ -1,0 +1,276 @@
+# Suspend/Wakeup Analysis Skill v2.1
+# Uses Perfetto stdlib tables:
+# - android_suspend_state: ts, dur, power_state ('awake' or 'suspended')
+# - android_wakeups: ts, dur, raw_wakeup, on_device_attribution, type, item,
+#                    suspend_quality, backoff_state, backoff_reason, backoff_count, backoff_millis
+# Wakeup types: 'normal', 'abort_pending', 'abort_last_active', 'abort_other'
+
+name: suspend_wakeup_analysis
+version: "2.1"
+type: composite
+display:
+  name: "休眠唤醒分析"
+  level: expert
+  description: "系统休眠/唤醒分析，识别唤醒源、suspend 失败原因和功耗影响"
+
+triggers:
+  - pattern: "(休眠|suspend|唤醒|wakeup|待机)"
+    confidence: 0.95
+  - pattern: "(电池|battery|功耗|power)"
+    confidence: 0.8
+  - pattern: "(保活|keep awake|wakelock)"
+    confidence: 0.85
+
+parameters:
+  - name: wakeup_source
+    type: string
+    required: false
+    description: "唤醒源过滤"
+  - name: include_aborts
+    type: boolean
+    required: false
+    default: true
+    description: "是否包含 suspend 中止事件"
+
+analysis_steps:
+  # Step 1: 休眠唤醒概览
+  - id: suspend_overview
+    type: diagnostic
+    name: "休眠唤醒概览"
+    description: "统计系统休眠和唤醒时间"
+    sql: |
+      INCLUDE PERFETTO MODULE android.suspend;
+
+      SELECT
+        power_state,
+        COUNT(*) AS period_count,
+        SUM(dur) / 1e9 AS total_time_sec,
+        AVG(dur) / 1e9 AS avg_duration_sec,
+        MAX(dur) / 1e9 AS max_duration_sec,
+        MIN(dur) / 1e9 AS min_duration_sec
+      FROM android_suspend_state
+      GROUP BY power_state;
+    interpretation:
+      key_metrics:
+        - name: "total_time_sec"
+          description: "各状态总时间 (秒)"
+        - name: "avg_duration_sec"
+          description: "平均持续时间 (秒)"
+
+  # Step 2: 唤醒事件概览
+  - id: wakeup_overview
+    type: diagnostic
+    name: "唤醒事件概览"
+    description: "统计唤醒事件类型分布"
+    sql: |
+      INCLUDE PERFETTO MODULE android.wakeups;
+
+      SELECT
+        type AS wakeup_type,
+        suspend_quality,
+        COUNT(*) AS wakeup_count,
+        SUM(dur) / 1e9 AS total_awake_time_sec,
+        AVG(dur) / 1e9 AS avg_awake_time_sec
+      FROM android_wakeups
+      WHERE CASE WHEN NOT COALESCE({{include_aborts}}, 1)
+                 THEN type = 'normal'
+                 ELSE 1 END
+      GROUP BY type, suspend_quality
+      ORDER BY wakeup_count DESC;
+    interpretation:
+      key_metrics:
+        - name: "wakeup_type"
+          description: "唤醒类型: normal=正常唤醒, abort_*=suspend失败"
+        - name: "suspend_quality"
+          description: "good=正常, bad=suspend失败触发backoff"
+      analysis_hints:
+        - condition: "wakeup_type LIKE 'abort%' AND wakeup_count > 5"
+          insight: "频繁 suspend 失败，设备无法有效休眠"
+        - condition: "suspend_quality = 'bad'"
+          insight: "suspend 质量差，触发 backoff 延迟"
+
+  # Step 3: 唤醒源排行
+  - id: wakeup_source_ranking
+    type: diagnostic
+    name: "唤醒源排行"
+    description: "按唤醒源统计唤醒次数和时间"
+    sql: |
+      INCLUDE PERFETTO MODULE android.wakeups;
+
+      SELECT
+        item AS wakeup_source,
+        type AS wakeup_type,
+        COUNT(*) AS wakeup_count,
+        SUM(dur) / 1e9 AS total_awake_sec,
+        AVG(dur) / 1e9 AS avg_awake_sec
+      FROM android_wakeups
+      WHERE CASE WHEN '{{wakeup_source}}' != ''
+                 THEN item GLOB '*{{wakeup_source}}*'
+                 ELSE 1 END
+      GROUP BY item, type
+      ORDER BY wakeup_count DESC
+      LIMIT 30;
+    interpretation:
+      key_metrics:
+        - name: "wakeup_source"
+          description: "唤醒源设备名"
+        - name: "total_awake_sec"
+          description: "该唤醒源导致的总唤醒时间"
+      analysis_hints:
+        - condition: "wakeup_source LIKE '%wifi%' OR wakeup_source LIKE '%wlan%'"
+          insight: "WiFi 唤醒，检查 WiFi 扫描或 keep-alive 设置"
+        - condition: "wakeup_source LIKE '%alarm%'"
+          insight: "Alarm 唤醒，检查应用定时任务"
+        - condition: "wakeup_source LIKE '%modem%' OR wakeup_source LIKE '%rmnet%'"
+          insight: "移动网络唤醒，可能是推送或后台数据同步"
+
+  # Step 4: Suspend Backoff 分析
+  - id: suspend_backoff
+    type: diagnostic
+    name: "Suspend Backoff 分析"
+    description: "分析 suspend 失败和 backoff 情况"
+    sql: |
+      INCLUDE PERFETTO MODULE android.wakeups;
+
+      SELECT
+        backoff_reason,
+        backoff_state,
+        COUNT(*) AS count,
+        MAX(backoff_count) AS max_backoff_count,
+        MAX(backoff_millis) AS max_backoff_ms,
+        AVG(backoff_millis) AS avg_backoff_ms
+      FROM android_wakeups
+      WHERE backoff_reason IS NOT NULL
+        AND backoff_reason != 'none'
+      GROUP BY backoff_reason, backoff_state
+      ORDER BY count DESC;
+    interpretation:
+      key_metrics:
+        - name: "backoff_reason"
+          description: "backoff 原因: short=短暂唤醒, failed=suspend失败"
+        - name: "max_backoff_ms"
+          description: "最大 backoff 延迟"
+      analysis_hints:
+        - condition: "backoff_reason = 'failed'"
+          insight: "suspend 失败，系统无法进入休眠"
+        - condition: "max_backoff_count > 5"
+          insight: "连续多次 backoff，系统在挣扎休眠"
+
+  # Step 5: 唤醒时间线
+  - id: wakeup_timeline
+    type: diagnostic
+    name: "唤醒时间线"
+    description: "按时间顺序列出唤醒事件"
+    sql: |
+      INCLUDE PERFETTO MODULE android.wakeups;
+
+      SELECT
+        ts / 1e9 AS time_sec,
+        dur / 1e9 AS awake_duration_sec,
+        type AS wakeup_type,
+        item AS wakeup_source,
+        suspend_quality,
+        on_device_attribution
+      FROM android_wakeups
+      ORDER BY ts
+      LIMIT 100;
+    interpretation:
+      key_metrics:
+        - name: "awake_duration_sec"
+          description: "唤醒持续时间"
+
+  # Step 6: 休眠质量评估
+  - id: suspend_quality_assessment
+    type: diagnostic
+    name: "休眠质量评估"
+    description: "综合评估系统休眠质量"
+    sql: |
+      INCLUDE PERFETTO MODULE android.suspend;
+      INCLUDE PERFETTO MODULE android.wakeups;
+
+      WITH suspend_stats AS (
+        SELECT
+          SUM(CASE WHEN power_state = 'suspended' THEN dur ELSE 0 END) AS suspended_time,
+          SUM(CASE WHEN power_state = 'awake' THEN dur ELSE 0 END) AS awake_time,
+          SUM(dur) AS total_time
+        FROM android_suspend_state
+      ),
+      wakeup_stats AS (
+        SELECT
+          COUNT(*) AS total_wakeups,
+          SUM(CASE WHEN type != 'normal' THEN 1 ELSE 0 END) AS abort_count,
+          SUM(CASE WHEN suspend_quality = 'bad' THEN 1 ELSE 0 END) AS bad_quality_count
+        FROM android_wakeups
+      )
+      SELECT
+        ROUND(ss.suspended_time * 100.0 / ss.total_time, 2) AS suspend_pct,
+        ROUND(ss.awake_time * 100.0 / ss.total_time, 2) AS awake_pct,
+        ws.total_wakeups,
+        ws.abort_count,
+        ws.bad_quality_count,
+        ROUND(ws.abort_count * 100.0 / NULLIF(ws.total_wakeups, 0), 2) AS abort_pct
+      FROM suspend_stats ss, wakeup_stats ws;
+    interpretation:
+      key_metrics:
+        - name: "suspend_pct"
+          description: "休眠时间占比"
+        - name: "abort_pct"
+          description: "suspend 失败率"
+          thresholds:
+            warning: 10
+            critical: 30
+
+  # Step 7: AI 综合分析
+  - id: suspend_ai_summary
+    type: ai_summary
+    name: "休眠唤醒 AI 分析"
+    description: "综合分析休眠唤醒行为"
+    depends_on:
+      - suspend_overview
+      - wakeup_overview
+      - wakeup_source_ranking
+      - suspend_backoff
+      - suspend_quality_assessment
+    prompt: |
+      请基于以下休眠唤醒分析数据，提供专业的分析：
+
+      ## 休眠概览
+      {{suspend_overview}}
+
+      ## 唤醒事件概览
+      {{wakeup_overview}}
+
+      ## 唤醒源排行
+      {{wakeup_source_ranking}}
+
+      ## Suspend Backoff
+      {{suspend_backoff}}
+
+      ## 休眠质量
+      {{suspend_quality_assessment}}
+
+      请分析：
+      1. 系统休眠效率评估
+      2. 主要唤醒源识别
+      3. Suspend 失败原因分析
+      4. 对电池续航的影响
+      5. 优化建议
+
+      使用中文回答，结构清晰。
+
+output:
+  format: markdown
+  sections:
+    - title: "休眠唤醒分析总结"
+      content: |
+        ## 休眠概览
+        {{suspend_overview}}
+
+        ## 唤醒源排行
+        {{wakeup_source_ranking}}
+
+        ## 休眠质量
+        {{suspend_quality_assessment}}
+
+        ## AI 综合分析
+        {{suspend_ai_summary}}
