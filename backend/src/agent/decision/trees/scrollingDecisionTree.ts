@@ -1,0 +1,546 @@
+/**
+ * Scrolling Analysis Decision Tree
+ *
+ * 实现专家级滑动卡顿分析的决策逻辑：
+ * 1. 先看整体 FPS，确认确实有问题
+ * 2. 判断是 FPS 整体偏低还是有突刺/掉帧
+ * 3. 根据不同情况分别深入分析
+ * 4. 最终定位到 App 问题还是系统问题，以及具体组件
+ *
+ * 基于 INTELLIGENT_AGENT_DESIGN.md 中的专家决策树
+ */
+
+import { DecisionTree, DecisionContext } from '../types';
+
+/**
+ * 滑动分析决策树
+ */
+export const scrollingDecisionTree: DecisionTree = {
+  id: 'scrolling_analysis_v1',
+  name: '滑动卡顿分析决策树',
+  description: '专家级滑动性能分析，自动定位问题根因',
+  analysisType: 'scrolling',
+  entryNode: 'get_fps_overview',
+
+  nodes: [
+    // ===== 阶段 1: 获取整体 FPS 数据 =====
+    {
+      id: 'get_fps_overview',
+      type: 'ACTION',
+      name: '获取 FPS 概览',
+      action: {
+        description: '执行滑动分析获取 FPS 数据',
+        skill: 'scrolling_analysis',
+        params: {},
+        resultKey: 'fps_data',
+      },
+      next: {
+        default: 'check_has_problem',
+      },
+    },
+
+    // ===== 阶段 2: 检查是否确实有问题 =====
+    {
+      id: 'check_has_problem',
+      type: 'CHECK',
+      name: '检查是否有卡顿问题',
+      check: {
+        description: 'FPS >= 55 且卡顿率 < 5%？',
+        useResultFrom: 'fps_data',
+        evaluate: (data, _context) => {
+          const avgFps = extractAvgFps(data);
+          const jankRate = extractJankRate(data);
+          // 如果 FPS >= 55 且卡顿率 < 5%，认为流畅
+          return avgFps >= 55 && jankRate < 0.05;
+        },
+      },
+      next: {
+        true: 'conclude_no_problem',
+        false: 'check_fps_pattern',
+      },
+    },
+
+    // ===== 阶段 2.1: 流畅结论 =====
+    {
+      id: 'conclude_no_problem',
+      type: 'CONCLUDE',
+      name: '结论：流畅',
+      conclusion: {
+        category: 'UNKNOWN',
+        component: 'UNKNOWN',
+        summaryTemplate: '滑动性能正常，平均 FPS 达标，卡顿率在可接受范围内',
+        confidence: 0.9,
+        suggestedNextSteps: [],
+      },
+    },
+
+    // ===== 阶段 3: 判断 FPS 模式 =====
+    {
+      id: 'check_fps_pattern',
+      type: 'CHECK',
+      name: '判断 FPS 下降模式',
+      check: {
+        description: 'FPS 是持续偏低还是有突刺？',
+        useResultFrom: 'fps_data',
+        evaluate: (data, _context) => {
+          const avgFps = extractAvgFps(data);
+          const minFps = extractMinFps(data);
+          // 如果平均 FPS 和最低 FPS 差距大，说明有突刺
+          // 如果差距小但整体偏低，说明持续慢
+          const variance = avgFps - minFps;
+          // 持续偏低：方差小，但整体低
+          return variance < 15 && avgFps < 50;
+        },
+      },
+      next: {
+        true: 'analyze_continuous_low', // 持续偏低
+        false: 'analyze_spike_jank',     // 有突刺/掉帧
+      },
+    },
+
+    // ===== 分支 A: 持续偏低分析 =====
+    {
+      id: 'analyze_continuous_low',
+      type: 'ACTION',
+      name: '分析 SurfaceFlinger 状态',
+      action: {
+        description: '检查 SurfaceFlinger 合成是否正常',
+        skill: 'sf_analysis',
+        params: {},
+        resultKey: 'sf_data',
+      },
+      next: {
+        default: 'check_sf_normal',
+      },
+    },
+
+    {
+      id: 'check_sf_normal',
+      type: 'CHECK',
+      name: '检查 SF 是否正常',
+      check: {
+        description: 'SF 合成耗时 < 4ms？',
+        useResultFrom: 'sf_data',
+        evaluate: (data, _context) => {
+          const sfAvgDuration = extractSfAvgDuration(data);
+          return sfAvgDuration < 4;
+        },
+      },
+      next: {
+        true: 'analyze_app_render',  // SF 正常，看 App
+        false: 'conclude_sf_issue',   // SF 异常
+      },
+    },
+
+    {
+      id: 'conclude_sf_issue',
+      type: 'CONCLUDE',
+      name: '结论：SurfaceFlinger 问题',
+      conclusion: {
+        category: 'SYSTEM',
+        component: 'SURFACE_FLINGER',
+        summaryTemplate: 'SurfaceFlinger 合成耗时过长，这是系统层面的问题，可能影响所有应用',
+        confidence: 0.85,
+        suggestedNextSteps: [
+          '检查其他应用是否也有卡顿',
+          '检查 HWC 状态',
+          '检查 GPU 负载',
+        ],
+      },
+    },
+
+    // ===== 分支 A2: App 渲染分析 =====
+    {
+      id: 'analyze_app_render',
+      type: 'ACTION',
+      name: '分析 App 渲染',
+      action: {
+        description: '获取 RenderThread 详细数据',
+        skill: 'jank_frame_detail',
+        params: {},
+        resultKey: 'render_data',
+      },
+      next: {
+        default: 'check_render_thread',
+      },
+    },
+
+    {
+      id: 'check_render_thread',
+      type: 'CHECK',
+      name: '检查 RenderThread 耗时',
+      check: {
+        description: 'RenderThread 平均耗时 > 16ms？',
+        useResultFrom: 'render_data',
+        evaluate: (data, _context) => {
+          const avgRenderTime = extractAvgRenderTime(data);
+          return avgRenderTime > 16;
+        },
+      },
+      next: {
+        true: 'conclude_render_thread_issue',
+        false: 'check_main_thread',
+      },
+    },
+
+    {
+      id: 'conclude_render_thread_issue',
+      type: 'CONCLUDE',
+      name: '结论：RenderThread 耗时过长',
+      conclusion: {
+        category: 'APP',
+        component: 'RENDER_THREAD',
+        summaryTemplate: 'App 的 RenderThread 耗时过长（> 16ms），可能是绘制复杂度高或 GPU 负载过重',
+        confidence: 0.85,
+        suggestedNextSteps: [
+          '检查 DrawFrame 内部的耗时分布',
+          '检查是否有过度绘制',
+          '检查 GPU 渲染情况',
+        ],
+      },
+    },
+
+    {
+      id: 'check_main_thread',
+      type: 'CHECK',
+      name: '检查主线程',
+      check: {
+        description: '主线程 doFrame 耗时是否过长？',
+        useResultFrom: 'render_data',
+        evaluate: (data, _context) => {
+          const avgDoFrameTime = extractAvgDoFrameTime(data);
+          return avgDoFrameTime > 12;
+        },
+      },
+      next: {
+        true: 'conclude_main_thread_issue',
+        false: 'analyze_scheduling',
+      },
+    },
+
+    {
+      id: 'conclude_main_thread_issue',
+      type: 'CONCLUDE',
+      name: '结论：主线程问题',
+      conclusion: {
+        category: 'APP',
+        component: 'MAIN_THREAD',
+        summaryTemplate: 'App 主线程的 doFrame 耗时过长，可能有复杂的布局计算或耗时操作',
+        confidence: 0.8,
+        suggestedNextSteps: [
+          '检查 measure/layout/draw 各阶段耗时',
+          '检查是否有 Binder 调用阻塞',
+          '检查是否有 GC 暂停',
+        ],
+      },
+    },
+
+    // ===== 分支 A3: 调度分析 =====
+    {
+      id: 'analyze_scheduling',
+      type: 'ACTION',
+      name: '分析 CPU 调度',
+      action: {
+        description: '检查 CPU 调度和频率',
+        skill: 'cpu_analysis',
+        params: {},
+        resultKey: 'cpu_data',
+      },
+      next: {
+        default: 'check_scheduling',
+      },
+    },
+
+    {
+      id: 'check_scheduling',
+      type: 'CHECK',
+      name: '检查调度延迟',
+      check: {
+        description: 'Runnable 时间 > 5ms？',
+        useResultFrom: 'cpu_data',
+        evaluate: (data, _context) => {
+          const avgRunnable = extractAvgRunnableTime(data);
+          return avgRunnable > 5;
+        },
+      },
+      next: {
+        true: 'conclude_scheduling_issue',
+        false: 'conclude_unknown',
+      },
+    },
+
+    {
+      id: 'conclude_scheduling_issue',
+      type: 'CONCLUDE',
+      name: '结论：调度问题',
+      conclusion: {
+        category: 'SYSTEM',
+        component: 'CPU_SCHEDULING',
+        summaryTemplate: 'CPU 调度延迟过高，关键线程等待 CPU 时间过长，可能是系统负载高或调度策略问题',
+        confidence: 0.75,
+        suggestedNextSteps: [
+          '检查 CPU 频率是否被限制',
+          '检查是否有后台任务抢占',
+          '检查线程优先级设置',
+        ],
+      },
+    },
+
+    {
+      id: 'conclude_unknown',
+      type: 'CONCLUDE',
+      name: '结论：需要进一步分析',
+      conclusion: {
+        category: 'UNKNOWN',
+        component: 'UNKNOWN',
+        summaryTemplate: '当前数据无法确定根因，需要更详细的分析',
+        confidence: 0.5,
+        suggestedNextSteps: [
+          '检查是否有 IO 阻塞',
+          '检查内存压力',
+          '使用 Simpleperf 进行函数级分析',
+        ],
+      },
+    },
+
+    // ===== 分支 B: 突刺/掉帧分析 =====
+    {
+      id: 'analyze_spike_jank',
+      type: 'ACTION',
+      name: '分析卡顿帧',
+      action: {
+        description: '定位具体的卡顿帧',
+        skill: 'jank_frame_detail',
+        params: {},
+        resultKey: 'jank_frames',
+      },
+      next: {
+        default: 'classify_jank_frames',
+      },
+    },
+
+    {
+      id: 'classify_jank_frames',
+      type: 'BRANCH',
+      name: '分类卡顿帧类型',
+      branches: [
+        {
+          condition: {
+            description: '大部分是 App Deadline Missed？',
+            useResultFrom: 'jank_frames',
+            evaluate: (data, _context) => {
+              const appMissedRatio = extractAppDeadlineMissedRatio(data);
+              return appMissedRatio > 0.6;
+            },
+          },
+          next: 'conclude_app_deadline_missed',
+        },
+        {
+          condition: {
+            description: '大部分是 SF Stuffing？',
+            useResultFrom: 'jank_frames',
+            evaluate: (data, _context) => {
+              const sfStuffingRatio = extractSfStuffingRatio(data);
+              return sfStuffingRatio > 0.6;
+            },
+          },
+          next: 'conclude_sf_stuffing',
+        },
+        {
+          condition: {
+            description: '有 Binder 阻塞？',
+            useResultFrom: 'jank_frames',
+            evaluate: (data, _context) => {
+              const hasBinderBlock = checkBinderBlock(data);
+              return hasBinderBlock;
+            },
+          },
+          next: 'conclude_binder_issue',
+        },
+      ],
+      next: {
+        default: 'conclude_mixed_jank',
+      },
+    },
+
+    {
+      id: 'conclude_app_deadline_missed',
+      type: 'CONCLUDE',
+      name: '结论：App 帧超时',
+      conclusion: {
+        category: 'APP',
+        component: 'RENDER_THREAD',
+        summaryTemplate: '卡顿主要由 App 帧超时导致（App Deadline Missed），App 的渲染耗时超过了一帧的时间预算',
+        confidence: 0.85,
+        suggestedNextSteps: [
+          '分析具体哪些帧超时最严重',
+          '检查 RenderThread 内部耗时分布',
+        ],
+      },
+    },
+
+    {
+      id: 'conclude_sf_stuffing',
+      type: 'CONCLUDE',
+      name: '结论：SF Stuffing',
+      conclusion: {
+        category: 'MIXED',
+        component: 'SURFACE_FLINGER',
+        summaryTemplate: '卡顿主要由 SF Stuffing 导致，App 产生帧的速度超过了显示刷新率',
+        confidence: 0.8,
+        suggestedNextSteps: [
+          '检查是否有 Triple Buffering 问题',
+          '检查 VSYNC 信号',
+        ],
+      },
+    },
+
+    {
+      id: 'conclude_binder_issue',
+      type: 'CONCLUDE',
+      name: '结论：Binder 阻塞',
+      conclusion: {
+        category: 'MIXED',
+        component: 'BINDER',
+        summaryTemplate: '卡顿帧存在 Binder 调用阻塞，跨进程通信耗时过长',
+        confidence: 0.8,
+        suggestedNextSteps: [
+          '检查 Binder 调用的目标进程',
+          '检查 system_server 负载',
+        ],
+      },
+    },
+
+    {
+      id: 'conclude_mixed_jank',
+      type: 'CONCLUDE',
+      name: '结论：混合问题',
+      conclusion: {
+        category: 'MIXED',
+        component: 'UNKNOWN',
+        summaryTemplate: '卡顿由多种原因混合导致，没有单一主因',
+        confidence: 0.6,
+        suggestedNextSteps: [
+          '逐帧分析卡顿原因',
+          '检查是否有系统级干扰',
+        ],
+      },
+    },
+  ],
+};
+
+// ===== 辅助函数：从 Skill 结果中提取数据 =====
+
+function extractAvgFps(data: any): number {
+  if (!data) return 0;
+  // 尝试从不同的数据结构中提取 FPS
+  if (data.layers?.overview?.scroll_sessions_summary?.data?.[0]) {
+    return data.layers.overview.scroll_sessions_summary.data[0].avg_fps || 0;
+  }
+  if (data.avg_fps !== undefined) return data.avg_fps;
+  if (data.summary?.avg_fps !== undefined) return data.summary.avg_fps;
+  return 0;
+}
+
+function extractMinFps(data: any): number {
+  if (!data) return 0;
+  if (data.layers?.overview?.scroll_sessions_summary?.data?.[0]) {
+    return data.layers.overview.scroll_sessions_summary.data[0].min_fps || 0;
+  }
+  if (data.min_fps !== undefined) return data.min_fps;
+  if (data.summary?.min_fps !== undefined) return data.summary.min_fps;
+  return 0;
+}
+
+function extractJankRate(data: any): number {
+  if (!data) return 0;
+  if (data.layers?.overview?.scroll_sessions_summary?.data?.[0]) {
+    const summary = data.layers.overview.scroll_sessions_summary.data[0];
+    const total = summary.total_frames || 1;
+    const jank = summary.janky_frames || 0;
+    return jank / total;
+  }
+  if (data.jank_rate !== undefined) return data.jank_rate;
+  if (data.summary?.jank_rate !== undefined) return data.summary.jank_rate;
+  return 0;
+}
+
+function extractSfAvgDuration(data: any): number {
+  if (!data) return 0;
+  if (data.sf_avg_duration !== undefined) return data.sf_avg_duration;
+  if (data.summary?.sf_composition_avg_ms !== undefined) {
+    return data.summary.sf_composition_avg_ms;
+  }
+  return 0;
+}
+
+function extractAvgRenderTime(data: any): number {
+  if (!data) return 0;
+  if (data.layers?.overview?.frame_timing_summary?.data?.[0]) {
+    return data.layers.overview.frame_timing_summary.data[0].avg_render_thread_ms || 0;
+  }
+  if (data.avg_render_time !== undefined) return data.avg_render_time;
+  return 0;
+}
+
+function extractAvgDoFrameTime(data: any): number {
+  if (!data) return 0;
+  if (data.layers?.overview?.frame_timing_summary?.data?.[0]) {
+    return data.layers.overview.frame_timing_summary.data[0].avg_do_frame_ms || 0;
+  }
+  if (data.avg_do_frame_time !== undefined) return data.avg_do_frame_time;
+  return 0;
+}
+
+function extractAvgRunnableTime(data: any): number {
+  if (!data) return 0;
+  if (data.avg_runnable_time !== undefined) return data.avg_runnable_time;
+  return 0;
+}
+
+function extractAppDeadlineMissedRatio(data: any): number {
+  if (!data) return 0;
+  if (data.layers?.overview?.jank_type_distribution?.data) {
+    const types = data.layers.overview.jank_type_distribution.data;
+    const appMissed = types.filter((t: any) =>
+      t.jank_type?.includes('App Deadline Missed')
+    );
+    const total = types.reduce((sum: number, t: any) => sum + (t.count || 0), 0);
+    const missed = appMissed.reduce((sum: number, t: any) => sum + (t.count || 0), 0);
+    return total > 0 ? missed / total : 0;
+  }
+  if (data.app_deadline_missed_ratio !== undefined) {
+    return data.app_deadline_missed_ratio;
+  }
+  return 0;
+}
+
+function extractSfStuffingRatio(data: any): number {
+  if (!data) return 0;
+  if (data.layers?.overview?.jank_type_distribution?.data) {
+    const types = data.layers.overview.jank_type_distribution.data;
+    const stuffing = types.filter((t: any) =>
+      t.jank_type?.includes('SurfaceFlinger Stuffing')
+    );
+    const total = types.reduce((sum: number, t: any) => sum + (t.count || 0), 0);
+    const stuffed = stuffing.reduce((sum: number, t: any) => sum + (t.count || 0), 0);
+    return total > 0 ? stuffed / total : 0;
+  }
+  if (data.sf_stuffing_ratio !== undefined) {
+    return data.sf_stuffing_ratio;
+  }
+  return 0;
+}
+
+function checkBinderBlock(data: any): boolean {
+  if (!data) return false;
+  if (data.has_binder_block !== undefined) return data.has_binder_block;
+  // 检查是否有任何帧的 Binder 耗时超过阈值
+  if (data.layers?.deep?.per_frame_data?.data) {
+    const frames = data.layers.deep.per_frame_data.data;
+    return frames.some((f: any) => (f.binder_duration_ms || 0) > 5);
+  }
+  return false;
+}
+
+export default scrollingDecisionTree;

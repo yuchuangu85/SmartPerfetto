@@ -2314,9 +2314,9 @@ export class HTMLReportGenerator {
       <div class="finding ${finding.severity}">
         <div class="title">${this.escapeHtml(finding.title)}</div>
         <div>${this.escapeHtml(finding.description)}</div>
-        ${finding.evidence.length > 0 ? `
+        ${(finding.evidence?.length || 0) > 0 ? `
           <div style="margin-top: 8px; font-size: 12px; color: #666;">
-            证据: ${finding.evidence.length} 项
+            证据: ${finding.evidence!.length} 项
           </div>
         ` : ''}
       </div>
@@ -2689,6 +2689,16 @@ export class HTMLReportGenerator {
 
   private renderStageResult(stage: StageResult, idx: number): string {
     const findings = stage.findings || [];
+    const data = stage.data || {};
+
+    // Extract layered data (support both semantic names and legacy L1/L2/L4)
+    const overviewData = data.overview || data.L1 || {};
+    const listData = data.list || data.L2 || {};
+    const deepData = data.deep || data.L4 || {};
+    const hasLayeredData = Object.keys(overviewData).length > 0 ||
+                          Object.keys(listData).length > 0 ||
+                          Object.keys(deepData).length > 0;
+
     return `
       <div class="stage-section">
         <div class="stage-header">
@@ -2698,16 +2708,365 @@ export class HTMLReportGenerator {
           </span>
         </div>
         <div class="stage-body">
+          ${hasLayeredData ? this.renderLayeredData(overviewData, listData, deepData, stage.stageId) : ''}
+
           ${findings.length > 0 ? `
-            <div style="margin-bottom: 10px; font-weight: 600;">发现 (${findings.length})</div>
+            <div style="margin-top: 16px; margin-bottom: 10px; font-weight: 600; color: #374151;">
+              🔍 发现 (${findings.length})
+            </div>
             ${findings.map((f: Finding) => this.renderFinding(f)).join('')}
-          ` : '<div style="color: #666;">无发现</div>'}
+          ` : (!hasLayeredData ? '<div style="color: #666;">无发现</div>' : '')}
+
           <div style="margin-top: 10px; font-size: 12px; color: #999;">
             耗时: ${((stage.endTime - stage.startTime) || 0).toFixed(0)}ms
           </div>
         </div>
       </div>
     `;
+  }
+
+  /**
+   * Render layered data (L1 Overview, L2 List, L4 Deep Analysis)
+   */
+  private renderLayeredData(overview: any, list: any, deep: any, stageId: string): string {
+    let html = '';
+
+    // L1 Overview Data - Render as metric cards
+    if (Object.keys(overview).length > 0) {
+      html += this.renderOverviewData(overview);
+    }
+
+    // L2 List Data - Render as collapsible tables
+    if (Object.keys(list).length > 0) {
+      html += this.renderListData(list, stageId);
+    }
+
+    // L4 Deep Analysis Data - Render as detailed sections
+    if (Object.keys(deep).length > 0) {
+      html += this.renderDeepAnalysisData(deep, stageId);
+    }
+
+    return html;
+  }
+
+  /**
+   * Render L1 Overview data as metric cards
+   */
+  private renderOverviewData(overview: any): string {
+    const metrics: Array<{label: string; value: string; color: string}> = [];
+
+    for (const [key, value] of Object.entries(overview)) {
+      if (value === null || value === undefined) continue;
+
+      const label = this.formatMetricLabel(key);
+      let displayValue: string;
+      let color = '#10b981';
+
+      if (typeof value === 'number') {
+        // Format numbers nicely
+        if (key.toLowerCase().includes('rate') || key.toLowerCase().includes('percent')) {
+          displayValue = `${(value * 100).toFixed(1)}%`;
+          color = value > 0.1 ? '#ef4444' : value > 0.05 ? '#f59e0b' : '#10b981';
+        } else if (key.toLowerCase().includes('duration') || key.toLowerCase().includes('time') || key.toLowerCase().includes('ms')) {
+          displayValue = value > 1000 ? `${(value / 1000).toFixed(2)}s` : `${value.toFixed(1)}ms`;
+        } else {
+          displayValue = value.toLocaleString();
+        }
+      } else if (typeof value === 'boolean') {
+        displayValue = value ? '✅' : '❌';
+        color = value ? '#10b981' : '#ef4444';
+      } else {
+        displayValue = String(value);
+      }
+
+      metrics.push({ label, value: displayValue, color });
+    }
+
+    if (metrics.length === 0) return '';
+
+    return `
+      <div style="margin-bottom: 20px;">
+        <div style="font-weight: 600; color: #374151; margin-bottom: 12px; display: flex; align-items: center;">
+          📊 概览指标
+          <span style="margin-left: 8px; font-size: 12px; color: #9ca3af; font-weight: normal;">
+            (${metrics.length} 项)
+          </span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
+          ${metrics.map(m => `
+            <div style="background: #f9fafb; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #e5e7eb;">
+              <div style="font-size: 22px; font-weight: 700; color: ${m.color};">${m.value}</div>
+              <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${m.label}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render L2 List data as collapsible tables
+   */
+  private renderListData(list: any, stageId: string): string {
+    let html = `
+      <div style="margin-bottom: 20px;">
+        <div style="font-weight: 600; color: #374151; margin-bottom: 12px; display: flex; align-items: center;">
+          📋 数据列表
+        </div>
+    `;
+
+    for (const [key, value] of Object.entries(list)) {
+      if (!Array.isArray(value) || value.length === 0) continue;
+
+      const items = value as any[];
+      const tableId = `table-${stageId}-${key}`.replace(/[^a-zA-Z0-9-]/g, '-');
+      const displayName = this.formatMetricLabel(key);
+      const previewCount = Math.min(5, items.length);
+
+      html += `
+        <div style="margin-bottom: 16px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+          <div style="background: #f3f4f6; padding: 10px 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
+            <span>${displayName} (${items.length} 条)</span>
+            ${items.length > previewCount ? `
+              <button onclick="document.getElementById('${tableId}').classList.toggle('expanded'); this.textContent = this.textContent.includes('展开') ? '收起' : '展开全部 (${items.length})';"
+                      style="background: #10b981; color: white; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                展开全部 (${items.length})
+              </button>
+            ` : ''}
+          </div>
+          <div id="${tableId}" style="max-height: 300px; overflow: auto;">
+            <style>#${tableId}.expanded { max-height: none !important; }</style>
+            ${this.renderDataTable(items.slice(0, previewCount), items.length > previewCount ? items.slice(previewCount) : [])}
+          </div>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  /**
+   * Render a data table with optional hidden rows
+   */
+  private renderDataTable(visibleItems: any[], hiddenItems: any[]): string {
+    if (visibleItems.length === 0) return '<div style="padding: 16px; color: #9ca3af;">无数据</div>';
+
+    // Get all columns from all items
+    const allItems = [...visibleItems, ...hiddenItems];
+    const columns = new Set<string>();
+    allItems.forEach(item => {
+      if (typeof item === 'object' && item !== null) {
+        Object.keys(item).forEach(k => columns.add(k));
+      }
+    });
+    const columnList = Array.from(columns).slice(0, 10); // Limit to 10 columns
+
+    if (columnList.length === 0) {
+      // Simple list rendering for non-object items
+      return `
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <tbody>
+            ${allItems.map((item, idx) => `
+              <tr style="${idx >= visibleItems.length ? 'display: none;' : ''} ${idx % 2 === 0 ? 'background: #f9fafb;' : ''}" class="hidden-row">
+                <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb;">${this.escapeHtml(String(item))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    return `
+      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+        <thead>
+          <tr style="background: #f9fafb;">
+            ${columnList.map(col => `
+              <th style="padding: 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; color: #374151; white-space: nowrap;">
+                ${this.formatMetricLabel(col)}
+              </th>
+            `).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${visibleItems.map((item, idx) => this.renderTableRow(item, columnList, idx, false)).join('')}
+          ${hiddenItems.map((item, idx) => this.renderTableRow(item, columnList, visibleItems.length + idx, true)).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  /**
+   * Render a single table row
+   */
+  private renderTableRow(item: any, columns: string[], idx: number, hidden: boolean): string {
+    const style = `${hidden ? 'display: none;' : ''} ${idx % 2 === 0 ? 'background: #f9fafb;' : ''}`;
+
+    return `
+      <tr style="${style}" class="${hidden ? 'hidden-row' : ''}">
+        ${columns.map(col => {
+          const value = item[col];
+          const formatted = this.formatLayeredCellValue(value, col);
+          return `<td style="padding: 8px; border-bottom: 1px solid #e5e7eb; max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${this.escapeHtml(String(value ?? ''))}">${formatted}</td>`;
+        }).join('')}
+      </tr>
+    `;
+  }
+
+  /**
+   * Format a cell value for display in layered data tables (with key-based formatting)
+   */
+  private formatLayeredCellValue(value: any, key: string): string {
+    if (value === null || value === undefined) return '<span style="color: #9ca3af;">-</span>';
+
+    if (typeof value === 'number') {
+      if (key.toLowerCase().includes('duration') || key.toLowerCase().includes('time') || key.toLowerCase().includes('ms')) {
+        return value > 1000 ? `${(value / 1000).toFixed(2)}s` : `${value.toFixed(1)}ms`;
+      }
+      if (key.toLowerCase().includes('rate') || key.toLowerCase().includes('percent')) {
+        return `${(value * 100).toFixed(1)}%`;
+      }
+      return value.toLocaleString();
+    }
+
+    if (typeof value === 'boolean') {
+      return value ? '<span style="color: #10b981;">✓</span>' : '<span style="color: #ef4444;">✗</span>';
+    }
+
+    if (Array.isArray(value)) {
+      return `[${value.length} items]`;
+    }
+
+    if (typeof value === 'object') {
+      return '{...}';
+    }
+
+    return this.escapeHtml(String(value).substring(0, 100));
+  }
+
+  /**
+   * Render L4 Deep Analysis data
+   */
+  private renderDeepAnalysisData(deep: any, stageId: string): string {
+    let html = `
+      <div style="margin-bottom: 20px;">
+        <div style="font-weight: 600; color: #374151; margin-bottom: 12px; display: flex; align-items: center;">
+          🔬 深度分析
+        </div>
+    `;
+
+    for (const [key, value] of Object.entries(deep)) {
+      if (!value) continue;
+
+      const displayName = this.formatMetricLabel(key);
+      const sectionId = `deep-${stageId}-${key}`.replace(/[^a-zA-Z0-9-]/g, '-');
+
+      if (Array.isArray(value) && value.length > 0) {
+        // Render as expandable cards for frame details
+        html += `
+          <div style="margin-bottom: 16px;">
+            <div style="font-weight: 500; color: #4b5563; margin-bottom: 8px;">${displayName} (${value.length} 条)</div>
+            <div id="${sectionId}" style="display: grid; gap: 12px;">
+              ${(value as any[]).slice(0, 3).map((item, idx) => this.renderDeepAnalysisCard(item, idx)).join('')}
+              ${value.length > 3 ? `
+                <div style="text-align: center;">
+                  <button onclick="document.querySelectorAll('#${sectionId} .hidden-card').forEach(el => el.style.display = 'block'); this.style.display = 'none';"
+                          style="background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px;">
+                    显示更多 (${value.length - 3} 条)
+                  </button>
+                </div>
+                ${(value as any[]).slice(3).map((item, idx) => this.renderDeepAnalysisCard(item, idx + 3, true)).join('')}
+              ` : ''}
+            </div>
+          </div>
+        `;
+      } else if (typeof value === 'object') {
+        // Render as key-value pairs
+        html += `
+          <div style="margin-bottom: 16px; background: #faf5ff; border-radius: 8px; padding: 16px; border-left: 3px solid #8b5cf6;">
+            <div style="font-weight: 500; color: #6d28d9; margin-bottom: 8px;">${displayName}</div>
+            <div style="font-size: 13px;">
+              ${Object.entries(value).map(([k, v]) => `
+                <div style="display: flex; gap: 8px; margin-bottom: 4px;">
+                  <span style="color: #7c3aed; font-weight: 500;">${this.formatMetricLabel(k)}:</span>
+                  <span style="color: #4b5563;">${this.formatLayeredCellValue(v, k)}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  /**
+   * Render a deep analysis card (for frame details, etc.)
+   */
+  private renderDeepAnalysisCard(item: any, idx: number, hidden: boolean = false): string {
+    if (typeof item !== 'object' || item === null) {
+      return `<div style="${hidden ? 'display: none;' : ''}" class="${hidden ? 'hidden-card' : ''}">${this.escapeHtml(String(item))}</div>`;
+    }
+
+    // Extract key fields for the card header
+    const title = item.title || item.name || item.id || item.frame_id || `项目 ${idx + 1}`;
+    const severity = item.severity || item.jank_type || item.type;
+    const severityColor = severity === 'critical' ? '#ef4444' :
+                         severity === 'high' || severity === 'severe' ? '#f97316' :
+                         severity === 'medium' ? '#f59e0b' :
+                         severity === 'low' ? '#10b981' : '#6b7280';
+
+    return `
+      <div style="${hidden ? 'display: none;' : ''} background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;" class="${hidden ? 'hidden-card' : ''}">
+        <div style="background: #f9fafb; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e5e7eb;">
+          <span style="font-weight: 600; color: #374151;">${this.escapeHtml(String(title))}</span>
+          ${severity ? `<span style="background: ${severityColor}20; color: ${severityColor}; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 500;">${this.escapeHtml(String(severity))}</span>` : ''}
+        </div>
+        <div style="padding: 12px 16px; font-size: 13px;">
+          ${Object.entries(item).filter(([k]) => !['title', 'name', 'id', 'severity', 'jank_type', 'type'].includes(k)).map(([k, v]) => {
+            if (typeof v === 'object' && v !== null) {
+              // Handle nested objects (like root_cause_synthesis)
+              return `
+                <details style="margin-bottom: 8px;">
+                  <summary style="cursor: pointer; color: #6b7280; font-weight: 500;">${this.formatMetricLabel(k)}</summary>
+                  <div style="margin-top: 8px; padding: 12px; background: #f9fafb; border-radius: 6px; font-size: 12px;">
+                    ${Array.isArray(v) ? v.map(i => `<div style="margin-bottom: 4px;">${this.escapeHtml(String(i))}</div>`).join('') :
+                      Object.entries(v).map(([nk, nv]) => `
+                        <div style="margin-bottom: 4px;">
+                          <span style="color: #6b7280;">${this.formatMetricLabel(nk)}:</span>
+                          <span style="color: #374151; margin-left: 4px;">${typeof nv === 'object' ? JSON.stringify(nv) : this.escapeHtml(String(nv))}</span>
+                        </div>
+                      `).join('')
+                    }
+                  </div>
+                </details>
+              `;
+            }
+            return `
+              <div style="display: flex; gap: 8px; margin-bottom: 4px;">
+                <span style="color: #6b7280; min-width: 120px;">${this.formatMetricLabel(k)}:</span>
+                <span style="color: #374151;">${this.formatLayeredCellValue(v, k)}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Format a metric key as a human-readable label
+   */
+  private formatMetricLabel(key: string): string {
+    // Convert snake_case or camelCase to readable label
+    return key
+      .replace(/_/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/^./, str => str.toUpperCase())
+      .replace(/\b(id|ms|fps|ui|gpu|cpu|sql)\b/gi, match => match.toUpperCase())
+      .trim();
   }
 
   generateFromSession(session: AnalysisSession, answer: string): string {
