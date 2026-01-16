@@ -7,6 +7,7 @@
  * 3. 支持并行执行
  * 4. 检查点和恢复
  * 5. 错误处理和重试
+ * 6. 生命周期钩子支持
  */
 
 import { EventEmitter } from 'events';
@@ -22,6 +23,18 @@ import {
   SubAgentContext,
   SubAgentResult,
 } from '../types';
+import {
+  HookRegistry,
+  getHookRegistry,
+  HookContext,
+  createHookContext,
+  SubAgentEventData,
+} from '../hooks';
+import {
+  ContextBuilder,
+  getContextBuilder,
+  IsolatedContext,
+} from '../context';
 
 // 默认阶段定义
 const DEFAULT_STAGES: PipelineStage[] = [
@@ -101,8 +114,15 @@ export class PipelineExecutor extends EventEmitter {
   private isRunning: boolean = false;
   private isPaused: boolean = false;
   private startTime: number = 0;
+  private hookRegistry: HookRegistry;
+  private hookContext: HookContext | null = null;
+  private contextBuilder: ContextBuilder;
 
-  constructor(config: Partial<PipelineConfig> = {}) {
+  constructor(
+    config: Partial<PipelineConfig> = {},
+    hookRegistry?: HookRegistry,
+    contextBuilder?: ContextBuilder
+  ) {
     super();
 
     const stages = (config.stages && config.stages.length > 0) ? config.stages : DEFAULT_STAGES;
@@ -123,6 +143,8 @@ export class PipelineExecutor extends EventEmitter {
 
     this.stageResults = new Map();
     this.executors = new Map();
+    this.hookRegistry = hookRegistry || getHookRegistry();
+    this.contextBuilder = contextBuilder || getContextBuilder();
   }
 
   // ==========================================================================
@@ -164,6 +186,13 @@ export class PipelineExecutor extends EventEmitter {
     this.isRunning = true;
     this.isPaused = false;
     this.startTime = Date.now();
+
+    // 初始化 hook context
+    this.hookContext = createHookContext(
+      context.sessionId,
+      context.traceId || '',
+      'pipeline'
+    );
 
     const completedStages: string[] = [];
     const failedStages: string[] = [];
@@ -234,6 +263,8 @@ export class PipelineExecutor extends EventEmitter {
       return this.createErrorResult(completedStages, failedStages, error.message);
     } finally {
       this.isRunning = false;
+      // 清理 hook context
+      this.hookContext = null;
     }
   }
 
@@ -272,6 +303,34 @@ export class PipelineExecutor extends EventEmitter {
     console.log(`[PipelineExecutor] input context.traceProcessorService: ${!!context.traceProcessorService}`);
     console.log(`[PipelineExecutor] input context.traceId: ${context.traceId}`);
 
+    // === SubAgent Start Pre-Hook ===
+    const subAgentEventData: SubAgentEventData = {
+      agentId: stage.id,
+      agentName: stage.name,
+      agentType: stage.agentType,
+      stageId: stage.id,
+    };
+    const preResult = await this.hookRegistry.executePre(
+      'subagent:start',
+      context.sessionId,
+      subAgentEventData,
+      this.hookContext || undefined
+    );
+
+    if (!preResult.continue) {
+      // Hook 要求跳过此阶段
+      console.log(`[PipelineExecutor] Stage ${stage.id} skipped by hook`);
+      return {
+        stageId: stage.id,
+        success: false,
+        error: 'Skipped by hook',
+        findings: [],
+        startTime,
+        endTime: Date.now(),
+        retryCount: 0,
+      };
+    }
+
     while (retryCount <= stage.maxRetries) {
       try {
         // 获取执行器
@@ -286,9 +345,15 @@ export class PipelineExecutor extends EventEmitter {
           previousResults: Array.from(this.stageResults.values()),
         };
 
+        // 应用 Context 隔离
+        const isolatedContext = this.contextBuilder.buildContext(enrichedContext, stage);
+
         // Debug: Log enriched context
         console.log(`[PipelineExecutor] enrichedContext keys: ${Object.keys(enrichedContext).join(', ')}`);
         console.log(`[PipelineExecutor] enrichedContext.traceProcessorService: ${!!enrichedContext.traceProcessorService}`);
+        if ((isolatedContext as IsolatedContext).isIsolated) {
+          console.log(`[PipelineExecutor] Context isolated with policy: ${(isolatedContext as IsolatedContext).appliedPolicy}`);
+        }
 
         // 创建超时 Promise
         const timeoutPromise = new Promise<never>((_, reject) => {
@@ -297,13 +362,13 @@ export class PipelineExecutor extends EventEmitter {
           }, stage.timeout);
         });
 
-        // 执行阶段
+        // 执行阶段（使用隔离后的上下文）
         const result = await Promise.race([
-          executor.execute(stage, enrichedContext),
+          executor.execute(stage, isolatedContext as SubAgentContext),
           timeoutPromise,
         ]);
 
-        return {
+        const stageResult: StageResult = {
           stageId: stage.id,
           success: result.success,
           data: result.data,
@@ -312,11 +377,25 @@ export class PipelineExecutor extends EventEmitter {
           endTime: Date.now(),
           retryCount,
         };
+
+        // === SubAgent Complete Post-Hook ===
+        await this.hookRegistry.executePost(
+          'subagent:complete',
+          context.sessionId,
+          {
+            ...subAgentEventData,
+            result: stageResult,
+            durationMs: Date.now() - startTime,
+          },
+          this.hookContext || undefined
+        );
+
+        return stageResult;
       } catch (error: any) {
         retryCount++;
 
         if (retryCount > stage.maxRetries) {
-          return {
+          const errorResult: StageResult = {
             stageId: stage.id,
             success: false,
             error: error.message,
@@ -325,6 +404,20 @@ export class PipelineExecutor extends EventEmitter {
             endTime: Date.now(),
             retryCount: retryCount - 1,
           };
+
+          // === SubAgent Error Post-Hook ===
+          await this.hookRegistry.executePost(
+            'subagent:error',
+            context.sessionId,
+            {
+              ...subAgentEventData,
+              error: error instanceof Error ? error : new Error(String(error)),
+              durationMs: Date.now() - startTime,
+            },
+            this.hookContext || undefined
+          );
+
+          return errorResult;
         }
 
         // 等待后重试

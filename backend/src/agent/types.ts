@@ -111,13 +111,29 @@ export interface ExpertResult {
 
 export interface Finding {
   id: string;
-  category: string;
-  severity: 'info' | 'warning' | 'critical';
+  /** 发现分类 (如: scrolling, startup, memory) */
+  category?: string;
+  /** 发现类型 (如: root_cause, performance, issue) */
+  type?: string;
+  /** 严重程度 */
+  severity: 'info' | 'warning' | 'critical' | 'low' | 'medium' | 'high';
   title: string;
   description: string;
-  evidence: any[];
+  evidence?: any[];
   relatedTimestamps?: string[];
   timestampsNs?: number[];
+  /** 来源 (如: decision_tree, skill, analysis) */
+  source?: string;
+  /** 置信度 (0-1) */
+  confidence?: number;
+  /** 详细信息 */
+  details?: Record<string, any>;
+  /** 优化建议 */
+  recommendations?: Array<{
+    id: string;
+    text: string;
+    priority: number;
+  }>;
 }
 
 export interface Diagnostic {
@@ -244,7 +260,7 @@ export interface OrchestratorOptions {
 }
 
 export interface StreamingUpdate {
-  type: 'thought' | 'tool_call' | 'finding' | 'progress' | 'conclusion' | 'error' | 'scene_detected' | 'track_data' | 'skill_data';
+  type: 'thought' | 'tool_call' | 'finding' | 'progress' | 'conclusion' | 'error' | 'scene_detected' | 'track_data' | 'skill_data' | 'worker_thought' | 'architecture_detected';
   content: any;
   timestamp: number;
 }
@@ -335,6 +351,13 @@ export interface PipelineStage {
   canParallelize: boolean;
   timeout: number;
   maxRetries: number;
+  /** 阶段元数据，用于配置额外选项如分析类型 */
+  metadata?: {
+    /** 决策树分析类型 (scrolling/launch/memory 等) */
+    analysisType?: string;
+    /** 其他自定义配置 */
+    [key: string]: any;
+  };
 }
 
 export interface StageResult {
@@ -510,17 +533,29 @@ export interface SubAgentContext {
   feedback?: EvaluationFeedback;
   traceProcessor?: any;
   traceProcessorService?: any;
+  /** 检测到的渲染架构信息 (Phase 1 新增) */
+  architecture?: import('../agent/detectors').ArchitectureInfo;
+  /** 用户原始查询 */
+  query?: string;
+  /** 用户查询 (别名) */
+  userQuery?: string;
+  /** 目标应用包名 */
+  package?: string;
+  /** 分析时间范围 */
+  timeRange?: { start: number; end: number };
 }
 
 export interface SubAgentResult {
-  agentId: string;
+  agentId?: string;
   success: boolean;
   findings: Finding[];
-  suggestions: string[];
+  suggestions?: string[];
   data?: any;
-  confidence: number;
-  executionTimeMs: number;
+  message?: string;
+  confidence?: number;
+  executionTimeMs?: number;
   tokensUsed?: { input: number; output: number };
+  metrics?: Record<string, any>;
   error?: string;
 }
 

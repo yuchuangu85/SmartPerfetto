@@ -775,10 +775,14 @@ ${Object.entries(SCENE_KNOWLEDGE.sceneDisplayNames).map(([k, v]) => `- ${k}: ${v
     if (detailResult.success && detailResult.data?.rows?.[0]) {
       const [, , ttidMs, ttfdMs] = detailResult.data.rows[0];
       if (ttidMs || ttfdMs) {
-        findings[findings.length - 1].evidence.push({
-          ttidMs: ttidMs || 'N/A',
-          ttfdMs: ttfdMs || 'N/A',
-        });
+        const lastFinding = findings[findings.length - 1];
+        if (lastFinding) {
+          lastFinding.evidence = lastFinding.evidence || [];
+          lastFinding.evidence.push({
+            ttidMs: ttidMs || 'N/A',
+            ttfdMs: ttfdMs || 'N/A',
+          });
+        }
       }
     }
 
@@ -981,11 +985,12 @@ ${findings.filter(f => f.severity !== 'info').map(f => `- ${f.title}: ${f.descri
     const warningFindings = findings.filter(f => f.severity === 'warning' || f.severity === 'critical');
 
     for (const finding of warningFindings) {
-      if (finding.category.includes('start')) {
+      const category = finding.category || '';
+      if (category.includes('start')) {
         suggestions.push(`优化 ${finding.title.split('[')[0].trim()} 的启动耗时，考虑使用 Baseline Profile 或延迟初始化`);
-      } else if (finding.category === 'scroll') {
+      } else if (category === 'scroll') {
         suggestions.push(`优化滑动流畅度，检查是否有主线程阻塞或 Binder 调用延迟`);
-      } else if (finding.category === 'tap' || finding.category === 'navigation') {
+      } else if (category === 'tap' || category === 'navigation') {
         suggestions.push(`优化点击响应速度，检查事件处理是否有耗时操作`);
       }
     }

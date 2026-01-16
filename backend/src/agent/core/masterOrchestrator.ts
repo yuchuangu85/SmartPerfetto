@@ -6,6 +6,7 @@
  * 2. 管理状态机和检查点
  * 3. 控制断路器和迭代
  * 4. 整合所有 SubAgent 的结果
+ * 5. 生命周期钩子支持
  */
 
 import { EventEmitter } from 'events';
@@ -33,6 +34,33 @@ import { SessionStore } from '../state/sessionStore';
 import { PlannerAgent } from '../agents/plannerAgent';
 import { EvaluatorAgent } from '../agents/evaluatorAgent';
 import { AnalysisWorker } from '../agents/workers/analysisWorker';
+import {
+  HookRegistry,
+  getHookRegistry,
+  HookContext,
+  createHookContext,
+  SessionEventData,
+} from '../hooks';
+import {
+  ContextCompactor,
+  getContextCompactor,
+} from '../compaction';
+import {
+  ForkManager,
+  createForkManager,
+  ForkOptions,
+  ForkResult,
+  MergeOptions,
+  MergeResult,
+  ComparisonResult,
+  SessionNode,
+  SessionNodeSummary,
+} from '../fork';
+import {
+  ArchitectureDetector,
+  createArchitectureDetector,
+  ArchitectureInfo,
+} from '../detectors';
 
 // 默认配置
 // 注意：降低 minQualityScore 从 0.7 到 0.5，减少不必要的迭代循环
@@ -58,6 +86,11 @@ export class MasterOrchestrator extends EventEmitter {
   private pipelineExecutor: PipelineExecutor;
   private checkpointManager: CheckpointManager;
   private sessionStore: SessionStore;
+  private hookRegistry: HookRegistry;
+  private hookContext: HookContext | null = null;
+  private contextCompactor: ContextCompactor;
+  private forkManager: ForkManager;
+  private architectureDetector: ArchitectureDetector;
 
   // SubAgents
   private plannerAgent: PlannerAgent;
@@ -70,6 +103,7 @@ export class MasterOrchestrator extends EventEmitter {
   private totalIterations: number = 0;
   private emittedFindingIds: Set<string> = new Set();  // 已发送的 Finding IDs，防止重复
   private emittedDiagnosticHashes: Set<string> = new Set();  // 内容哈希去重 diagnostics
+  private currentArchitecture: ArchitectureInfo | null = null;  // 当前检测到的渲染架构
 
   constructor(config: Partial<MasterOrchestratorConfig> = {}) {
     super();
@@ -106,11 +140,17 @@ export class MasterOrchestrator extends EventEmitter {
     } as MasterOrchestratorConfig;
 
     // 初始化核心组件
+    this.hookRegistry = getHookRegistry();
+    this.contextCompactor = getContextCompactor();
     this.circuitBreaker = new CircuitBreaker(this.config.circuitBreakerConfig);
     this.modelRouter = new ModelRouter(this.config.modelRouterConfig);
-    this.pipelineExecutor = new PipelineExecutor(this.config.pipelineConfig);
+    this.pipelineExecutor = new PipelineExecutor(this.config.pipelineConfig, this.hookRegistry);
     this.checkpointManager = new CheckpointManager();
     this.sessionStore = new SessionStore();
+    this.forkManager = createForkManager(this.checkpointManager, {
+      enabled: false,  // 默认禁用，向后兼容
+    });
+    this.architectureDetector = createArchitectureDetector();
 
     // 初始化 SubAgents
     this.plannerAgent = new PlannerAgent(this.modelRouter);
@@ -151,6 +191,29 @@ export class MasterOrchestrator extends EventEmitter {
       this.emittedDiagnosticHashes.clear();  // 重置内容哈希
       this.totalIterations = 0;  // 重置迭代计数
 
+      // 初始化会话树（用于 Fork）
+      if (this.forkManager.isEnabled()) {
+        this.forkManager.initializeSession(session.sessionId, 'main');
+      }
+
+      // 初始化 hook context
+      this.hookContext = createHookContext(session.sessionId, traceId, 'session');
+
+      // === Session Start Hook ===
+      const sessionEventData: SessionEventData = {
+        query,
+        traceId,
+      };
+      const preResult = await this.hookRegistry.executePre(
+        'session:start',
+        session.sessionId,
+        sessionEventData,
+        this.hookContext
+      );
+      if (!preResult.continue) {
+        throw new Error('Session start blocked by hook');
+      }
+
       // 重置 AnalysisWorker 的会话状态（用于 skill_data 去重）
       this.analysisWorker.resetForNewSession(session.sessionId);
 
@@ -159,6 +222,29 @@ export class MasterOrchestrator extends EventEmitter {
       this.stateMachine.transition({ type: 'START_ANALYSIS' });
 
       this.emitUpdate('progress', { phase: 'starting', message: '开始分析' });
+
+      // 2.5 检测渲染架构 (Phase 1 新增)
+      this.currentArchitecture = null;
+      if (options.traceProcessorService) {
+        try {
+          this.emitUpdate('progress', { phase: 'detecting_architecture', message: '检测渲染架构' });
+          this.currentArchitecture = await this.architectureDetector.detect({
+            traceId,
+            traceProcessorService: options.traceProcessorService,
+          });
+          console.log(`[MasterOrchestrator] Detected architecture: ${this.currentArchitecture.type} (${(this.currentArchitecture.confidence * 100).toFixed(1)}%)`);
+          this.emitUpdate('architecture_detected', {
+            type: this.currentArchitecture.type,
+            confidence: this.currentArchitecture.confidence,
+            flutter: this.currentArchitecture.flutter,
+            webview: this.currentArchitecture.webview,
+            compose: this.currentArchitecture.compose,
+          });
+        } catch (error: any) {
+          console.warn(`[MasterOrchestrator] Architecture detection failed:`, error.message);
+          // 继续执行，不阻塞分析流程
+        }
+      }
 
       // 3. 理解意图
       const intent = await this.understandIntent(query, traceId, options);
@@ -215,7 +301,7 @@ export class MasterOrchestrator extends EventEmitter {
           message: `执行分析 (迭代 ${this.totalIterations})`,
         });
 
-        const context = this.buildContext(session.sessionId, traceId, intent, plan, stageResults, options);
+        const context = await this.buildContext(session.sessionId, traceId, intent, plan, stageResults, options);
         const pipelineResult = await this.pipelineExecutor.execute(context, {
           onStageStart: (stage) => {
             this.emitUpdate('progress', { phase: 'stage', stage: stage.id, message: stage.name });
@@ -302,7 +388,7 @@ export class MasterOrchestrator extends EventEmitter {
 
       this.emitUpdate('conclusion', { answer: synthesizedAnswer });
 
-      return this.createSuccessResult(
+      const result = this.createSuccessResult(
         session.sessionId,
         intent,
         plan,
@@ -311,12 +397,47 @@ export class MasterOrchestrator extends EventEmitter {
         synthesizedAnswer,
         startTime
       );
+
+      // === Session End Hook (Success) ===
+      await this.hookRegistry.executePost(
+        'session:end',
+        session.sessionId,
+        {
+          query,
+          traceId,
+          result,
+          iterationCount: this.totalIterations,
+          totalDurationMs: Date.now() - startTime,
+        },
+        this.hookContext || undefined
+      );
+
+      // 清理 hook context
+      this.hookContext = null;
+
+      return result;
     } catch (error: any) {
       this.stateMachine?.transition({ type: 'ERROR_OCCURRED', payload: { error: error.message } });
 
       if (this.currentSessionId) {
         await this.sessionStore.setError(this.currentSessionId, error.message);
       }
+
+      // === Session Error Hook ===
+      await this.hookRegistry.executePost(
+        'session:error',
+        this.currentSessionId || 'unknown',
+        {
+          query,
+          traceId,
+          error: error instanceof Error ? error : new Error(String(error)),
+          totalDurationMs: Date.now() - startTime,
+        },
+        this.hookContext || undefined
+      );
+
+      // 清理 hook context
+      this.hookContext = null;
 
       this.emitUpdate('error', { message: error.message });
 
@@ -487,14 +608,25 @@ ${findings.map(f => `- [${f.severity}] ${f.title}`).join('\n')}
   /**
    * 处理阶段完成
    */
-  private handleStageComplete(sessionId: string, stage: PipelineStage, result: StageResult): void {
+  private async handleStageComplete(sessionId: string, stage: PipelineStage, result: StageResult): Promise<void> {
     // 创建检查点
-    this.checkpointManager.createCheckpoint(
+    const checkpoint = await this.checkpointManager.createCheckpoint(
       sessionId,
       stage.id,
       this.stateMachine.phase,
       [result],
       result.findings
+    );
+
+    // === Session Checkpoint Hook ===
+    await this.hookRegistry.executePost(
+      'session:checkpoint',
+      sessionId,
+      {
+        checkpointId: checkpoint.id,
+        traceId: this.hookContext?.traceId,
+      },
+      this.hookContext || undefined
     );
 
     // 过滤已发送的 Finding，防止重复（双重去重：ID + 内容哈希）
@@ -548,14 +680,14 @@ ${findings.map(f => `- [${f.severity}] ${f.title}`).join('\n')}
   /**
    * 构建执行上下文
    */
-  private buildContext(
+  private async buildContext(
     sessionId: string,
     traceId: string,
     intent: Intent,
     plan: AnalysisPlan,
     previousResults: StageResult[],
     options: { traceProcessor?: any; traceProcessorService?: any }
-  ): SubAgentContext {
+  ): Promise<SubAgentContext> {
     // Debug: Log whether traceProcessorService is in options
     console.log(`[MasterOrchestrator] buildContext called`);
     console.log(`[MasterOrchestrator] options keys: ${Object.keys(options).join(', ')}`);
@@ -565,14 +697,21 @@ ${findings.map(f => `- [${f.severity}] ${f.title}`).join('\n')}
       console.log(`[MasterOrchestrator] traceProcessorService has getTrace: ${typeof options.traceProcessorService?.getTrace === 'function'}`);
     }
 
-    const context: SubAgentContext = {
+    let context: SubAgentContext = {
       sessionId,
       traceId,
       intent,
       plan,
       previousResults,
+      architecture: this.currentArchitecture || undefined,  // 添加架构信息到上下文
       ...options,
     };
+
+    // 检查是否需要压缩上下文
+    if (this.contextCompactor.needsCompaction(context)) {
+      console.log(`[MasterOrchestrator] Context needs compaction, applying...`);
+      context = await this.contextCompactor.compactIfNeeded(context);
+    }
 
     // Debug: Verify context was built correctly
     console.log(`[MasterOrchestrator] built context keys: ${Object.keys(context).join(', ')}`);
@@ -836,9 +975,208 @@ ${findings.map(f => `- [${f.severity}] ${f.title}`).join('\n')}
   reset(): void {
     this.totalIterations = 0;
     this.currentSessionId = null;
+    this.currentArchitecture = null;
     this.circuitBreaker.reset();
     this.modelRouter.resetStats();
     this.pipelineExecutor.reset();
+  }
+
+  /**
+   * 获取当前检测到的渲染架构
+   */
+  getCurrentArchitecture(): ArchitectureInfo | null {
+    return this.currentArchitecture;
+  }
+
+  // ==========================================================================
+  // Fork 操作
+  // ==========================================================================
+
+  /**
+   * 启用/禁用 Fork 功能
+   */
+  setForkEnabled(enabled: boolean): void {
+    this.forkManager.updateConfig({ enabled });
+  }
+
+  /**
+   * 检查 Fork 是否启用
+   */
+  isForkEnabled(): boolean {
+    return this.forkManager.isEnabled();
+  }
+
+  /**
+   * 从检查点创建分叉
+   */
+  async forkFromCheckpoint(
+    checkpointId: string,
+    options: Partial<ForkOptions> = {}
+  ): Promise<ForkResult> {
+    if (!this.currentSessionId) {
+      return {
+        success: false,
+        forkedSessionId: '',
+        parentSessionId: '',
+        sourceCheckpointId: checkpointId,
+        branchName: options.branchName || 'fork',
+        forkTime: Date.now(),
+        error: 'No active session',
+      };
+    }
+
+    // 获取当前会话信息
+    const session = await this.sessionStore.getSession(this.currentSessionId);
+    if (!session) {
+      return {
+        success: false,
+        forkedSessionId: '',
+        parentSessionId: this.currentSessionId,
+        sourceCheckpointId: checkpointId,
+        branchName: options.branchName || 'fork',
+        forkTime: Date.now(),
+        error: 'Session not found',
+      };
+    }
+
+    const forkOptions: ForkOptions = {
+      checkpointId,
+      branchName: options.branchName,
+      description: options.description,
+      runParallel: options.runParallel ?? false,
+      hypothesis: options.hypothesis,
+      inheritConfig: options.inheritConfig ?? true,
+    };
+
+    const result = await this.forkManager.fork(this.currentSessionId, forkOptions);
+
+    if (result.success && session.intent && session.plan) {
+      // 注册上下文
+      const parentContext = await this.buildContext(
+        this.currentSessionId,
+        session.traceId,
+        session.intent,
+        session.plan,
+        [],
+        {}
+      );
+      this.forkManager.registerContext(result.forkedSessionId, {
+        ...parentContext,
+        sessionId: result.forkedSessionId,
+      });
+
+      this.emitUpdate('progress', {
+        phase: 'fork_created',
+        message: `分叉已创建: ${result.branchName}`,
+        forkedSessionId: result.forkedSessionId,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * 恢复分叉会话继续执行
+   */
+  async resumeForkedSession(
+    forkedSessionId: string,
+    options: { traceProcessor?: any; traceProcessorService?: any } = {}
+  ): Promise<MasterOrchestratorResult> {
+    // 获取分叉会话的上下文
+    const context = this.forkManager.getContext(forkedSessionId);
+    if (!context) {
+      throw new Error(`Fork session context not found: ${forkedSessionId}`);
+    }
+
+    // 获取会话节点信息
+    const node = this.forkManager.getSessionNode(forkedSessionId);
+    if (!node) {
+      throw new Error(`Fork session node not found: ${forkedSessionId}`);
+    }
+
+    // 加载检查点
+    const checkpoint = await this.checkpointManager.loadCheckpoint(
+      forkedSessionId,
+      node.forkCheckpointId!
+    );
+    if (!checkpoint) {
+      throw new Error(`Checkpoint not found for fork: ${forkedSessionId}`);
+    }
+
+    // 设置当前会话
+    this.currentSessionId = forkedSessionId;
+
+    // 恢复状态机
+    this.stateMachine = AgentStateMachine.create(
+      forkedSessionId,
+      context.traceId
+    );
+    this.stateMachine.restoreFromCheckpoint(checkpoint);
+
+    // 继续执行
+    return this.handleQuery(
+      checkpoint.agentState.query,
+      context.traceId,
+      options
+    );
+  }
+
+  /**
+   * 比较多个分叉的结果
+   */
+  async compareForks(sessionIds: string[]): Promise<ComparisonResult> {
+    return this.forkManager.compare(sessionIds);
+  }
+
+  /**
+   * 合并分叉到父会话
+   */
+  async mergeFork(options: MergeOptions): Promise<MergeResult> {
+    const result = await this.forkManager.merge(options);
+
+    if (result.success) {
+      this.emitUpdate('progress', {
+        phase: 'fork_merged',
+        message: `分叉已合并: ${result.childSessionId} -> ${result.parentSessionId}`,
+        mergedFindingsCount: result.mergedFindingsCount,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * 列出当前会话的所有分叉
+   */
+  listForks(): SessionNode[] {
+    if (!this.currentSessionId) {
+      return [];
+    }
+    return this.forkManager.listForks(this.currentSessionId);
+  }
+
+  /**
+   * 放弃分叉
+   */
+  abandonFork(sessionId: string): boolean {
+    return this.forkManager.abandonFork(sessionId);
+  }
+
+  /**
+   * 标记分叉完成
+   */
+  markForkCompleted(sessionId: string, summary: SessionNodeSummary): void {
+    this.forkManager.markCompleted(sessionId, summary);
+  }
+
+  /**
+   * 获取会话树可视化
+   */
+  getSessionTreeVisualization(): string {
+    if (!this.currentSessionId) {
+      return '(no active session)';
+    }
+    return this.forkManager.getTreeVisualization(this.currentSessionId);
   }
 }
 
