@@ -82,6 +82,8 @@ export interface AgentToolResult {
   layeredResult?: any;
   /** DataEnvelope(s) for SSE data events */
   dataEnvelopes?: DataEnvelope[];
+  /** Optional metadata for debugging/tracking (e.g., dynamic SQL details) */
+  metadata?: Record<string, any>;
 }
 
 // =============================================================================
@@ -329,6 +331,32 @@ export interface BroadcastMessage {
 // =============================================================================
 
 /**
+ * Trace-level configuration detected from the trace file.
+ * Populated by vsync_config skill at the start of analysis.
+ *
+ * For VRR/LTPO devices, refresh rate varies dynamically.
+ * Use `dominantRefreshRateHz` for most jank calculations.
+ */
+export interface TraceConfig {
+  /** VSync period in nanoseconds (based on dominant refresh rate) */
+  vsyncPeriodNs?: number;
+  /** Refresh rate in Hz (dominant rate for VRR devices) */
+  refreshRateHz?: number;
+  /** VSync period in milliseconds (convenience) */
+  vsyncPeriodMs?: number;
+  /** Data source for vsync detection */
+  vsyncSource?: string;
+  /** Whether VRR (Variable Refresh Rate) is detected */
+  isVRR?: boolean;
+  /** VRR mode details if detected */
+  vrrMode?: 'VRR_ACTIVE' | 'VRR_LIMITED' | 'FIXED_RATE';
+  /** Minimum frame budget in ms (for strictest jank detection, use maxRefreshRateHz) */
+  minFrameBudgetMs?: number;
+  /** Maximum frame budget in ms (for most lenient detection, use minRefreshRateHz) */
+  maxFrameBudgetMs?: number;
+}
+
+/**
  * Shared context accessible by all agents in a session
  */
 export interface SharedAgentContext {
@@ -351,6 +379,14 @@ export interface SharedAgentContext {
   globalMetrics?: Record<string, any>;
   /** User-provided context */
   userContext?: Record<string, any>;
+  /** Trace-level configuration (vsync, refresh rate, etc.) */
+  traceConfig?: TraceConfig;
+  /**
+   * Jank cause summary aggregated from per-frame analysis.
+   * Populated by StrategyExecutor after Stage 2 (frame_analysis).
+   * Used by ConclusionGenerator to include structured root cause statistics.
+   */
+  jankCauseSummary?: import('../core/jankCauseSummarizer').JankCauseSummary;
 }
 
 /**

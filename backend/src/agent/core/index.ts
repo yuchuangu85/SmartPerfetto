@@ -22,6 +22,24 @@ export { executeTaskGraph, emitDataEnvelopes } from './taskGraphExecutor';
 export { synthesizeFeedback } from './feedbackSynthesizer';
 export { planTaskGraph, buildTasksFromGraph, parseTimeRange, resolveAgentIdForDomain } from './taskGraphPlanner';
 
+// Jank cause analysis
+export {
+  summarizeJankCauses,
+  formatJankSummaryForPrompt,
+  CAUSE_TYPE_LABELS,
+} from './jankCauseSummarizer';
+export type {
+  JankCauseSummary,
+  CauseTypeStats,
+} from './jankCauseSummarizer';
+
+// Deduplication registry
+export {
+  EmittedEnvelopeRegistry,
+  createEmittedEnvelopeRegistry,
+  generateDeduplicationKey,
+} from './emittedEnvelopeRegistry';
+
 // Orchestrator types
 export type {
   AgentDrivenOrchestratorConfig,

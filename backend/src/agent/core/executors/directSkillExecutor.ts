@@ -253,7 +253,11 @@ export class DirectSkillExecutor {
     scopeLabel: string
   ): AgentResponse {
     // Extract findings from diagnostics (taskId ensures globally unique finding IDs)
-    const findings = this.extractFindings(result, template, taskId, scopeLabel);
+    let findings = this.extractFindings(result, template, taskId, scopeLabel);
+
+    // Enrich findings with root_cause data from rawResults (if available)
+    // This populates Finding.details.cause_type for JankCauseSummarizer
+    findings = this.enrichFindingsWithRootCauseData(findings, result, scopeLabel);
 
     // Build DataEnvelopes from displayResults
     const dataEnvelopes = result.displayResults
@@ -343,6 +347,106 @@ export class DirectSkillExecutor {
     }
 
     return findings;
+  }
+
+  /**
+   * Enrich findings with root_cause data from rawResults.
+   * Called after extractFindings() to add structured cause data to Finding.details.
+   *
+   * This is critical for JankCauseSummarizer which aggregates by cause_type.
+   * Without this enrichment, findings would lack the cause_type field and
+   * the conclusion generator would have to rely on LLM to infer patterns.
+   *
+   * @param findings - Findings extracted from diagnostics
+   * @param result - Full skill execution result containing rawResults
+   * @param scopeLabel - Scope label for logging/context
+   * @returns Enriched findings with cause_type, primary_cause, etc. in details
+   */
+  private enrichFindingsWithRootCauseData(
+    findings: Finding[],
+    result: SkillExecutionResult,
+    scopeLabel: string
+  ): Finding[] {
+    const rawResults = result.rawResults || {};
+    const rootCauseStep = rawResults['root_cause'];
+
+    // Debug: Log available keys in rawResults
+    const availableKeys = Object.keys(rawResults);
+    if (availableKeys.length > 0 && !rootCauseStep) {
+      // Only log if there are results but root_cause is missing
+      console.log(`[DirectSkillExecutor] root_cause not found in rawResults. Available keys: ${availableKeys.join(', ')}`);
+    }
+
+    if (!rootCauseStep?.data) {
+      return findings;
+    }
+
+    // Extract root cause row (expect single row for per-frame execution)
+    const rootCauseData = this.extractRootCauseRow(rootCauseStep.data);
+    if (!rootCauseData) {
+      console.log(`[DirectSkillExecutor] Failed to extract root_cause row. Data structure: ${JSON.stringify(rootCauseStep.data).slice(0, 200)}`);
+      return findings;
+    }
+
+    // Debug: Log successful extraction
+    if (rootCauseData.cause_type) {
+      console.log(`[DirectSkillExecutor] Extracted cause_type="${rootCauseData.cause_type}" for ${scopeLabel}`);
+    }
+
+    // Enrich each finding with the root cause data
+    return findings.map(f => ({
+      ...f,
+      details: {
+        ...f.details,
+        cause_type: rootCauseData.cause_type,
+        primary_cause: rootCauseData.primary_cause,
+        secondary_info: rootCauseData.secondary_info,
+        confidence_level: rootCauseData.confidence,
+        frame_dur_ms: rootCauseData.frame_dur_ms,
+        jank_type: rootCauseData.jank_type,
+        scope: scopeLabel,
+      },
+    }));
+  }
+
+  /**
+   * Extract root cause row from step data.
+   * Handles multiple data formats that SkillExecutor may produce.
+   *
+   * Data formats seen in practice:
+   * 1. Array of objects: [{ cause_type, primary_cause, ... }] (most common from SQL)
+   * 2. Columnar: { columns: [...], rows: [[...]] } (raw SQL result)
+   * 3. Single object with cause_type (direct result)
+   *
+   * @param data - Step data in various possible formats
+   * @returns First row as a key-value object, or null if extraction fails
+   */
+  private extractRootCauseRow(data: any): Record<string, any> | null {
+    if (!data) return null;
+
+    // Format 1: Array of objects (most common - SkillExecutor transforms SQL to this)
+    // This is what frameAgent.extractSummaryRow expects
+    if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object') {
+      return data[0];
+    }
+
+    // Format 2: { columns, rows } (columnar SQL result - raw format)
+    if (Array.isArray(data.columns) && Array.isArray(data.rows) && data.rows.length > 0) {
+      const columns: string[] = data.columns;
+      const row = data.rows[0];
+      const result: Record<string, any> = {};
+      columns.forEach((col, idx) => {
+        result[col] = row[idx];
+      });
+      return result;
+    }
+
+    // Format 3: Single object with cause_type (direct result)
+    if (typeof data === 'object' && !Array.isArray(data) && data.cause_type) {
+      return data;
+    }
+
+    return null;
   }
 
   /**
