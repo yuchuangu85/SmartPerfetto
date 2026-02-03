@@ -15,6 +15,7 @@ import {
   AgentTask,
   AgentResponse,
   createTaskId,
+  TraceConfig,
 } from '../../types/agentProtocol';
 import {
   StagedAnalysisStrategy,
@@ -43,6 +44,8 @@ import {
   mergeCapturedEntities,
   CapturedEntities,
 } from '../entityCapture';
+import { detectTraceConfig } from './traceConfigDetector';
+import { summarizeJankCauses } from '../jankCauseSummarizer';
 
 export class StrategyExecutor implements AnalysisExecutor {
   constructor(
@@ -92,6 +95,31 @@ export class StrategyExecutor implements AnalysisExecutor {
     const effectiveTotalStages = stagesToRun.length;
 
     emitter.log(`Executing strategy: ${this.strategy.name} (${effectiveTotalStages}/${this.strategy.stages.length} stages${hasPrebuiltContext ? ', follow-up mode' : ''})`);
+
+    // =========================================================================
+    // Pre-Stage: Detect trace configuration (VSync period, refresh rate)
+    // =========================================================================
+    // This runs once at the start to populate sharedContext.traceConfig,
+    // which is used for accurate jank threshold calculation and contradiction resolution.
+    if (!ctx.sharedContext.traceConfig) {
+      try {
+        const traceConfig = await detectTraceConfig(
+          ctx.options.traceProcessorService,
+          this.services.modelRouter,
+          ctx.traceId,
+          emitter
+        );
+        ctx.sharedContext.traceConfig = traceConfig;
+
+        // Also add to globalMetrics for backward compatibility
+        ctx.sharedContext.globalMetrics = ctx.sharedContext.globalMetrics || {};
+        ctx.sharedContext.globalMetrics.refreshRateHz = traceConfig.refreshRateHz;
+        ctx.sharedContext.globalMetrics.vsyncPeriodMs = traceConfig.vsyncPeriodMs;
+        ctx.sharedContext.globalMetrics.isVRR = traceConfig.isVRR;
+      } catch (error: any) {
+        emitter.log(`[TraceConfig] Detection failed, using defaults: ${error.message}`);
+      }
+    }
 
     for (let i = 0; i < this.strategy.stages.length; i++) {
       const stage = this.strategy.stages[i];
@@ -197,12 +225,18 @@ export class StrategyExecutor implements AnalysisExecutor {
 
       // If this stage is a per-frame direct-skill stage, assemble expandableData into deferred tables and emit them.
       // We intentionally suppress emitting per-frame direct skill envelopes as standalone tables (noise).
+      const registry = this.services.emittedEnvelopeRegistry;
+
       if (stage.name === 'frame_analysis' && deferredExpandableTables.length > 0 && directSkillTasks.length > 0) {
-        const merged = this.attachExpandableDataToDeferredTables(
+        let merged = this.attachExpandableDataToDeferredTables(
           deferredExpandableTables,
           directSkillTasks,
           directResponses
         );
+        // Filter duplicates via registry
+        if (registry && merged.length > 0) {
+          merged = registry.filterNewEnvelopes(merged);
+        }
         if (merged.length > 0) {
           emitter.log(`Emitting ${merged.length} merged expandable table(s)`);
           emitter.emitUpdate('data', merged);
@@ -211,10 +245,10 @@ export class StrategyExecutor implements AnalysisExecutor {
         deferredExpandableTables.length = 0;
         // Still emit any agent envelopes from this stage (rare; typically none).
         if (agentResponses.length > 0) {
-          emitDataEnvelopes(agentResponses, emitter);
+          emitDataEnvelopes(agentResponses, emitter, registry);
         }
       } else {
-        emitDataEnvelopes(responsesForEmit, emitter);
+        emitDataEnvelopes(responsesForEmit, emitter, registry);
       }
 
       const synthesis = await synthesizeFeedback(responses, ctx.sharedContext, this.services.modelRouter, emitter, this.services.messageBus);
@@ -240,6 +274,24 @@ export class StrategyExecutor implements AnalysisExecutor {
           round: rounds,
           findings: synthesis.newFindings,
         });
+      }
+
+      // After frame_analysis stage, compute jank cause summary for conclusion generation
+      // This aggregates cause_type from Finding.details (populated by DirectSkillExecutor)
+      if (stage.name === 'frame_analysis' && allFindings.length > 0) {
+        try {
+          const jankSummary = summarizeJankCauses(allFindings);
+          if (jankSummary.totalJankFrames > 0) {
+            ctx.sharedContext.jankCauseSummary = jankSummary;
+            emitter.log(
+              `[JankSummary] Aggregated ${jankSummary.totalJankFrames} frames: ` +
+              `primary=${jankSummary.primaryCause?.label} (${jankSummary.primaryCause?.percentage}%), ` +
+              `secondary=${jankSummary.secondaryCauses.length} causes`
+            );
+          }
+        } catch (error: any) {
+          emitter.log(`[JankSummary] Failed to compute jank cause summary: ${error.message}`);
+        }
       }
 
       // Update confidence from successful responses
@@ -310,8 +362,15 @@ export class StrategyExecutor implements AnalysisExecutor {
     // If we deferred expandable tables but never reached the stage that binds L4 results,
     // emit them as-is so the user still sees the frame list.
     if (deferredExpandableTables.length > 0) {
-      emitter.log(`Emitting ${deferredExpandableTables.length} deferred table(s) without expandableData (no bind stage reached)`);
-      emitter.emitUpdate('data', deferredExpandableTables);
+      const finalRegistry = this.services.emittedEnvelopeRegistry;
+      let tablesToEmit = deferredExpandableTables;
+      if (finalRegistry) {
+        tablesToEmit = finalRegistry.filterNewEnvelopes(deferredExpandableTables);
+      }
+      if (tablesToEmit.length > 0) {
+        emitter.log(`Emitting ${tablesToEmit.length} deferred table(s) without expandableData (no bind stage reached)`);
+        emitter.emitUpdate('data', tablesToEmit);
+      }
     }
 
     // Merge all captured entities from all stages
