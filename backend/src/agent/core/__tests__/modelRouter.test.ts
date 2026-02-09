@@ -397,6 +397,30 @@ describe('ModelRouter', () => {
         const hasFailures = Object.values(stats).some(s => s.failures > 0);
         expect(hasFailures).toBe(true);
       });
+
+      it('retries with compacted prompt when context length is exceeded', async () => {
+        const primaryModel = router.routeByTask('general');
+        const contextOverflowClient: MockLLMClient = {
+          complete: jest
+            .fn<() => Promise<string>>()
+            .mockRejectedValueOnce(new Error('This model\'s maximum context length is 8192 tokens.'))
+            .mockResolvedValue('Recovered with compacted prompt'),
+        };
+
+        router.registerClient(primaryModel.id, contextOverflowClient as any);
+
+        const longPrompt = 'A'.repeat(8000) + '\n' + 'B'.repeat(8000);
+        const result = await router.callWithFallback(longPrompt, 'general');
+
+        expect(result.success).toBe(true);
+        expect(result.modelId).toBe(primaryModel.id);
+        expect(contextOverflowClient.complete).toHaveBeenCalledTimes(2);
+
+        const firstPrompt = String((contextOverflowClient.complete as jest.Mock).mock.calls[0][0] || '');
+        const secondPrompt = String((contextOverflowClient.complete as jest.Mock).mock.calls[1][0] || '');
+        expect(secondPrompt.length).toBeLessThan(firstPrompt.length);
+        expect(secondPrompt).toContain('[...context compacted for model limit...]');
+      });
     });
 
     describe('getFallbackChain', () => {

@@ -112,7 +112,8 @@ describe('conclusionGenerator', () => {
       expect.objectContaining({
         promptId: 'agent.conclusionGenerator.insight.initial_report',
         promptVersion: '2.0.0',
-        contractVersion: 'conclusion_insight_text@2.0.0',
+        contractVersion: 'conclusion_contract_json@1.0.0',
+        jsonMode: true,
       })
     );
   });
@@ -131,7 +132,8 @@ describe('conclusionGenerator', () => {
       expect.objectContaining({
         promptId: 'agent.conclusionGenerator.insight.focused_answer',
         promptVersion: '2.0.0',
-        contractVersion: 'conclusion_insight_text@2.0.0',
+        contractVersion: 'conclusion_contract_json@1.0.0',
+        jsonMode: true,
       })
     );
 
@@ -144,6 +146,26 @@ describe('conclusionGenerator', () => {
     expect(calledPrompt).toContain('触发因子:');
     expect(calledPrompt).toContain('供给约束:');
     expect(calledPrompt).toContain('放大路径:');
+  });
+
+  test('applies single-frame drill-down guardrails and suppresses history carry-over hints', async () => {
+    const conclusion = await invokeGenerateConclusion({
+      currentIntent: {
+        ...intent,
+        followUpType: 'drill_down',
+        referencedEntities: [{ type: 'frame', id: 1435508 }],
+        extractedParams: { frame_id: 1435508 },
+      },
+      options: { turnCount: 2, historyContext: '历史结论: K1 Buffer Stuffing（9帧，36%）' },
+    });
+
+    expect(conclusion).toBe('测试结论');
+    const calledPrompt = (mockModelRouter.callWithFallback as jest.Mock).mock.calls[0][0] as string;
+    expect(calledPrompt).toContain('## 单帧 Drill-Down 范围约束');
+    expect(calledPrompt).toContain('禁止沿用历史轮次的聚类帧数/占比');
+    expect(calledPrompt).toContain('单帧 drill-down 禁止复用历史 K1/K2/K3');
+    expect(calledPrompt).not.toContain('历史结论: K1 Buffer Stuffing（9帧，36%）');
+    expect(calledPrompt).not.toContain('“## 掉帧聚类（先看大头）”必须按帧数降序列出 Top3 聚类');
   });
 
   test('insight mode falls back to 4-section markdown when LLM fails (follow-up)', async () => {
@@ -169,6 +191,42 @@ describe('conclusionGenerator', () => {
 
     expect(conclusion).toContain('## 结论（按可能性排序）');
     expect(conclusion).toContain('主线程阻塞导致掉帧');
+  });
+
+  test('renders deterministic markdown from structured contract JSON', async () => {
+    mockModelRouter.callWithFallback = jest.fn().mockResolvedValue(createMockModelResponse(JSON.stringify({
+      schema_version: 'conclusion_contract_v1',
+      mode: 'initial_report',
+      conclusion: [
+        {
+          rank: 1,
+          statement: '滑动过程存在明显卡顿',
+          confidence: 88,
+          trigger: '主线程耗时操作（65%）',
+          supply: '阻塞等待（57.1%）',
+          amplification: 'SF消费端背压（100%）',
+        },
+      ],
+      clusters: [
+        { cluster: 'K1', description: '主线程耗时操作/阻塞等待/SF消费端背压', frames: 22, percentage: 34.9 },
+      ],
+      evidence_chain: [
+        { conclusion_id: 'C1', evidence: ['逐帧根因显示主线程耗时占比65%（ev_111111111111）'] },
+      ],
+      uncertainties: ['主线程休眠占比与占用时间口径存在差异'],
+      next_steps: ['对K1聚类下钻：分析 Choreographer#doFrame 耗时点'],
+      metadata: { confidence: 83, rounds: 3 },
+    })));
+
+    const conclusion = await invokeGenerateConclusion({ options: { turnCount: 0 } });
+
+    expect(conclusion).toContain('## 结论（按可能性排序）');
+    expect(conclusion).toContain('## 掉帧聚类（先看大头）');
+    expect(conclusion).toContain('## 证据链（对应上述结论）');
+    expect(conclusion).toContain('滑动过程存在明显卡顿');
+    expect(conclusion).toContain('对K1聚类下钻：分析 Choreographer#doFrame 耗时点');
+    expect(conclusion).not.toContain('"schema_version"');
+    expect(conclusion).not.toContain('"conclusion"');
   });
 
   test('injects per-conclusion evidence mapping into evidence-chain section when LLM forgets to cite', async () => {
@@ -305,7 +363,7 @@ analysis_metadata:
     expect(conclusion).toContain('## 证据链（对应上述结论）');
     expect(conclusion).toContain('## 下一步（最高信息增益）');
     expect(conclusion).toContain('## 分析元数据');
-    expect(conclusion).toContain('触发因子: 主线程耗时操作（65%）；供给约束: 阻塞等待（57.1%）；放大路径: SF消费端背压（SF 100%，消费端 6.0%）');
+    expect(conclusion).toContain('触发因子（直接原因）: 主线程耗时操作（65%）；供给约束（资源瓶颈）: 阻塞等待（57.1%）；放大路径（问题放大环节）: SF消费端背压（SF 100%，消费端 6.0%）');
     expect(conclusion).toContain('- K1: 主线程耗时操作/负载主导/SF消费端背压（22帧, 34.9%）');
     expect(conclusion).toContain('在同一帧同一时间窗统一统计口径，复核主线程休眠占比与占用时间的分母与计算方式');
     expect(conclusion).not.toContain('\njank_clusters:');
@@ -334,12 +392,18 @@ analysis_metadata:
     expect(conclusion.trim().startsWith('## 结论（按可能性排序）')).toBe(true);
     expect(conclusion).toContain('## 掉帧聚类（先看大头）');
     expect(conclusion).toContain('## 分析元数据');
+    expect(conclusion).toContain('触发因子（直接原因）: 主线程耗时操作（65%）');
+    expect(conclusion).toContain('供给约束（资源瓶颈）: 阻塞等待（57.1%）');
+    expect(conclusion).toContain('放大路径（问题放大环节）: SF消费端背压');
+    expect(conclusion).toContain('- K1: 主线程耗时操作/负载主导/SF消费端背压（22帧, 34.9%）');
     expect(conclusion).toContain('主线程耗时操作（65%）');
     expect(conclusion).toContain('阻塞等待（57.1%）');
     expect(conclusion).toContain('SF消费端背压');
     expect(conclusion).toContain('在同一帧同一时间窗统一统计口径，复核主线程休眠占比与占用时间的分母与计算方式');
     expect(conclusion).not.toContain('\n结论:');
     expect(conclusion).not.toContain('\n掉帧聚类:');
+    expect(conclusion).not.toContain('{"触发因子"');
+    expect(conclusion).not.toContain('{"聚类"');
   });
 
   test('marks workload-dominant cluster explicitly in conclusion section', async () => {

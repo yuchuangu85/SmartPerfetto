@@ -132,6 +132,23 @@ export class ModelRouter extends EventEmitter {
   private models: Map<string, ModelProfile>;
   private callStats: Map<string, { calls: number; tokens: number; cost: number; failures: number }>;
   private llmClients: Map<string, LLMClientInterface>;
+  private static readonly CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
+    /maximum context length/i,
+    /context[_\s-]?length[_\s-]?exceeded/i,
+    /context window/i,
+    /too many tokens/i,
+    /prompt is too long/i,
+    /messages resulted in\s*\d+\s*tokens/i,
+    /input.*too long/i,
+    /超出.*上下文/i,
+    /上下文.*超出/i,
+    /上下文长度/i,
+    /超过.*token/i,
+    /令牌.*超出/i,
+  ];
+  private static readonly PROMPT_COMPACTION_RATIOS = [0.72, 0.55];
+  private static readonly MIN_PROMPT_FOR_COMPACTION = 2200;
+  private static readonly MIN_COMPACTED_PROMPT = 1600;
 
   constructor(config: Partial<ModelRouterConfig> = {}) {
     super();
@@ -267,13 +284,38 @@ export class ModelRouter extends EventEmitter {
 
     for (const model of modelsToTry) {
       try {
-        console.log(`[ModelRouter.callWithFallback] Trying model: ${model.id} (${model.provider})`);
-        const result = await this.callModel(model, prompt, { ...options, taskType });
-        if (result.success) {
-          console.log(`[ModelRouter.callWithFallback] Model ${model.id} succeeded`);
-          return result;
+        const promptCandidates = [prompt, ...this.buildPromptCompactionCandidates(prompt)];
+        for (let attempt = 0; attempt < promptCandidates.length; attempt += 1) {
+          const promptCandidate = promptCandidates[attempt];
+          const isCompactedAttempt = attempt > 0;
+          if (isCompactedAttempt) {
+            console.log(
+              `[ModelRouter.callWithFallback] Retrying model ${model.id} with compacted prompt ` +
+              `(${promptCandidate.length}/${prompt.length} chars)`
+            );
+          } else {
+            console.log(`[ModelRouter.callWithFallback] Trying model: ${model.id} (${model.provider})`);
+          }
+
+          const result = await this.callModel(model, promptCandidate, { ...options, taskType });
+          if (result.success) {
+            console.log(`[ModelRouter.callWithFallback] Model ${model.id} succeeded`);
+            return result;
+          }
+
+          console.log(`[ModelRouter.callWithFallback] Model ${model.id} returned unsuccessfully: ${result.error}`);
+
+          const isContextOverflow = this.isContextOverflowError(result.error);
+          const hasMoreCompactedCandidates = attempt < promptCandidates.length - 1;
+
+          if (!isContextOverflow || !hasMoreCompactedCandidates) {
+            break;
+          }
+
+          console.log(
+            `[ModelRouter.callWithFallback] Context overflow detected for ${model.id}, ` +
+            `trying a shorter prompt`);
         }
-        console.log(`[ModelRouter.callWithFallback] Model ${model.id} returned unsuccessfully: ${result.error}`);
       } catch (error: any) {
         console.log(`[ModelRouter.callWithFallback] Model ${model.id} threw error: ${error.message}`);
         this.recordFailure(model.id, error.message);
@@ -287,6 +329,58 @@ export class ModelRouter extends EventEmitter {
       `All models failed for task type: ${taskType}`,
       modelsToTry.map(m => m.id)
     );
+  }
+
+  private isContextOverflowError(errorMessage?: string): boolean {
+    if (!errorMessage) return false;
+    return ModelRouter.CONTEXT_OVERFLOW_PATTERNS.some(pattern => pattern.test(errorMessage));
+  }
+
+  private buildPromptCompactionCandidates(prompt: string): string[] {
+    const source = String(prompt || '');
+    if (source.length < ModelRouter.MIN_PROMPT_FOR_COMPACTION) {
+      return [];
+    }
+
+    const candidates: string[] = [];
+    const seen = new Set<string>([source]);
+
+    for (const ratio of ModelRouter.PROMPT_COMPACTION_RATIOS) {
+      const targetChars = Math.max(
+        ModelRouter.MIN_COMPACTED_PROMPT,
+        Math.floor(source.length * ratio)
+      );
+      const compacted = this.compactPromptMiddle(source, targetChars);
+      if (compacted.length < source.length && !seen.has(compacted)) {
+        candidates.push(compacted);
+        seen.add(compacted);
+      }
+    }
+
+    return candidates;
+  }
+
+  private compactPromptMiddle(prompt: string, targetChars: number): string {
+    if (prompt.length <= targetChars) return prompt;
+
+    const sanitized = prompt.replace(/\n{3,}/g, '\n\n');
+    if (sanitized.length <= targetChars) {
+      return sanitized;
+    }
+
+    const marker = '\n\n[...context compacted for model limit...]\n\n';
+    const available = targetChars - marker.length;
+    if (available <= 0) {
+      return sanitized.slice(0, targetChars);
+    }
+
+    const headChars = Math.max(600, Math.floor(available * 0.45));
+    const tailChars = Math.max(600, available - headChars);
+
+    const head = sanitized.slice(0, Math.min(headChars, sanitized.length)).trimEnd();
+    const tail = sanitized.slice(Math.max(0, sanitized.length - tailChars)).trimStart();
+
+    return `${head}${marker}${tail}`;
   }
 
   /**

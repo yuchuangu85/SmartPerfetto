@@ -41,4 +41,28 @@ describe('narrativeSanitizer', () => {
     expect(output).not.toContain('ev_aaaaaaaaaaaa');
     expect(output).not.toContain('ev_bbbbbbbbbbbb');
   });
+
+  test('humanizes jargon-heavy mechanism terms for client narrative', () => {
+    const input = `## 结论（按可能性排序）
+- 触发因子: 主线程耗时操作（65%）
+- 供给约束: 阻塞等待（57.1%）
+- 放大路径: SF消费端背压（100%）`;
+
+    const output = sanitizeNarrativeForClient(input);
+
+    expect(output).toContain('触发因子（直接原因）');
+    expect(output).toContain('供给约束（资源瓶颈）');
+    expect(output).toContain('放大路径（问题放大环节）');
+    expect(output).toContain('阻塞等待（线程等待锁/IO/Binder）');
+    expect(output).toContain('显示系统处理不过来（SF消费端背压）');
+  });
+
+  test('is idempotent for already-humanized jargon phrases', () => {
+    const input = '放大路径: 显示系统处理不过来（SF消费端背压）';
+
+    const once = sanitizeNarrativeForClient(input);
+    const twice = sanitizeNarrativeForClient(once);
+
+    expect(twice).toBe(once);
+  });
 });
