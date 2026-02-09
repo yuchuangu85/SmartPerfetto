@@ -680,13 +680,43 @@ export class DirectDrillDownExecutor implements AnalysisExecutor {
    * frame-level generic root cause when user asks a CPU/CpuFreq sub-question.
    */
   private detectDrillDownFocus(query: string, aspects: string[]): DrillDownFocus {
-    const text = `${query || ''} ${(aspects || []).join(' ')}`.toLowerCase();
+    const queryText = String(query || '').toLowerCase();
+    const aspectTokens = (aspects || [])
+      .flatMap(a => String(a || '').toLowerCase().split(/[\s,;|/:_-]+/))
+      .filter(Boolean);
 
-    const cpuFocus = /\bcpu\b|调度|scheduler|sched|runqueue|runnable|线程|大核|小核|core/.test(text);
-    const freqFocus = /频率|freq|mhz|降频|升频|throttle|boost/.test(text);
+    const cpuAspectHints = new Set([
+      'cpu',
+      'scheduling',
+      'scheduler',
+      'sched',
+      'runqueue',
+      'runnable',
+      'thread',
+      'threads',
+      'big',
+      'little',
+      'prime',
+      'core_placement',
+      'frequency_insufficient',
+    ]);
+    const freqAspectHints = new Set([
+      'frequency',
+      'cpu_frequency',
+      'freq',
+      'cpufreq',
+      'throttle',
+      'boost',
+      'mhz',
+    ]);
 
-    if (freqFocus) return 'cpu_frequency';
-    if (cpuFocus) return 'cpu';
+    const queryHasCpuSignals = /\bcpu\b|调度|scheduler|sched|runqueue|runnable|线程|大核|小核|核心|\bcore\b/.test(queryText);
+    const queryHasFreqSignals = /频率|freq|mhz|降频|升频|throttle|boost/.test(queryText);
+    const aspectHasCpuSignals = aspectTokens.some(token => cpuAspectHints.has(token));
+    const aspectHasFreqSignals = aspectTokens.some(token => freqAspectHints.has(token));
+
+    if (queryHasFreqSignals || aspectHasFreqSignals) return 'cpu_frequency';
+    if (queryHasCpuSignals || aspectHasCpuSignals) return 'cpu';
     return 'default';
   }
 }

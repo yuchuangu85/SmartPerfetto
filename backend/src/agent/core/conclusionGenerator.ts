@@ -12,6 +12,14 @@ import { ModelRouter } from './modelRouter';
 import { ProgressEmitter } from './orchestratorTypes';
 import { formatJankSummaryForPrompt } from './jankCauseSummarizer';
 import type { CauseTypeStats, JankCauseSummary, JankCluster } from './jankCauseSummarizer';
+import type {
+  ConclusionContract,
+  ConclusionContractClusterItem,
+  ConclusionContractConclusionItem,
+  ConclusionContractEvidenceItem,
+  ConclusionContractMetadata,
+  ConclusionOutputMode,
+} from './conclusionContract';
 
 export interface ConclusionGenerationOptions {
   /**
@@ -25,7 +33,9 @@ export interface ConclusionGenerationOptions {
   historyContext?: string;
 }
 
-type ConclusionOutputMode = 'initial_report' | 'focused_answer' | 'need_input';
+interface ContractRenderOptions {
+  singleFrameDrillDown: boolean;
+}
 
 const DISABLED_FLAG_VALUES = new Set(['0', 'false', 'off', 'no']);
 const ENABLED_FLAG_VALUES = new Set(['1', 'true', 'on', 'yes']);
@@ -42,6 +52,13 @@ type EvidenceObject = {
 type FindingWithEvidence = Finding & {
   evidence?: unknown;
 };
+
+const PROMPT_FINDING_LIMIT = 8;
+const PROMPT_FINDING_OTHER_FIELDS_LIMIT = 8;
+const PROMPT_FINDING_OTHER_FIELD_MAX_CHARS = 90;
+const PROMPT_FINDING_PRIORITY_FIELD_MAX_CHARS = 140;
+const PROMPT_FINDING_EVIDENCE_ITEMS_LIMIT = 4;
+const PROMPT_FINDING_EVIDENCE_MAX_CHARS = 120;
 
 function toEvidenceArray(evidence: unknown): unknown[] {
   if (Array.isArray(evidence)) {
@@ -78,6 +95,33 @@ function normalizeOptionalFlagValue(value: unknown): string | null {
 
 function isFollowUpConclusionTurn(turnCount: number, intent: Intent): boolean {
   return turnCount >= 1 || Boolean(intent.followUpType && intent.followUpType !== 'initial');
+}
+
+function collectEntityIds(intent: Intent, entityType: 'frame' | 'session'): string[] {
+  const ids = new Set<string>();
+  const params = intent.extractedParams || {};
+
+  if (entityType === 'frame') {
+    const frameId = (params as Record<string, unknown>).frame_id ?? (params as Record<string, unknown>).frameId;
+    if (frameId !== undefined && frameId !== null) ids.add(String(frameId));
+  } else {
+    const sessionId = (params as Record<string, unknown>).session_id ?? (params as Record<string, unknown>).sessionId;
+    if (sessionId !== undefined && sessionId !== null) ids.add(String(sessionId));
+  }
+
+  for (const entity of intent.referencedEntities || []) {
+    if (entity.type !== entityType) continue;
+    const raw = entity.value !== undefined ? entity.value : entity.id;
+    if (raw !== undefined && raw !== null) ids.add(String(raw));
+  }
+
+  return Array.from(ids).map(id => id.trim()).filter(id => id.length > 0);
+}
+
+function isSingleFrameDrillDown(intent: Intent): boolean {
+  if (intent.followUpType !== 'drill_down') return false;
+  const frameIds = collectEntityIds(intent, 'frame');
+  return frameIds.length === 1;
 }
 
 function isInsightConclusionEnabled(): boolean {
@@ -178,16 +222,16 @@ function formatFindingWithEvidence(f: Finding): string {
     const priorityEntries: string[] = [];
     for (const field of priorityFields) {
       if (details[field] !== undefined) {
-        const val = stringifyValue(details[field], 200);
+        const val = stringifyValue(details[field], PROMPT_FINDING_PRIORITY_FIELD_MAX_CHARS);
         priorityEntries.push(`${field}: ${val}`);
       }
     }
 
-    // Then, output other fields with truncation (up to 12 fields, 150 chars each)
+    // Then, output other fields with truncation
     const otherEntries = Object.entries(details)
       .filter(([k]) => !priorityFields.includes(k))
-      .slice(0, 12)
-      .map(([k, v]) => `${k}: ${stringifyValue(v, 150)}`);
+      .slice(0, PROMPT_FINDING_OTHER_FIELDS_LIMIT)
+      .map(([k, v]) => `${k}: ${stringifyValue(v, PROMPT_FINDING_OTHER_FIELD_MAX_CHARS)}`);
 
     const allEntries = [...priorityEntries, ...otherEntries];
     if (allEntries.length > 0) {
@@ -195,9 +239,12 @@ function formatFindingWithEvidence(f: Finding): string {
     }
   }
 
-  // Preserve evidence with reasonable limits (8 items, 200 chars each)
+  // Preserve evidence with compact limits to avoid prompt bloat on large traces
   if (f.evidence && Array.isArray(f.evidence) && f.evidence.length > 0) {
-    const evidenceStr = f.evidence.slice(0, 8).map(e => stringifyValue(e, 200)).join('; ');
+    const evidenceStr = f.evidence
+      .slice(0, PROMPT_FINDING_EVIDENCE_ITEMS_LIMIT)
+      .map(e => stringifyValue(e, PROMPT_FINDING_EVIDENCE_MAX_CHARS))
+      .join('; ');
     result += `\n  证据: ${evidenceStr}`;
   }
 
@@ -973,6 +1020,746 @@ function finalizeConclusionMarkdown(
   return injectWorkloadDominantClusterMarker(withEvidenceIndex, jankSummary);
 }
 
+function parseNumberFromUnknown(raw: unknown): number | undefined {
+  const value = readNumberValue(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function clampPercent(raw: number | undefined): number | undefined {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined;
+  if (raw <= 1) return Math.max(0, Math.min(100, raw * 100));
+  return Math.max(0, Math.min(100, raw));
+}
+
+function normalizeConclusionId(id: string, fallbackRank: number): string {
+  const text = String(id || '').trim();
+  if (!text) return `C${fallbackRank}`;
+  const m = text.match(/C?\s*(\d+)/i);
+  if (m) return `C${Math.max(1, Number(m[1]))}`;
+  return `C${fallbackRank}`;
+}
+
+function stripJsonCodeFence(text: string): string {
+  return String(text || '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
+function extractFirstJsonObject(text: string): string | null {
+  const source = String(text || '');
+  const start = source.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+      } else if (ch === '\\') {
+        escaping = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') {
+      depth += 1;
+      continue;
+    }
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map(v => stripBulletPrefix(String(v || '').trim()))
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const line = stripBulletPrefix(value.trim());
+    return line ? [line] : [];
+  }
+  return [];
+}
+
+function parseConclusionItemFromRecord(
+  record: Record<string, unknown>,
+  fallbackRank: number
+): ConclusionContractConclusionItem | null {
+  const trigger = readSemanticText(record, 'trigger');
+  const supply = readSemanticText(record, 'supply');
+  const amplification = readSemanticText(record, 'amplification');
+  const statement = readSemanticText(record, 'statement');
+  const rank = Math.round(parseNumberFromUnknown(readValueFromAliases(record, ['rank', 'order', 'index', '序号', '编号'])) || fallbackRank);
+  const confidencePercent = clampPercent(readSemanticNumber(record, 'confidence'));
+
+  let resolvedStatement = statement;
+  if (!resolvedStatement && (trigger || supply || amplification)) {
+    const parts: string[] = [];
+    if (trigger) parts.push(`触发因子（直接原因）: ${trigger}`);
+    if (supply) parts.push(`供给约束（资源瓶颈）: ${supply}`);
+    if (amplification) parts.push(`放大路径（问题放大环节）: ${amplification}`);
+    resolvedStatement = parts.join('；');
+  }
+
+  if (!resolvedStatement) return null;
+
+  return {
+    rank: Number.isFinite(rank) && rank > 0 ? rank : fallbackRank,
+    statement: resolvedStatement,
+    confidencePercent,
+    trigger: trigger || undefined,
+    supply: supply || undefined,
+    amplification: amplification || undefined,
+  };
+}
+
+function parseClusterItemFromRecord(record: Record<string, unknown>): ConclusionContractClusterItem | null {
+  const cluster = readSemanticText(record, 'cluster_label');
+  const description = readSemanticText(record, 'cluster_description');
+  const rank = readSemanticNumber(record, 'cluster_rank');
+  const rankPrefix = typeof rank === 'number' && rank > 0 ? `K${Math.round(rank)}` : '';
+  const frames = parseNumberFromUnknown(readSemanticNumber(record, 'cluster_frames'));
+  const percentage = parseNumberFromUnknown(readSemanticNumber(record, 'cluster_percentage'));
+
+  let resolvedCluster = cluster;
+  if (!resolvedCluster && rankPrefix) resolvedCluster = rankPrefix;
+  if (!resolvedCluster && !description) return null;
+  if (!resolvedCluster && description) resolvedCluster = description;
+  if (resolvedCluster && rankPrefix && !new RegExp(`^${rankPrefix}\\b`, 'i').test(resolvedCluster)) {
+    resolvedCluster = `${rankPrefix}: ${resolvedCluster}`;
+  }
+
+  return {
+    cluster: resolvedCluster || '',
+    description: description || undefined,
+    frames: typeof frames === 'number' && frames > 0 ? frames : undefined,
+    percentage: typeof percentage === 'number' ? percentage : undefined,
+  };
+}
+
+function parseEvidenceItemsFromRecord(record: Record<string, unknown>, fallbackRank: number): ConclusionContractEvidenceItem[] {
+  const conclusionId = normalizeConclusionId(readSemanticText(record, 'conclusion_id'), fallbackRank);
+  const evidenceTexts = extractEvidenceTextsFromJsonLikeObject(record);
+  if (evidenceTexts.length === 0) return [];
+  return evidenceTexts.map(text => ({ conclusionId, text }));
+}
+
+function extractListEntriesFromSectionBody(body: string): string[] {
+  const entries: string[] = [];
+  for (const rawLine of String(body || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const bullet = line.match(/^(?:[-*]|\d+\.)\s+(.+)$/);
+    if (bullet) {
+      const text = stripBulletPrefix(bullet[1].trim());
+      if (text) entries.push(text);
+      continue;
+    }
+    entries.push(stripBulletPrefix(line));
+  }
+  return entries.filter(Boolean);
+}
+
+function parseConclusionConfidenceFromStatement(statement: string): { statement: string; confidencePercent?: number } {
+  const raw = String(statement || '')
+    .trim()
+    .replace(/[·]\s*$/, '')
+    .trim();
+  if (!raw) return { statement: raw };
+
+  const m = raw.match(/[（(]\s*置信度\s*[:：]?\s*(\d+(?:\.\d+)?)\s*%?\s*[）)]/i);
+  if (!m) return { statement: raw };
+
+  const confidence = clampPercent(Number(m[1]));
+  const cleaned = raw.replace(m[0], '').trim();
+  return { statement: cleaned || raw, confidencePercent: confidence };
+}
+
+function parseConclusionItemsFromMarkdownSection(sectionBody: string): ConclusionContractConclusionItem[] {
+  const numberedItems: Array<{ index: number; text: string }> = [];
+  const bulletFallback: string[] = [];
+  const lines = String(sectionBody || '').split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const mNum = line.match(/^([1-3])\s*[.)、]\s*(.+)$/);
+    if (mNum) {
+      numberedItems.push({ index: Number(mNum[1]), text: mNum[2].trim() });
+      continue;
+    }
+
+    const mC = line.match(/^C([1-3])\s*[:：]\s*(.+)$/i);
+    if (mC) {
+      numberedItems.push({ index: Number(mC[1]), text: mC[2].trim() });
+      continue;
+    }
+
+    const mBullet = line.match(/^-\s+(.+)$/);
+    if (mBullet) {
+      bulletFallback.push(mBullet[1].trim());
+    }
+  }
+
+  const baseItems = numberedItems.length > 0
+    ? numberedItems
+    : bulletFallback.slice(0, 3).map((text, idx) => ({ index: idx + 1, text }));
+
+  const triadTrigger = String(sectionBody || '').match(/触发因子(?:（[^）]*）)?\s*[:：]\s*([^；;\n]+)/)?.[1]?.trim() || '';
+  const triadSupply = String(sectionBody || '').match(/供给约束(?:（[^）]*）)?\s*[:：]\s*([^；;\n]+)/)?.[1]?.trim() || '';
+  const triadAmp = String(sectionBody || '').match(/放大路径(?:（[^）]*）)?\s*[:：]\s*([^；;\n]+)/)?.[1]?.trim() || '';
+  const triadParts: string[] = [];
+  if (triadTrigger) triadParts.push(`触发因子: ${triadTrigger}`);
+  if (triadSupply) triadParts.push(`供给约束: ${triadSupply}`);
+  if (triadAmp) triadParts.push(`放大路径: ${triadAmp}`);
+
+  const items = baseItems.map((item, idx) => {
+    const rank = item.index || idx + 1;
+    const parsed = parseConclusionConfidenceFromStatement(item.text);
+    return {
+      rank,
+      statement: parsed.statement,
+      confidencePercent: parsed.confidencePercent,
+    };
+  });
+
+  if (triadParts.length > 0) {
+    const triadStatement = triadParts.join('；');
+    const alreadyCovered = items.some(item =>
+      item.statement.includes('触发因子') &&
+      item.statement.includes('供给约束') &&
+      item.statement.includes('放大路径')
+    );
+    if (!alreadyCovered) {
+      items.push({
+        rank: items.length + 1,
+        statement: triadStatement,
+        confidencePercent: undefined,
+      });
+    }
+  }
+
+  return items;
+}
+
+function parseClusterItemsFromMarkdownSection(sectionBody: string): ConclusionContractClusterItem[] {
+  const entries = extractListEntriesFromSectionBody(sectionBody);
+  const clusters: ConclusionContractClusterItem[] = [];
+  for (const entry of entries) {
+    const metricMatch = entry.match(/[（(]\s*(\d+(?:\.\d+)?)\s*帧\s*,\s*(\d+(?:\.\d+)?)\s*%\s*[）)]/);
+    let clusterText = entry;
+    let frames: number | undefined;
+    let percentage: number | undefined;
+    if (metricMatch) {
+      clusterText = entry.replace(metricMatch[0], '').trim();
+      frames = Number(metricMatch[1]);
+      percentage = Number(metricMatch[2]);
+    }
+    if (!clusterText) continue;
+    const m = clusterText.match(/^(K\d+)\s*[:：]\s*(.+)$/i);
+    clusters.push({
+      cluster: m ? m[1] : clusterText,
+      description: m ? m[2] : undefined,
+      frames: Number.isFinite(frames) ? frames : undefined,
+      percentage: Number.isFinite(percentage) ? percentage : undefined,
+    });
+  }
+  return clusters;
+}
+
+function parseEvidenceItemsFromMarkdownSection(sectionBody: string): ConclusionContractEvidenceItem[] {
+  const entries = extractListEntriesFromSectionBody(sectionBody);
+  const evidenceItems: ConclusionContractEvidenceItem[] = [];
+  entries.forEach((entry, idx) => {
+    const m = entry.match(/^(C\d+)\s*[:：]\s*(.+)$/i);
+    if (m) {
+      evidenceItems.push({
+        conclusionId: normalizeConclusionId(m[1], idx + 1),
+        text: m[2].trim(),
+      });
+    } else {
+      evidenceItems.push({
+        conclusionId: normalizeConclusionId('', idx + 1),
+        text: entry,
+      });
+    }
+  });
+  return evidenceItems;
+}
+
+function parseMetadataFromMarkdownSection(sectionBody: string): ConclusionContractMetadata | undefined {
+  const entries = extractListEntriesFromSectionBody(sectionBody);
+  let confidencePercent: number | undefined;
+  let rounds: number | undefined;
+
+  for (const entry of entries) {
+    const confidenceMatch = entry.match(/置信度\s*[:：]\s*(\d+(?:\.\d+)?)\s*%?/i);
+    if (confidenceMatch && confidencePercent === undefined) {
+      confidencePercent = clampPercent(Number(confidenceMatch[1]));
+      continue;
+    }
+    const roundsMatch = entry.match(/分析轮次\s*[:：]\s*(\d+(?:\.\d+)?)/i);
+    if (roundsMatch && rounds === undefined) {
+      rounds = Number(roundsMatch[1]);
+    }
+  }
+
+  if (confidencePercent === undefined && rounds === undefined) return undefined;
+  return {
+    confidencePercent,
+    rounds: typeof rounds === 'number' && Number.isFinite(rounds) ? Math.max(1, Math.round(rounds)) : undefined,
+  };
+}
+
+function sanitizeConclusionContract(
+  contract: ConclusionContract,
+  options: ContractRenderOptions
+): ConclusionContract {
+  const sanitizeText = (text: string): string => stripBulletPrefix(String(text || '').trim())
+    .replace(/[·]\s*$/, '')
+    .trim();
+  const dedupe = (items: string[]): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of items) {
+      const item = sanitizeText(raw);
+      if (!item || seen.has(item)) continue;
+      seen.add(item);
+      out.push(item);
+    }
+    return out;
+  };
+
+  const conclusions = contract.conclusions
+    .map((item, idx) => {
+      const rank = Number.isFinite(item.rank) && item.rank > 0 ? Math.round(item.rank) : idx + 1;
+      const parsed = parseConclusionConfidenceFromStatement(item.statement);
+      const statement = sanitizeText(parsed.statement);
+      const confidencePercent = clampPercent(item.confidencePercent ?? parsed.confidencePercent);
+      return {
+        rank,
+        statement,
+        confidencePercent,
+        trigger: sanitizeText(item.trigger || ''),
+        supply: sanitizeText(item.supply || ''),
+        amplification: sanitizeText(item.amplification || ''),
+      };
+    })
+    .filter(item => item.statement || item.trigger || item.supply || item.amplification)
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 3)
+    .map((item, idx) => {
+      let statement = item.statement;
+      if (!statement) {
+        const parts: string[] = [];
+        if (item.trigger) parts.push(`触发因子（直接原因）: ${item.trigger}`);
+        if (item.supply) parts.push(`供给约束（资源瓶颈）: ${item.supply}`);
+        if (item.amplification) parts.push(`放大路径（问题放大环节）: ${item.amplification}`);
+        statement = parts.join('；');
+      }
+      return {
+        rank: idx + 1,
+        statement: statement || '结论信息缺失（证据不足）',
+        confidencePercent: item.confidencePercent,
+        trigger: item.trigger || undefined,
+        supply: item.supply || undefined,
+        amplification: item.amplification || undefined,
+      };
+    });
+
+  const clusters = options.singleFrameDrillDown
+    ? []
+    : contract.clusters
+        .map(item => ({
+          cluster: sanitizeText(item.cluster),
+          description: sanitizeText(item.description || '') || undefined,
+          frames: typeof item.frames === 'number' && Number.isFinite(item.frames) && item.frames > 0
+            ? Math.round(item.frames)
+            : undefined,
+          percentage: clampPercent(item.percentage),
+        }))
+        .filter(item => item.cluster)
+        .slice(0, 5);
+
+  const evidenceChain = contract.evidenceChain
+    .map((item, idx) => ({
+      conclusionId: normalizeConclusionId(item.conclusionId, idx + 1),
+      text: sanitizeText(item.text),
+    }))
+    .filter(item => item.text)
+    .slice(0, 12);
+
+  const uncertainties = dedupe(contract.uncertainties).slice(0, 6);
+  const nextSteps = dedupe(contract.nextSteps).slice(0, 6);
+
+  const metadata = contract.metadata
+    ? {
+        confidencePercent: clampPercent(contract.metadata.confidencePercent),
+        rounds: typeof contract.metadata.rounds === 'number' && Number.isFinite(contract.metadata.rounds)
+          ? Math.max(1, Math.round(contract.metadata.rounds))
+          : undefined,
+      }
+    : undefined;
+
+  return {
+    schemaVersion: 'conclusion_contract_v1',
+    mode: contract.mode,
+    conclusions: conclusions.length > 0 ? conclusions : [{
+      rank: 1,
+      statement: '结论信息缺失（证据不足）',
+      confidencePercent: 40,
+    }],
+    clusters,
+    evidenceChain,
+    uncertainties,
+    nextSteps,
+    metadata: metadata && (metadata.confidencePercent !== undefined || metadata.rounds !== undefined)
+      ? metadata
+      : undefined,
+  };
+}
+
+function renderConclusionContract(
+  contract: ConclusionContract,
+  options: ContractRenderOptions
+): string {
+  const lines: string[] = [];
+
+  lines.push('## 结论（按可能性排序）');
+  contract.conclusions.forEach((item, idx) => {
+    const confidenceSuffix = typeof item.confidencePercent === 'number'
+      ? `（置信度: ${Math.round(item.confidencePercent)}%）`
+      : '';
+    lines.push(`${idx + 1}. ${item.statement}${confidenceSuffix}`);
+  });
+  lines.push('');
+
+  if (!options.singleFrameDrillDown) {
+    lines.push('## 掉帧聚类（先看大头）');
+    if (contract.clusters.length === 0) {
+      lines.push('- 暂无');
+    } else {
+      contract.clusters.forEach((cluster) => {
+        const prefix = cluster.description
+          ? `${cluster.cluster}: ${cluster.description}`
+          : cluster.cluster;
+        const metrics: string[] = [];
+        if (typeof cluster.frames === 'number') metrics.push(`${Math.round(cluster.frames)}帧`);
+        if (typeof cluster.percentage === 'number') metrics.push(`${cluster.percentage.toFixed(1)}%`);
+        lines.push(`- ${prefix}${metrics.length > 0 ? `（${metrics.join(', ')}）` : ''}`);
+      });
+    }
+    lines.push('');
+  }
+
+  lines.push('## 证据链（对应上述结论）');
+  if (contract.evidenceChain.length === 0) {
+    lines.push('- 证据链信息缺失');
+  } else {
+    contract.evidenceChain.forEach((item) => lines.push(`- ${item.conclusionId}: ${item.text}`));
+  }
+  lines.push('');
+
+  lines.push('## 不确定性与反例');
+  if (contract.uncertainties.length === 0) {
+    lines.push('- 暂无');
+  } else {
+    contract.uncertainties.forEach((item) => lines.push(`- ${item}`));
+  }
+  lines.push('');
+
+  lines.push('## 下一步（最高信息增益）');
+  if (contract.nextSteps.length === 0) {
+    lines.push('- 暂无');
+  } else {
+    contract.nextSteps.forEach((item) => lines.push(`- ${item}`));
+  }
+
+  if (contract.metadata && (contract.metadata.confidencePercent !== undefined || contract.metadata.rounds !== undefined)) {
+    lines.push('');
+    lines.push('## 分析元数据');
+    if (contract.metadata.confidencePercent !== undefined) {
+      lines.push(`- 置信度: ${Math.round(contract.metadata.confidencePercent)}%`);
+    }
+    if (contract.metadata.rounds !== undefined) {
+      lines.push(`- 分析轮次: ${Math.round(contract.metadata.rounds)}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function parseMarkdownToConclusionContract(
+  markdown: string,
+  mode: ConclusionOutputMode,
+  options: ContractRenderOptions
+): ConclusionContract | null {
+  const text = String(markdown || '').trim();
+  if (!text) return null;
+
+  const conclusionSection =
+    findMarkdownSection(text, /^##\s*结论[（(]按可能性排序[）)]\s*$/m) ||
+    findMarkdownSection(text, /^##\s*分析结论\s*$/m);
+  const clusterSection = findMarkdownSection(text, /^##\s*掉帧聚类[（(]先看大头[）)]\s*$/m);
+  const evidenceSection = findMarkdownSection(text, /^##\s*证据链[（(]对应上述结论[）)]\s*$/m);
+  const uncertaintySection = findMarkdownSection(text, /^##\s*不确定性与反例\s*$/m);
+  const nextStepSection = findMarkdownSection(text, /^##\s*下一步[（(]最高信息增益[）)]\s*$/m);
+  const metadataSection = findMarkdownSection(text, /^##\s*分析元数据\s*$/m);
+
+  const hasSignal = Boolean(
+    conclusionSection || clusterSection || evidenceSection || uncertaintySection || nextStepSection || metadataSection
+  );
+  if (!hasSignal) return null;
+
+  const contract: ConclusionContract = {
+    schemaVersion: 'conclusion_contract_v1',
+    mode,
+    conclusions: conclusionSection ? parseConclusionItemsFromMarkdownSection(conclusionSection.body) : [],
+    clusters: clusterSection ? parseClusterItemsFromMarkdownSection(clusterSection.body) : [],
+    evidenceChain: evidenceSection ? parseEvidenceItemsFromMarkdownSection(evidenceSection.body) : [],
+    uncertainties: uncertaintySection
+      ? extractListEntriesFromSectionBody(uncertaintySection.body).map(normalizeUncertaintyWording)
+      : [],
+    nextSteps: nextStepSection
+      ? extractListEntriesFromSectionBody(nextStepSection.body).map(normalizeNextStepWording)
+      : [],
+    metadata: metadataSection ? parseMetadataFromMarkdownSection(metadataSection.body) : undefined,
+  };
+
+  return sanitizeConclusionContract(contract, options);
+}
+
+function parseJsonToConclusionContract(
+  rawText: string,
+  mode: ConclusionOutputMode,
+  options: ContractRenderOptions
+): ConclusionContract | null {
+  const cleaned = stripJsonCodeFence(rawText);
+  if (!cleaned) return null;
+  if (!cleaned.startsWith('{')) return null;
+
+  let parsed: unknown = null;
+  const candidate = cleaned.endsWith('}') ? cleaned : extractFirstJsonObject(cleaned);
+  if (!candidate) return null;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    return null;
+  }
+
+  const root = toRecord(parsed);
+  if (!root) return null;
+
+  const conclusionSource = readValueFromAliases(root, ['conclusion', 'conclusions', '结论']);
+  const clusterSource = readValueFromAliases(root, ['clusters', 'jank_clusters', '掉帧聚类', 'cluster']);
+  const evidenceSource = readValueFromAliases(root, ['evidence_chain', 'evidenceChain', '证据链']);
+  const uncertaintySource = readValueFromAliases(root, ['uncertainties', 'uncertainty', '不确定性与反例', '不确定性']);
+  const nextStepSource = readValueFromAliases(root, ['next_steps', 'nextStep', 'next_step', '下一步']);
+  const metadataSource = readValueFromAliases(root, ['metadata', 'analysis_metadata', '分析元数据']);
+
+  const conclusions: ConclusionContractConclusionItem[] = [];
+  if (Array.isArray(conclusionSource)) {
+    conclusionSource.forEach((item, idx) => {
+      if (typeof item === 'string') {
+        const parsedItem = parseConclusionConfidenceFromStatement(item);
+        conclusions.push({
+          rank: idx + 1,
+          statement: parsedItem.statement,
+          confidencePercent: parsedItem.confidencePercent,
+        });
+        return;
+      }
+      const record = toRecord(item);
+      if (!record) return;
+      const parsedItem = parseConclusionItemFromRecord(record, idx + 1);
+      if (parsedItem) conclusions.push(parsedItem);
+    });
+  } else if (typeof conclusionSource === 'string') {
+    const parsedItem = parseConclusionConfidenceFromStatement(conclusionSource);
+    if (parsedItem.statement) {
+      conclusions.push({
+        rank: 1,
+        statement: parsedItem.statement,
+        confidencePercent: parsedItem.confidencePercent,
+      });
+    }
+  } else {
+    const fallbackItem = parseConclusionItemFromRecord(root, 1);
+    if (fallbackItem) conclusions.push(fallbackItem);
+  }
+
+  const clusters: ConclusionContractClusterItem[] = [];
+  if (Array.isArray(clusterSource)) {
+    for (const item of clusterSource) {
+      const record = toRecord(item);
+      if (!record) continue;
+      const parsedItem = parseClusterItemFromRecord(record);
+      if (parsedItem) clusters.push(parsedItem);
+    }
+  } else {
+    const record = toRecord(clusterSource);
+    if (record) {
+      const parsedItem = parseClusterItemFromRecord(record);
+      if (parsedItem) clusters.push(parsedItem);
+    }
+  }
+
+  const evidenceChain: ConclusionContractEvidenceItem[] = [];
+  if (Array.isArray(evidenceSource)) {
+    evidenceSource.forEach((item, idx) => {
+      if (typeof item === 'string') {
+        const m = item.match(/^(C\d+)\s*[:：]\s*(.+)$/i);
+        evidenceChain.push({
+          conclusionId: normalizeConclusionId(m?.[1] || '', idx + 1),
+          text: stripBulletPrefix(m?.[2] || item),
+        });
+        return;
+      }
+      const record = toRecord(item);
+      if (!record) return;
+      evidenceChain.push(...parseEvidenceItemsFromRecord(record, idx + 1));
+    });
+  } else {
+    const record = toRecord(evidenceSource);
+    if (record) {
+      evidenceChain.push(...parseEvidenceItemsFromRecord(record, 1));
+    }
+  }
+
+  const uncertainties = toStringArray(uncertaintySource).map(normalizeUncertaintyWording);
+  const nextSteps = toStringArray(nextStepSource).map(normalizeNextStepWording);
+
+  const metadataRecord = toRecord(metadataSource);
+  const metadata: ConclusionContractMetadata | undefined = metadataRecord
+    ? {
+        confidencePercent: clampPercent(readSemanticNumber(metadataRecord, 'confidence')),
+        rounds: (() => {
+          const rounds = readSemanticNumber(metadataRecord, 'rounds');
+          return typeof rounds === 'number' && Number.isFinite(rounds) ? Math.round(rounds) : undefined;
+        })(),
+      }
+    : {
+        confidencePercent: clampPercent(readSemanticNumber(root, 'confidence')),
+        rounds: (() => {
+          const rounds = readSemanticNumber(root, 'rounds');
+          return typeof rounds === 'number' && Number.isFinite(rounds) ? Math.round(rounds) : undefined;
+        })(),
+      };
+
+  const contract: ConclusionContract = {
+    schemaVersion: 'conclusion_contract_v1',
+    mode,
+    conclusions,
+    clusters,
+    evidenceChain,
+    uncertainties,
+    nextSteps,
+    metadata,
+  };
+
+  return sanitizeConclusionContract(contract, options);
+}
+
+function toDeterministicConclusionMarkdown(
+  rawText: string,
+  mode: ConclusionOutputMode,
+  options: ContractRenderOptions,
+  emitter: ProgressEmitter
+): string {
+  const text = String(rawText || '').trim();
+  if (!text) return text;
+
+  const contractFromJson = parseJsonToConclusionContract(text, mode, options);
+  if (contractFromJson) {
+    emitter.log('[conclusionGenerator] Rendered conclusion via structured contract JSON');
+    return renderConclusionContract(contractFromJson, options);
+  }
+
+  let markdownCandidate = text;
+  if (shouldNormalizeConclusionOutput(text)) {
+    emitter.log('[conclusionGenerator] LLM returned non-markdown output, applying legacy normalizer before contract render');
+    markdownCandidate = normalizeConclusionOutput(text);
+  }
+
+  const contractFromMarkdown = parseMarkdownToConclusionContract(markdownCandidate, mode, options);
+  if (contractFromMarkdown) {
+    emitter.log('[conclusionGenerator] Rendered conclusion via markdown->contract pipeline');
+    return renderConclusionContract(contractFromMarkdown, options);
+  }
+
+  return markdownCandidate;
+}
+
+export function deriveConclusionContract(
+  rawText: string,
+  options: {
+    mode?: ConclusionOutputMode;
+    singleFrameDrillDown?: boolean;
+  } = {}
+): ConclusionContract | null {
+  const mode = options.mode || 'initial_report';
+  const renderOptions: ContractRenderOptions = {
+    singleFrameDrillDown: Boolean(options.singleFrameDrillDown),
+  };
+  const text = String(rawText || '').trim();
+  if (!text) return null;
+
+  const contractFromJson = parseJsonToConclusionContract(text, mode, renderOptions);
+  if (contractFromJson) return contractFromJson;
+
+  const markdownCandidates: string[] = [text];
+  const normalizedJsonLike = convertJsonLikeSectionsToMarkdown(text);
+  if (normalizedJsonLike) {
+    markdownCandidates.push(normalizedJsonLike);
+  }
+
+  const normalizedJson = convertJsonToMarkdown(text);
+  if (normalizedJson && normalizedJson !== text) {
+    markdownCandidates.push(normalizedJson);
+  }
+
+  for (const candidate of markdownCandidates) {
+    const contract = parseMarkdownToConclusionContract(candidate, mode, renderOptions);
+    if (contract) return contract;
+  }
+
+  return null;
+}
+
+export function renderConclusionContractMarkdown(
+  contract: ConclusionContract,
+  options: { singleFrameDrillDown?: boolean } = {}
+): string {
+  return renderConclusionContract(contract, {
+    singleFrameDrillDown: Boolean(options.singleFrameDrillDown),
+  });
+}
+
 /**
  * Generate an AI-powered conclusion from analysis results.
  * Falls back to a simple markdown summary if LLM fails.
@@ -990,8 +1777,10 @@ export async function generateConclusion(
     .filter(h => h.status === 'confirmed' || h.confidence >= 0.85);
 
   const turnCount = Number.isFinite(options.turnCount) ? Number(options.turnCount) : 0;
-  const historyContext = options.historyContext || '';
+  const singleFrameDrillDown = isSingleFrameDrillDown(intent);
+  const historyContext = singleFrameDrillDown ? '' : (options.historyContext || '');
   const frameMechanismRecords = sharedContext.frameMechanismRecords || [];
+  const scopedJankSummary = singleFrameDrillDown ? undefined : sharedContext.jankCauseSummary;
 
   // Collect contradicted findings for explicit mention in prompt
   // Instead of filtering them out, we let LLM resolve contradictions with guidance
@@ -1009,9 +1798,10 @@ export async function generateConclusion(
   const finalFindings = findingsForPrompt.length > 0
     ? findingsForPrompt
     : sortedFindings.slice(0, 5);
+  const promptFindings = finalFindings.slice(0, PROMPT_FINDING_LIMIT);
   const attributionAssessment = deriveAttributionAssessment(
     finalFindings,
-    sharedContext.jankCauseSummary
+    scopedJankSummary
   );
 
   const insightEnabled = isInsightConclusionEnabled();
@@ -1021,7 +1811,7 @@ export async function generateConclusion(
     intent,
     findingsCount: sortedFindings.length,
     confirmedHypothesesCount: confirmedHypotheses.length,
-    hasJankSummary: Boolean(sharedContext.jankCauseSummary && sharedContext.jankCauseSummary.totalJankFrames > 0),
+    hasJankSummary: Boolean(scopedJankSummary && scopedJankSummary.totalJankFrames > 0),
   });
 
   // Build contradiction section for prompt if any exist
@@ -1030,17 +1820,19 @@ export async function generateConclusion(
     : '';
 
   // Build structured jank summary section (from per-frame analysis)
-  const jankSummarySection = formatJankSummaryForPrompt(sharedContext.jankCauseSummary);
+  const jankSummarySection = formatJankSummaryForPrompt(scopedJankSummary);
   const attributionAssessmentSection = buildAttributionAssessmentPromptSection(attributionAssessment);
   const mechanismTriadSection = buildMechanismTriadPromptSection(
     attributionAssessment,
-    sharedContext.jankCauseSummary,
+    scopedJankSummary,
     frameMechanismRecords
   );
 
   // Debug: Log whether jank summary is being included
-  if (sharedContext.jankCauseSummary) {
-    console.log(`[ConclusionGenerator] Using jankCauseSummary: ${sharedContext.jankCauseSummary.totalJankFrames} frames, primary=${sharedContext.jankCauseSummary.primaryCause?.label}`);
+  if (scopedJankSummary) {
+    console.log(`[ConclusionGenerator] Using jankCauseSummary: ${scopedJankSummary.totalJankFrames} frames, primary=${scopedJankSummary.primaryCause?.label}`);
+  } else if (singleFrameDrillDown) {
+    console.log('[ConclusionGenerator] Single-frame drill-down: jankCauseSummary suppressed to avoid cross-turn cluster carry-over');
   } else {
     console.log(`[ConclusionGenerator] No jankCauseSummary available in sharedContext`);
   }
@@ -1057,9 +1849,9 @@ export async function generateConclusion(
           confidence: h.confidence,
           status: h.status,
         })),
-        findings: finalFindings,
+        findings: promptFindings,
         contradictionSection,
-        jankSummary: sharedContext.jankCauseSummary,
+        jankSummary: scopedJankSummary,
         frameMechanismRecords,
         attributionAssessment,
         traceConfig: sharedContext.traceConfig,
@@ -1076,7 +1868,7 @@ ${mechanismTriadSection}
 ${confirmedHypotheses.map(h => `- ${h.description} (confidence: ${h.confidence.toFixed(2)})`).join('\n') || '无'}
 
 发现的问题（含数据证据）:
-${finalFindings.map(f => formatFindingWithEvidence(f)).join('\n\n') || '无'}
+${promptFindings.map(f => formatFindingWithEvidence(f)).join('\n\n') || '无'}
 ${contradictionSection}
 调查路径:
 ${sharedContext.investigationPath.map(s => `${s.stepNumber}. [${s.agentId}] ${s.summary}`).join('\n')}
@@ -1156,8 +1948,11 @@ ${sharedContext.traceConfig ? (sharedContext.traceConfig.isVRR
 	  - 发现1：XXX
 	  - 发现2：XXX`;
 
+  const contractRenderOptions: ContractRenderOptions = { singleFrameDrillDown };
+
   try {
     const response = await modelRouter.callWithFallback(prompt, 'synthesis', {
+      jsonMode: insightEnabled,
       sessionId: sharedContext.sessionId,
       traceId: sharedContext.traceId,
       promptId: insightEnabled
@@ -1165,22 +1960,20 @@ ${sharedContext.traceConfig ? (sharedContext.traceConfig.isVRR
         : (turnCount >= 1 ? 'agent.conclusionGenerator.dialogue' : 'agent.conclusionGenerator'),
       promptVersion: '2.0.0',
       contractVersion: insightEnabled
-        ? 'conclusion_insight_text@2.0.0'
+        ? 'conclusion_contract_json@1.0.0'
         : (turnCount >= 1 ? 'conclusion_dialogue_text@1.0.0' : 'conclusion_text@1.0.0'),
     });
 
-    let conclusion = response.response;
-
-    // Detect and normalize JSON / JSON-like text outputs.
-    const trimmed = conclusion.trim();
-    if (shouldNormalizeConclusionOutput(trimmed)) {
-      emitter.log('[conclusionGenerator] LLM returned structured non-markdown output, normalizing to Markdown');
-      conclusion = normalizeConclusionOutput(conclusion);
-    }
+    let conclusion = toDeterministicConclusionMarkdown(
+      response.response,
+      outputMode,
+      contractRenderOptions,
+      emitter
+    );
 
     // Ensure evidence IDs appear in the evidence-chain section when available.
     // This makes the output auditable even if the LLM forgets to cite.
-    conclusion = finalizeConclusionMarkdown(conclusion, finalFindings, sharedContext.jankCauseSummary);
+    conclusion = finalizeConclusionMarkdown(conclusion, finalFindings, scopedJankSummary);
 
     if (isConclusionContradictingAttributionVerdict(conclusion, attributionAssessment)) {
       emitter.log('[conclusionGenerator] LLM conclusion contradicts attribution verdict, switching to rule-based safe fallback');
@@ -1193,10 +1986,16 @@ ${sharedContext.traceConfig ? (sharedContext.traceConfig.isVRR
         finalFindings,
         contradictionReasons,
         stopReason,
-        sharedContext.jankCauseSummary,
+        scopedJankSummary,
         frameMechanismRecords
       );
-      return finalizeConclusionMarkdown(safeFallback, finalFindings, sharedContext.jankCauseSummary);
+      const deterministicFallback = toDeterministicConclusionMarkdown(
+        safeFallback,
+        outputMode,
+        contractRenderOptions,
+        emitter
+      );
+      return finalizeConclusionMarkdown(deterministicFallback, finalFindings, scopedJankSummary);
     }
 
     return conclusion;
@@ -1225,10 +2024,16 @@ ${sharedContext.traceConfig ? (sharedContext.traceConfig.isVRR
           finalFindings,
           contradictionReasons,
           stopReason,
-          sharedContext.jankCauseSummary,
+          scopedJankSummary,
           frameMechanismRecords
         );
-    return finalizeConclusionMarkdown(fallback, fallbackEvidenceFindings, sharedContext.jankCauseSummary);
+    const deterministicFallback = toDeterministicConclusionMarkdown(
+      fallback,
+      outputMode,
+      contractRenderOptions,
+      emitter
+    );
+    return finalizeConclusionMarkdown(deterministicFallback, fallbackEvidenceFindings, scopedJankSummary);
   }
 
   return turnCount >= 1
@@ -1288,6 +2093,7 @@ function buildInsightFirstPrompt(params: {
   investigationPath: Array<{ stepNumber: number; agentId: string; summary: string }>;
 }): string {
   const parts: string[] = [];
+  const singleFrameDrillDown = isSingleFrameDrillDown(params.intent);
 
   parts.push(`你是 SmartPerfetto 的 AI 性能分析助手，正在进行多轮对话（当前第 ${params.turnCount + 1} 轮）。`);
   parts.push('你的目标：给出“洞见优先”的结论，而不是套模板。');
@@ -1314,6 +2120,13 @@ function buildInsightFirstPrompt(params: {
   if (params.historyContext) {
     parts.push('## 对话历史摘要（用于承接上下文）');
     parts.push(params.historyContext);
+    parts.push('');
+  }
+
+  if (singleFrameDrillDown) {
+    parts.push('## 单帧 Drill-Down 范围约束');
+    parts.push('- 本轮只允许使用目标帧或同一时间窗的直接证据。');
+    parts.push('- 禁止沿用历史轮次的聚类帧数/占比（如 K1/K2/K3 百分比）。');
     parts.push('');
   }
 
@@ -1351,7 +2164,7 @@ function buildInsightFirstPrompt(params: {
   if (params.findings.length === 0) {
     parts.push('无可用 findings。');
   } else {
-    parts.push(params.findings.slice(0, 12).map(f => formatFindingWithEvidence(f)).join('\n\n'));
+    parts.push(params.findings.slice(0, PROMPT_FINDING_LIMIT).map(f => formatFindingWithEvidence(f)).join('\n\n'));
   }
   parts.push('');
 
@@ -1399,25 +2212,25 @@ function buildInsightFirstPrompt(params: {
   }
 
   parts.push('## 输出要求（必须严格遵守）');
-  parts.push('- 只输出 Markdown 纯文本；禁止输出 JSON；禁止代码块；不要输出 SQL。');
+  parts.push('- 只输出合法 JSON；禁止输出 Markdown、代码块、SQL 或额外解释。');
   parts.push('- 只基于已提供的数据与证据；不允许编造未提供的数据。');
+  parts.push('- 优先用通俗表达：先说现象和影响；若必须用术语，在术语后补一句人话解释。');
   parts.push('- 允许给出“下一步分析动作/要补充的数据”，但不要给出“优化代码/改架构”的建议。');
-  parts.push('- 必须包含以下 4 个模块（标题必须一致）：');
-  parts.push('  1) ## 结论（按可能性排序）');
-  parts.push('  2) ## 掉帧聚类（先看大头）');
-  parts.push('  3) ## 证据链（对应上述结论）');
-  parts.push('  4) ## 不确定性与反例');
-  parts.push('  5) ## 下一步（最高信息增益）');
-  parts.push('- 标题必须使用中文模块名；不要输出 "conclusion:"/"jank_clusters:"/"next_steps:" 这类英文键名标题。');
+  parts.push('- JSON 顶层字段固定为：schema_version, mode, conclusion, clusters, evidence_chain, uncertainties, next_steps, metadata。');
+  parts.push(`- mode 必须是 "${params.mode}"。schema_version 必须是 "conclusion_contract_v1"。`);
+  parts.push('- 结论最终会渲染为“## 结论（按可能性排序）/## 掉帧聚类（先看大头）/## 证据链（对应上述结论）/## 不确定性与反例/## 下一步（最高信息增益）”。');
   parts.push('- “下一步”优先给出口径对齐、聚类下钻、同窗验证动作；若指标已存在逐帧数据，禁止写“补充XXX数据”。');
-  parts.push('- 在“## 结论（按可能性排序）”中，必须明确给出以下三行（可带补充说明）：');
-  parts.push('  - 触发因子: ...');
-  parts.push('  - 供给约束: ...');
-  parts.push('  - 放大路径: ...');
+  parts.push('- conclusion 数组最多 3 项，每项包含：rank, statement, confidence, trigger, supply, amplification。');
+  parts.push('- trigger/supply/amplification 需要能映射为：触发因子（直接原因）/供给约束（资源瓶颈）/放大路径（问题放大环节）。');
+  parts.push('- statement 建议包含可读三元组短句，例如：触发因子: ...；供给约束: ...；放大路径: ...');
   parts.push('- “供给约束”必须优先判别属于哪类：负载高 / 频率不足 / 调度延迟 / 核心摆放 / 阻塞等待。');
-  parts.push('- “## 掉帧聚类（先看大头）”必须按帧数降序列出 Top3 聚类（K1/K2/K3），并标注帧数与占比。');
-  parts.push('- 结论最多列 3 条，每条给出置信度百分比（例如：85%）。');
-  parts.push('- “证据链”必须按 C1/C2/C3 对齐（C1=结论1）：每行以 "- C1:"/"- C2:"/"- C3:" 开头，并包含至少 1 个 evidence id（ev_xxxxxxxxxxxx）；同一行补充对应 Finding 标题/关键数据。');
+  if (!singleFrameDrillDown) {
+    parts.push('- clusters 必须按帧数降序列出 Top3 聚类（K1/K2/K3），并标注帧数与占比。');
+  } else {
+    parts.push('- 单帧 drill-down 禁止复用历史 K1/K2/K3；clusters 传空数组。');
+  }
+  parts.push('- evidence_chain 必须按 C1/C2/C3 对齐（C1=结论1）：每项包含 conclusion_id 和 evidence 文本，且包含至少 1 个 evidence id（ev_xxxxxxxxxxxx）。');
+  parts.push('- metadata 可包含 confidence（0-100 或 0-1）与 rounds（正整数）。');
 
   if (params.mode === 'focused_answer') {
     parts.push('- 本轮是 follow-up：优先直接回答用户本轮焦点，不要复述历史长文；总长度尽量控制在 25 行以内。');
@@ -1892,15 +2705,27 @@ export function shouldNormalizeConclusionOutput(text: string): boolean {
 }
 
 export function normalizeConclusionOutput(rawText: string): string {
-  const converted = convertJsonToMarkdown(rawText);
-  if (looksLikeMarkdownConclusion(converted)) {
-    return converted;
+  const contractOptions: ContractRenderOptions = { singleFrameDrillDown: false };
+  const directContract = parseJsonToConclusionContract(rawText, 'initial_report', contractOptions);
+  if (directContract) {
+    return renderConclusionContract(directContract, contractOptions);
   }
 
+  const converted = convertJsonToMarkdown(rawText);
   const fromJsonLike = convertJsonLikeSectionsToMarkdown(rawText);
-  if (fromJsonLike) return fromJsonLike;
+  const preferredMarkdown = looksLikeMarkdownConclusion(converted)
+    ? converted
+    : (fromJsonLike || converted);
+  const markdownContract = parseMarkdownToConclusionContract(
+    preferredMarkdown,
+    'initial_report',
+    contractOptions
+  );
+  if (markdownContract) {
+    return renderConclusionContract(markdownContract, contractOptions);
+  }
 
-  return converted;
+  return preferredMarkdown;
 }
 
 function looksLikeMarkdownConclusion(text: string): boolean {
@@ -1922,27 +2747,28 @@ function convertJsonLikeSectionsToMarkdown(rawText: string): string | null {
 
   for (const line of sections.conclusion) {
     const obj = parseJsonLine(line);
-    if (obj && typeof obj.statement === 'string') {
-      const confidence = Number(obj.confidence);
-      conclusions.push({
-        statement: obj.statement.trim(),
-        confidence: Number.isFinite(confidence) ? confidence : undefined,
-      });
-      continue;
-    }
     if (obj) {
-      const trigger = stripBulletPrefix(String(obj.trigger || obj.trigger_factor || '').trim());
-      const supply = stripBulletPrefix(String(obj.supply || obj.supply_constraint || '').trim());
-      const amp = stripBulletPrefix(String(obj.amplification || obj.amplification_path || '').trim());
-      const confidence = Number(obj.confidence);
+      const statement = readSemanticText(obj, 'statement');
+      const confidence = normalizeConfidencePercent(readSemanticNumber(obj, 'confidence'));
+      if (statement) {
+        conclusions.push({
+          statement,
+          confidence,
+        });
+        continue;
+      }
+
+      const trigger = readSemanticText(obj, 'trigger');
+      const supply = readSemanticText(obj, 'supply');
+      const amp = readSemanticText(obj, 'amplification');
       if (trigger || supply || amp) {
         const parts: string[] = [];
-        if (trigger) parts.push(`触发因子: ${trigger}`);
-        if (supply) parts.push(`供给约束: ${supply}`);
-        if (amp) parts.push(`放大路径: ${amp}`);
+        if (trigger) parts.push(`触发因子（直接原因）: ${trigger}`);
+        if (supply) parts.push(`供给约束（资源瓶颈）: ${supply}`);
+        if (amp) parts.push(`放大路径（问题放大环节）: ${amp}`);
         conclusions.push({
           statement: parts.join('；'),
-          confidence: Number.isFinite(confidence) ? confidence : undefined,
+          confidence,
         });
         continue;
       }
@@ -1969,8 +2795,7 @@ function convertJsonLikeSectionsToMarkdown(rawText: string): string | null {
     const obj = parseJsonLine(line);
     if (obj) {
       const cid =
-        String(obj.conclusion_id || '').trim() ||
-        String(obj.conclusion || '').trim() ||
+        readSemanticText(obj, 'conclusion_id') ||
         'C1';
       const evidenceTexts = extractEvidenceTextsFromJsonLikeObject(obj);
       for (const evText of evidenceTexts) {
@@ -1993,8 +2818,8 @@ function convertJsonLikeSectionsToMarkdown(rawText: string): string | null {
   for (const line of sections.uncertainties) {
     const obj = parseJsonLine(line);
     if (obj) {
-      const point = stripBulletPrefix(String(obj.point || obj.title || obj.statement || '').trim());
-      const explanation = stripBulletPrefix(String(obj.explanation || obj.reason || '').trim());
+      const point = readSemanticText(obj, 'uncertainty_point');
+      const explanation = readSemanticText(obj, 'uncertainty_reason');
       if (point && explanation) {
         uncertainties.push(normalizeUncertaintyWording(`${point}：${explanation}`));
         continue;
@@ -2016,8 +2841,8 @@ function convertJsonLikeSectionsToMarkdown(rawText: string): string | null {
   for (const line of sections.next_steps) {
     const obj = parseJsonLine(line);
     if (obj) {
-      const action = stripBulletPrefix(String(obj.action || obj.step || obj.title || '').trim());
-      const reason = stripBulletPrefix(String(obj.reason || obj.explanation || '').trim());
+      const action = readSemanticText(obj, 'next_action');
+      const reason = readSemanticText(obj, 'next_reason');
       if (action && reason) {
         nextSteps.push(normalizeNextStepWording(`${action}（原因：${reason}）`));
         continue;
@@ -2039,12 +2864,12 @@ function convertJsonLikeSectionsToMarkdown(rawText: string): string | null {
   for (const line of sections.metadata) {
     const obj = parseJsonLine(line);
     if (obj) {
-      const confidence = Number(obj.confidence ?? obj.overall_confidence);
-      if (Number.isFinite(confidence)) {
+      const confidence = normalizeConfidencePercent(readSemanticNumber(obj, 'confidence'));
+      if (typeof confidence === 'number') {
         metadataLines.push(`- 置信度: ${Math.round(confidence)}%`);
       }
-      const rounds = Number(obj.rounds ?? obj.analysis_rounds ?? obj.iterations);
-      if (Number.isFinite(rounds) && rounds > 0) {
+      const rounds = readSemanticNumber(obj, 'rounds');
+      if (typeof rounds === 'number' && rounds > 0) {
         metadataLines.push(`- 分析轮次: ${Math.round(rounds)}`);
       }
       continue;
@@ -2204,6 +3029,195 @@ function parseJsonLine(line: string): Record<string, unknown> | null {
   }
 }
 
+type SemanticTextField =
+  | 'statement'
+  | 'trigger'
+  | 'supply'
+  | 'amplification'
+  | 'conclusion_id'
+  | 'uncertainty_point'
+  | 'uncertainty_reason'
+  | 'next_action'
+  | 'next_reason'
+  | 'source'
+  | 'cluster_label'
+  | 'cluster_description';
+
+type SemanticNumberField =
+  | 'confidence'
+  | 'rounds'
+  | 'cluster_rank'
+  | 'cluster_frames'
+  | 'cluster_percentage';
+
+type SemanticRule = {
+  aliases: string[];
+  patterns: RegExp[];
+};
+
+const SEMANTIC_TEXT_RULES: Record<SemanticTextField, SemanticRule> = {
+  statement: {
+    aliases: ['statement', 'summary', 'conclusion', '结论', '描述', '说明'],
+    patterns: [/statement|summary|conclusion|结论|描述|说明/i],
+  },
+  trigger: {
+    aliases: ['trigger', 'trigger_factor', 'triggerFactor', '触发因子', '直接原因'],
+    patterns: [/trigger|触发|直接原因/i],
+  },
+  supply: {
+    aliases: ['supply', 'supply_constraint', 'supplyConstraint', '供给约束', '资源瓶颈'],
+    patterns: [/supply|constraint|bottleneck|供给约束|资源瓶颈|瓶颈/i],
+  },
+  amplification: {
+    aliases: ['amplification', 'amplification_path', 'amplificationPath', '放大路径', '放大环节'],
+    patterns: [/amplification|amplify|path|放大路径|放大环节|放大/i],
+  },
+  conclusion_id: {
+    aliases: ['conclusion_id', 'conclusionId', 'conclusion', '结论编号', '结论ID'],
+    patterns: [/conclusionid|conclusion|结论编号|结论id|cid/i],
+  },
+  uncertainty_point: {
+    aliases: ['point', 'title', 'statement', 'topic', '问题', '标题', '结论'],
+    patterns: [/point|title|statement|topic|问题|标题|结论/i],
+  },
+  uncertainty_reason: {
+    aliases: ['explanation', 'reason', 'detail', '说明', '原因', '描述'],
+    patterns: [/explanation|reason|detail|说明|原因|描述/i],
+  },
+  next_action: {
+    aliases: ['action', 'step', 'title', 'next_step', '下一步', '动作', '步骤', '建议'],
+    patterns: [/action|step|title|nextstep|下一步|动作|步骤|建议/i],
+  },
+  next_reason: {
+    aliases: ['reason', 'explanation', 'detail', '原因', '说明'],
+    patterns: [/reason|explanation|detail|原因|说明/i],
+  },
+  source: {
+    aliases: ['source', 'skill', '来源'],
+    patterns: [/source|skill|来源/i],
+  },
+  cluster_label: {
+    aliases: ['cluster', 'name', 'pattern', '聚类', '簇', 'clusterId', 'cluster_id'],
+    patterns: [/cluster|name|pattern|聚类|簇/i],
+  },
+  cluster_description: {
+    aliases: ['description', 'desc', '描述', '特征'],
+    patterns: [/description|desc|描述|特征/i],
+  },
+};
+
+const SEMANTIC_NUMBER_RULES: Record<SemanticNumberField, SemanticRule> = {
+  confidence: {
+    aliases: ['confidence', 'overall_confidence', '置信度'],
+    patterns: [/confidence|overallconfidence|置信度/i],
+  },
+  rounds: {
+    aliases: ['rounds', 'analysis_rounds', 'iterations', '分析轮次', '轮次'],
+    patterns: [/rounds|analysisrounds|iterations|分析轮次|轮次/i],
+  },
+  cluster_rank: {
+    aliases: ['rank', '排序', '序号'],
+    patterns: [/rank|排序|序号/i],
+  },
+  cluster_frames: {
+    aliases: ['frames', 'frameCount', 'frame_count', '帧数'],
+    patterns: [/frames|framecount|帧数/i],
+  },
+  cluster_percentage: {
+    aliases: ['percentage', 'pct', 'ratio', '占比', '比例'],
+    patterns: [/percentage|pct|ratio|占比|比例/i],
+  },
+};
+
+function normalizeJsonLikeKey(key: string): string {
+  return String(key || '')
+    .trim()
+    .replace(/[\s_\-]/g, '')
+    .toLowerCase();
+}
+
+function buildNormalizedAliasSet(aliases: string[]): Set<string> {
+  return new Set(aliases.map((alias) => normalizeJsonLikeKey(alias)));
+}
+
+function readTextByRule(obj: Record<string, unknown>, rule: SemanticRule): string {
+  const aliasSet = buildNormalizedAliasSet(rule.aliases);
+  let fuzzyMatch = '';
+
+  for (const [rawKey, rawValue] of Object.entries(obj)) {
+    if (typeof rawValue !== 'string') continue;
+    const text = stripBulletPrefix(rawValue.trim());
+    if (!text) continue;
+
+    const normalizedKey = normalizeJsonLikeKey(rawKey);
+    if (aliasSet.has(normalizedKey)) {
+      return text;
+    }
+    if (!fuzzyMatch && rule.patterns.some((pattern) => pattern.test(normalizedKey))) {
+      fuzzyMatch = text;
+    }
+  }
+
+  return fuzzyMatch;
+}
+
+function readSemanticText(obj: Record<string, unknown>, field: SemanticTextField): string {
+  return readTextByRule(obj, SEMANTIC_TEXT_RULES[field]);
+}
+
+function readNumberValue(raw: unknown): number | undefined {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return raw;
+  }
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+  const normalized = raw.trim().replace(/[%％]/g, '');
+  if (!normalized) return undefined;
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function readNumberByRule(obj: Record<string, unknown>, rule: SemanticRule): number | undefined {
+  const aliasSet = buildNormalizedAliasSet(rule.aliases);
+  let fuzzyMatch: number | undefined;
+
+  for (const [rawKey, rawValue] of Object.entries(obj)) {
+    const value = readNumberValue(rawValue);
+    if (!Number.isFinite(value)) continue;
+
+    const normalizedKey = normalizeJsonLikeKey(rawKey);
+    if (aliasSet.has(normalizedKey)) {
+      return value;
+    }
+    if (fuzzyMatch === undefined && rule.patterns.some((pattern) => pattern.test(normalizedKey))) {
+      fuzzyMatch = value;
+    }
+  }
+
+  return fuzzyMatch;
+}
+
+function readSemanticNumber(obj: Record<string, unknown>, field: SemanticNumberField): number | undefined {
+  return readNumberByRule(obj, SEMANTIC_NUMBER_RULES[field]);
+}
+
+function readValueFromAliases(obj: Record<string, unknown>, aliases: string[]): unknown {
+  const aliasSet = buildNormalizedAliasSet(aliases);
+  for (const [rawKey, value] of Object.entries(obj)) {
+    if (aliasSet.has(normalizeJsonLikeKey(rawKey))) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function normalizeConfidencePercent(raw?: number): number | undefined {
+  if (!Number.isFinite(raw)) return undefined;
+  if ((raw as number) <= 1) return (raw as number) * 100;
+  return raw;
+}
+
 function extractEvidenceTextsFromJsonLikeObject(obj: Record<string, unknown>): string[] {
   const out: string[] = [];
   const pushIfUseful = (raw: unknown) => {
@@ -2217,12 +3231,15 @@ function extractEvidenceTextsFromJsonLikeObject(obj: Record<string, unknown>): s
     if (!out.includes(text)) out.push(text);
   };
 
-  const preferredFields = ['data', 'description', 'detail', 'statement', 'observation', 'metric', 'reason'];
+  const preferredFields = [
+    'data', 'description', 'detail', 'statement', 'observation', 'metric', 'reason',
+    '数据', '描述', '详情', '说明', '观察', '指标', '原因',
+  ];
   for (const key of preferredFields) {
     pushIfUseful(obj[key]);
   }
 
-  const evidence = obj.evidence;
+  const evidence = readValueFromAliases(obj, ['evidence', '证据']);
   if (Array.isArray(evidence)) {
     for (const item of evidence) {
       if (typeof item === 'string') {
@@ -2240,7 +3257,7 @@ function extractEvidenceTextsFromJsonLikeObject(obj: Record<string, unknown>): s
     pushIfUseful(evidence);
   }
 
-  const source = stripBulletPrefix(String(obj.source || obj.skill || '').trim());
+  const source = readSemanticText(obj, 'source');
   if (source && out.length > 0) {
     const last = out[out.length - 1];
     if (!last.includes('来源:')) {
@@ -2288,11 +3305,20 @@ function normalizeNextStepWording(text: string): string {
 }
 
 function formatClusterLineFromJsonLikeObject(obj: Record<string, unknown>): string | null {
-  const clusterRaw = stripBulletPrefix(String(obj.cluster || obj.name || obj.pattern || '').trim());
-  const rankNum = Number(obj.rank);
-  const rankPrefix = Number.isFinite(rankNum) && rankNum > 0 ? `K${Math.round(rankNum)}` : '';
+  const clusterRaw = readSemanticText(obj, 'cluster_label');
+  const description = readSemanticText(obj, 'cluster_description');
+  const rankNum = readSemanticNumber(obj, 'cluster_rank');
+  const rankPrefix = typeof rankNum === 'number' && rankNum > 0 ? `K${Math.round(rankNum)}` : '';
 
   let clusterLabel = clusterRaw;
+  if (!clusterLabel && description) {
+    clusterLabel = description;
+  } else if (clusterLabel && description && !clusterLabel.includes(description)) {
+    if (/^K\d+\b/i.test(clusterLabel) || !/[:：]/.test(clusterLabel)) {
+      clusterLabel = `${clusterLabel}: ${description}`;
+    }
+  }
+
   if (rankPrefix) {
     if (!clusterLabel) {
       clusterLabel = rankPrefix;
@@ -2304,13 +3330,13 @@ function formatClusterLineFromJsonLikeObject(obj: Record<string, unknown>): stri
     return null;
   }
 
-  const frames = Number(obj.frames ?? obj.frameCount);
-  const percentage = Number(obj.percentage ?? obj.pct);
+  const frames = readSemanticNumber(obj, 'cluster_frames');
+  const percentage = readSemanticNumber(obj, 'cluster_percentage');
   const metrics: string[] = [];
-  if (Number.isFinite(frames) && frames > 0) {
+  if (typeof frames === 'number' && frames > 0) {
     metrics.push(`${Math.round(frames)}帧`);
   }
-  if (Number.isFinite(percentage)) {
+  if (typeof percentage === 'number') {
     metrics.push(`${percentage.toFixed(1)}%`);
   }
 

@@ -26,6 +26,7 @@ import {
   Hypothesis,
 } from '../agent';
 import {
+  deriveConclusionContract,
   normalizeConclusionOutput,
   shouldNormalizeConclusionOutput,
 } from '../agent/core/conclusionGenerator';
@@ -3102,9 +3103,16 @@ function sendAgentDrivenResult(res: express.Response, session: AnalysisSession) 
   const result = session.result;
   if (!result) return;
   const normalizedConclusion = normalizeNarrativeForClient(result.conclusion);
-  const resultForClient = normalizedConclusion === result.conclusion
-    ? result
-    : { ...result, conclusion: normalizedConclusion };
+  const normalizedConclusionContract =
+    result.conclusionContract ||
+    deriveConclusionContract(normalizedConclusion, {
+      mode: result.rounds > 1 ? 'focused_answer' : 'initial_report',
+    }) ||
+    undefined;
+  const resultForClient =
+    normalizedConclusion === result.conclusion && normalizedConclusionContract === result.conclusionContract
+      ? result
+      : { ...result, conclusion: normalizedConclusion, conclusionContract: normalizedConclusionContract };
   const clientFindings = buildClientFindings(result.findings, session.scenes || []);
 
   // Generate HTML report
@@ -3129,6 +3137,7 @@ function sendAgentDrivenResult(res: express.Response, session: AnalysisSession) 
     console.log(`[AgentRoutes] Generating HTML report, data keys:`, {
       hasResult: !!result,
       conclusionLength: normalizedConclusion.length || 0,
+      hasConclusionContract: !!normalizedConclusionContract,
       findingsCount: result.findings?.length || 0,
       hypothesesCount: session.hypotheses?.length || 0,
       dialogueCount: session.agentDialogue?.length || 0,
@@ -3163,6 +3172,7 @@ function sendAgentDrivenResult(res: express.Response, session: AnalysisSession) 
     architecture: 'agent-driven',
     data: {
       conclusion: normalizedConclusion,
+      conclusionContract: normalizedConclusionContract,
       confidence: result.confidence,
       rounds: result.rounds,
       totalDurationMs: result.totalDurationMs,

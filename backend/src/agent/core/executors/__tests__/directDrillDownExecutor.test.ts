@@ -205,6 +205,18 @@ describe('DirectDrillDownExecutor', () => {
     expect(skillIds).toEqual(['jank_frame_detail']);
   });
 
+  it('does not treat incidental core-like aspect tokens as cpu focus', async () => {
+    const executor = new DirectDrillDownExecutor(createFollowUpResolution(), services);
+    const ctx = createExecutionContext('分析 1435500 这个frame', ['scrolling_core_metrics', 'score']);
+
+    await executor.execute(ctx, emitter);
+
+    const tasks = mockExecuteTasks.mock.calls[0][0] as any[];
+    const skillIds = extractSkillIdsFromTasks(tasks);
+
+    expect(skillIds).toEqual(['jank_frame_detail']);
+  });
+
   it('refreshes jank summary from current drill-down scope', async () => {
     const responseWithMechanism = createMockResponse({
       toolResults: [

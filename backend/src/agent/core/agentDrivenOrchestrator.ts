@@ -68,7 +68,7 @@ import {
 import type { Hypothesis } from '../types/agentProtocol';
 import { understandIntent } from './intentUnderstanding';
 import { generateInitialHypotheses, translateFollowUpType } from './hypothesisGenerator';
-import { generateConclusion } from './conclusionGenerator';
+import { deriveConclusionContract, generateConclusion } from './conclusionGenerator';
 import { StrategyExecutor } from './executors/strategyExecutor';
 import { HypothesisExecutor } from './executors/hypothesisExecutor';
 import { DirectDrillDownExecutor } from './executors/directDrillDownExecutor';
@@ -711,15 +711,33 @@ export class AgentDrivenOrchestrator extends EventEmitter {
 
       // 9. Generate conclusion
       emitter.emitUpdate('progress', { phase: 'concluding', message: '生成分析结论' });
+      const conclusionHistoryBudget = mergedFindings.length > 24
+        ? 380
+        : mergedFindings.length > 12
+          ? 500
+          : 600;
       const conclusion = await generateConclusion(
         sharedContext, mergedFindings, intent,
         this.modelRouter, emitter, executorResult.stopReason || undefined, {
           turnCount,
           // Always provide compact context so conclusion can cite current-turn evidence digests too.
           // (Turn 1 has no turns yet, but TraceAgentState evidence/experiments already exist.)
-          historyContext: sessionContext.generatePromptContext(600),
+          historyContext: sessionContext.generatePromptContext(conclusionHistoryBudget),
         }
       );
+      const singleFrameRefs = (intent.referencedEntities || [])
+        .filter((entity: any) => entity?.type === 'frame').length;
+      const isSingleFrameDrillDown =
+        intent.followUpType === 'drill_down' &&
+        (
+          singleFrameRefs === 1 ||
+          intent.extractedParams?.frame_id !== undefined ||
+          intent.extractedParams?.frameId !== undefined
+        );
+      const conclusionContract = deriveConclusionContract(conclusion, {
+        mode: turnCount >= 1 ? 'focused_answer' : 'initial_report',
+        singleFrameDrillDown: isSingleFrameDrillDown,
+      }) || undefined;
 
       emitter.emitUpdate('conclusion', {
         sessionId,
@@ -735,6 +753,7 @@ export class AgentDrivenOrchestrator extends EventEmitter {
         findings: mergedFindings,
         hypotheses: Array.from(sharedContext.hypotheses.values()),
         conclusion,
+        conclusionContract,
         confidence: executorResult.confidence,
         rounds: executorResult.rounds,
         totalDurationMs: Date.now() - startTime,

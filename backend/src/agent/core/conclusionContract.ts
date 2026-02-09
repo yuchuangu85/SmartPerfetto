@@ -1,0 +1,39 @@
+export type ConclusionOutputMode = 'initial_report' | 'focused_answer' | 'need_input';
+
+export interface ConclusionContractConclusionItem {
+  rank: number;
+  statement: string;
+  confidencePercent?: number;
+  trigger?: string;
+  supply?: string;
+  amplification?: string;
+}
+
+export interface ConclusionContractClusterItem {
+  cluster: string;
+  description?: string;
+  frames?: number;
+  percentage?: number;
+}
+
+export interface ConclusionContractEvidenceItem {
+  conclusionId: string;
+  text: string;
+}
+
+export interface ConclusionContractMetadata {
+  confidencePercent?: number;
+  rounds?: number;
+}
+
+export interface ConclusionContract {
+  schemaVersion: 'conclusion_contract_v1';
+  mode: ConclusionOutputMode;
+  conclusions: ConclusionContractConclusionItem[];
+  clusters: ConclusionContractClusterItem[];
+  evidenceChain: ConclusionContractEvidenceItem[];
+  uncertainties: string[];
+  nextSteps: string[];
+  metadata?: ConclusionContractMetadata;
+}
+

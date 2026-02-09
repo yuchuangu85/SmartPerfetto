@@ -31,6 +31,7 @@ import type { FocusInterval } from '../strategies/types';
 import type { AdbCollaborationConfig, AdbContext } from '../../services/adb';
 import type { IncrementalScope } from './incrementalAnalyzer';
 import type { EnhancedSessionContext } from '../context/enhancedSessionContext';
+import type { ConclusionContract } from './conclusionContract';
 
 // =============================================================================
 // Agent ID Constants
@@ -153,6 +154,7 @@ export interface AnalysisResult {
   findings: Finding[];
   hypotheses: Hypothesis[];
   conclusion: string;
+  conclusionContract?: ConclusionContract;
   confidence: number;
   rounds: number;
   totalDurationMs: number;

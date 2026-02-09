@@ -17,7 +17,12 @@ export { HypothesisExecutor } from './executors/hypothesisExecutor';
 // Orchestrator sub-modules
 export { understandIntent } from './intentUnderstanding';
 export { generateInitialHypotheses, generateDefaultHypotheses, createHypothesis } from './hypothesisGenerator';
-export { generateConclusion, generateSimpleConclusion } from './conclusionGenerator';
+export {
+  generateConclusion,
+  generateSimpleConclusion,
+  deriveConclusionContract,
+  renderConclusionContractMarkdown,
+} from './conclusionGenerator';
 export { executeTaskGraph, emitDataEnvelopes } from './taskGraphExecutor';
 export { synthesizeFeedback } from './feedbackSynthesizer';
 export { planTaskGraph, buildTasksFromGraph, parseTimeRange, resolveAgentIdForDomain } from './taskGraphPlanner';
@@ -54,6 +59,14 @@ export type {
   TaskGraphNode,
   TaskGraphPlan,
 } from './orchestratorTypes';
+export type {
+  ConclusionContract,
+  ConclusionOutputMode,
+  ConclusionContractConclusionItem,
+  ConclusionContractClusterItem,
+  ConclusionContractEvidenceItem,
+  ConclusionContractMetadata,
+} from './conclusionContract';
 export {
   AGENT_IDS,
   DEFAULT_CONFIG,

@@ -499,6 +499,7 @@ export interface AnalysisCompletedEvent {
   type: 'analysis_completed';
   data: {
     summary: string;
+    conclusionContract?: unknown;
     reportUrl?: string;
     findings: DiagnosticFinding[];
     suggestions: string[];

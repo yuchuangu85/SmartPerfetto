@@ -39,6 +39,7 @@ jest.mock('../hypothesisGenerator', () => ({
 
 jest.mock('../conclusionGenerator', () => ({
   generateConclusion: jest.fn(),
+  deriveConclusionContract: jest.fn().mockReturnValue(null),
 }));
 
 jest.mock('../followUpHandler', () => ({
