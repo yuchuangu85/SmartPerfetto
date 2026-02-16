@@ -23,6 +23,7 @@
     "skill:list": "tsx src/cli/index.ts list",
     "test:scrolling": "tsx src/scripts/runScrollingTest.ts",
     "test:scrolling:real": "tsx src/scripts/runScrollingTestRealData.ts",
+    "verify:agent-sse-scrolling": "tsx src/scripts/verifyAgentSseScrolling.ts",
     "generate-types": "tsx scripts/generate-skill-types.ts",
     "sync-types": "tsx scripts/sync-types-to-frontend.ts",
     "generate:frontend-types": "tsx scripts/generateFrontendTypes.ts",

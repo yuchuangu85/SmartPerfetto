@@ -454,6 +454,10 @@ export abstract class BaseAgent extends EventEmitter {
    */
   protected async plan(understanding: TaskUnderstanding, task: AgentTask): Promise<ExecutionPlan> {
     const prompt = this.buildPlanningPrompt(understanding, task);
+    const focusedTools = this.resolveToolsForTask(task.context);
+    const hasToolFocus = Array.isArray((task.context.additionalData as any)?.focusTools)
+      && (task.context.additionalData as any).focusTools.length > 0;
+    const focusedToolSet = new Set(focusedTools);
 
     const response = await this.modelRouter.callWithFallback(prompt, 'planning', {
       sessionId: this.sharedContext?.sessionId,
@@ -478,6 +482,7 @@ export abstract class BaseAgent extends EventEmitter {
           // get re-assigned but dependsOn values aren't updated.
         }))
         .filter((step: any) => step.toolName && this.tools.has(step.toolName))
+        .filter((step: any) => !hasToolFocus || focusedToolSet.has(step.toolName))
         // Deduplicate tools: LLM may return duplicate tool calls which cause redundant execution.
         // Keep the first occurrence of each tool (preserves LLM's priority order).
         .filter((step: any, index: number, self: any[]) =>
@@ -485,11 +490,15 @@ export abstract class BaseAgent extends EventEmitter {
         );
 
       if (plannedSteps.length === 0) {
-        const fallbackTools = understanding.recommendedTools.length > 0
+        const recommendedTools = understanding.recommendedTools.length > 0
           ? understanding.recommendedTools
-          : this.resolveToolsForTask(task.context);
+          : focusedTools;
+        const fallbackTools = hasToolFocus
+          ? recommendedTools.filter((toolName: string) => focusedToolSet.has(toolName))
+          : recommendedTools;
+        const finalFallbackTools = fallbackTools.length > 0 ? fallbackTools : focusedTools;
         return {
-          steps: fallbackTools.map((toolName, i) => ({
+          steps: finalFallbackTools.map((toolName, i) => ({
             stepNumber: i + 1,
             toolName,
             params: {},
@@ -516,7 +525,7 @@ export abstract class BaseAgent extends EventEmitter {
 
     // Fallback to using recommended tools
     return {
-      steps: understanding.recommendedTools.map((toolName, i) => ({
+      steps: focusedTools.map((toolName, i) => ({
         stepNumber: i + 1,
         toolName,
         params: {},
