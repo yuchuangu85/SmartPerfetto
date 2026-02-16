@@ -94,3 +94,105 @@ describe('BaseAgent - synthesize summary to findings', () => {
   });
 });
 
+describe('BaseAgent - focusTools constrained planning', () => {
+  const config: AgentConfig = {
+    id: 'test_agent',
+    name: 'Test Agent',
+    domain: 'test',
+    description: 'test',
+    tools: [
+      {
+        name: 'analyze_scrolling',
+        description: 'Analyze scrolling',
+        category: 'frame',
+        execute: async () => ({ success: true, data: {} }),
+      } as any,
+      {
+        name: 'game_fps_analysis',
+        description: 'Analyze game fps',
+        category: 'frame',
+        execute: async () => ({ success: true, data: {} }),
+      } as any,
+    ],
+    maxIterations: 1,
+    confidenceThreshold: 0.5,
+    canDelegate: false,
+  };
+
+  function createTask(additionalData: Record<string, any>): any {
+    return {
+      id: 'task-1',
+      description: 'test task',
+      priority: 'high',
+      requiredCapabilities: [],
+      context: {
+        currentFindings: [],
+        previousActions: [],
+        timeRange: undefined,
+        processInfo: undefined,
+        additionalData,
+      },
+    };
+  }
+
+  test('filters LLM-planned tools to focusTools', async () => {
+    const modelRouter = {
+      callWithFallback: jest.fn().mockResolvedValue({
+        response: JSON.stringify({
+          steps: [
+            { toolName: 'game_fps_analysis', purpose: 'wrong tool' },
+            { toolName: 'analyze_scrolling', purpose: 'right tool' },
+          ],
+          expectedOutcomes: ['outcome'],
+          estimatedTimeMs: 1000,
+          confidence: 0.8,
+        }),
+      }),
+    } as any;
+
+    const agent = new TestAgent(config, modelRouter);
+    const plan = await (agent as any).plan(
+      {
+        objective: 'analyze scrolling',
+        questions: [],
+        relevantAreas: ['frame'],
+        recommendedTools: ['game_fps_analysis', 'analyze_scrolling'],
+        constraints: [],
+        confidence: 0.9,
+      },
+      createTask({ focusTools: ['analyze_scrolling'] })
+    );
+
+    expect(plan.steps).toHaveLength(1);
+    expect(plan.steps[0].toolName).toBe('analyze_scrolling');
+  });
+
+  test('falls back to focused tools when LLM plan contains only non-focused tools', async () => {
+    const modelRouter = {
+      callWithFallback: jest.fn().mockResolvedValue({
+        response: JSON.stringify({
+          steps: [{ toolName: 'game_fps_analysis', purpose: 'wrong tool' }],
+          expectedOutcomes: ['outcome'],
+          estimatedTimeMs: 1000,
+          confidence: 0.8,
+        }),
+      }),
+    } as any;
+
+    const agent = new TestAgent(config, modelRouter);
+    const plan = await (agent as any).plan(
+      {
+        objective: 'analyze scrolling',
+        questions: [],
+        relevantAreas: ['frame'],
+        recommendedTools: ['game_fps_analysis'],
+        constraints: [],
+        confidence: 0.9,
+      },
+      createTask({ focusTools: ['analyze_scrolling'] })
+    );
+
+    expect(plan.steps).toHaveLength(1);
+    expect(plan.steps[0].toolName).toBe('analyze_scrolling');
+  });
+});

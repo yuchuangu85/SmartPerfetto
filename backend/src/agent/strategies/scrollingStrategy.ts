@@ -391,6 +391,7 @@ const overviewStage: StageDefinition = {
       scope: 'global',
       priority: 1,
       evidenceNeeded: ['scroll sessions', 'fps', 'jank types distribution', 'session jank stats'],
+      focusTools: ['analyze_scrolling'],
       skillParams: { enable_frame_details: false },
       descriptionTemplate: '阶段 1/3：先定位滑动区间与掉帧概况（输出 FPS/掉帧率/区间掉帧统计；不需要逐帧列表和逐帧详情）。',
     },
@@ -425,6 +426,7 @@ const sessionOverviewStage: StageDefinition = {
       scope: 'per_interval',
       priority: 1,
       evidenceNeeded: ['session frame rate', 'jank frame count', 'jank frame list with timestamps'],
+      focusTools: ['analyze_scrolling'],
       skillParams: {
         enable_frame_details: false,
         max_frames_per_session: DEFAULT_CLUSTERING_MAX_FRAMES_PER_SESSION,
