@@ -71,10 +71,8 @@ const DEFAULT_CONFIG: MessageBusConfig = {
  * Pending message entry
  */
 interface PendingMessage {
-  message: AgentMessage;
-  resolve: (response: any) => void;
-  reject: (error: Error) => void;
-  timeoutId: NodeJS.Timeout;
+  task: AgentTask;
+  enqueuedAt: number;
 }
 
 class TaskTimeoutError extends Error {
@@ -142,7 +140,7 @@ export class AgentMessageBus extends EventEmitter {
   private config: MessageBusConfig;
   private agents: Map<string, BaseAgent> = new Map();
   private pendingMessages: Map<string, PendingMessage> = new Map();
-  private messageQueue: AgentMessage[] = [];
+  private messageQueue: string[] = [];
   private sharedContext: SharedAgentContext | null = null;
   private isProcessing: boolean = false;
   private taskSemaphore: Semaphore;
@@ -274,15 +272,39 @@ export class AgentMessageBus extends EventEmitter {
       throw new Error('Shared context not initialized. Call createSharedContext() first.');
     }
 
-    // Wait for semaphore (proper async concurrency limiting)
-    await this.taskSemaphore.acquire();
+    if (this.pendingMessages.size >= this.config.maxPendingMessages) {
+      const reason = `Task queue limit exceeded (${this.pendingMessages.size}/${this.config.maxPendingMessages})`;
+      this.log(`[Backpressure] Rejected task ${task.id} for ${task.targetAgentId}: ${reason}`);
+      this.emit('task_rejected', {
+        taskId: task.id,
+        agentId: task.targetAgentId,
+        reason,
+      });
+      return this.buildRejectedResponse(task, reason);
+    }
+
+    this.pendingMessages.set(task.id, {
+      task,
+      enqueuedAt: Date.now(),
+    });
+    this.messageQueue.push(task.id);
+    this.isProcessing = true;
+
+    let globalPermit = false;
+    let agentPermit = false;
     const agentSemaphore = this.perAgentSemaphore.get(task.targetAgentId) || new Semaphore(1);
     this.perAgentSemaphore.set(task.targetAgentId, agentSemaphore);
-    await agentSemaphore.acquire();
-    this.log(`Dispatching task ${task.id} to ${task.targetAgentId}`);
-    const dispatchStartedAt = Date.now();
 
     try {
+      // Wait for semaphore (proper async concurrency limiting)
+      await this.taskSemaphore.acquire();
+      globalPermit = true;
+      await agentSemaphore.acquire();
+      agentPermit = true;
+
+      this.log(`Dispatching task ${task.id} to ${task.targetAgentId}`);
+      const dispatchStartedAt = Date.now();
+
       this.emit('task_dispatched', { taskId: task.id, agentId: task.targetAgentId });
 
       // Ensure shared context is set on agent
@@ -308,8 +330,16 @@ export class AgentMessageBus extends EventEmitter {
 
       return response;
     } finally {
-      agentSemaphore.release();
-      this.taskSemaphore.release();
+      if (agentPermit) {
+        agentSemaphore.release();
+      }
+      if (globalPermit) {
+        this.taskSemaphore.release();
+      }
+
+      this.pendingMessages.delete(task.id);
+      this.messageQueue = this.messageQueue.filter((id) => id !== task.id);
+      this.isProcessing = this.pendingMessages.size > 0;
     }
   }
 
@@ -509,10 +539,6 @@ export class AgentMessageBus extends EventEmitter {
    */
   reset(): void {
     // Clear pending messages
-    for (const pending of this.pendingMessages.values()) {
-      clearTimeout(pending.timeoutId);
-      pending.reject(new Error('Message bus reset'));
-    }
     this.pendingMessages.clear();
 
     // Clear queue
@@ -592,6 +618,29 @@ export class AgentMessageBus extends EventEmitter {
           executionTimeMs: elapsedMs,
           metadata: {
             timeoutMs: error instanceof TaskTimeoutError ? error.timeoutMs : undefined,
+          },
+        },
+      ],
+    };
+  }
+
+  private buildRejectedResponse(task: AgentTask, reason: string): AgentResponse {
+    return {
+      agentId: task.targetAgentId,
+      taskId: task.id,
+      success: false,
+      findings: [],
+      confidence: 0,
+      executionTimeMs: 0,
+      suggestions: [reason],
+      toolResults: [
+        {
+          success: false,
+          error: reason,
+          executionTimeMs: 0,
+          metadata: {
+            rejected: true,
+            maxPendingMessages: this.config.maxPendingMessages,
           },
         },
       ],
