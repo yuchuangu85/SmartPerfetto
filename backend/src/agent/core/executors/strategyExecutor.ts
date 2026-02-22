@@ -108,6 +108,7 @@ export class StrategyExecutor implements AnalysisExecutor {
     for (let i = 0; i < this.strategy.stages.length; i++) {
       const stage = this.strategy.stages[i];
       state.currentStageIndex = i;
+      const stageCircuitId = `strategy:${this.strategy.id}:${stage.name}`;
 
       const skipDecision = shouldSkipStageForPrebuilt(stage, {
         hasPrebuiltContext: prebuilt.hasPrebuiltContext,
@@ -124,6 +125,28 @@ export class StrategyExecutor implements AnalysisExecutor {
           skipReason: skipDecision.reason,
         });
         continue;
+      }
+
+      const preflightDecision = this.services.circuitBreaker.canExecute();
+      if (preflightDecision.action === 'ask_user') {
+        stopReason = preflightDecision.reason || `Circuit breaker blocked strategy stage: ${stage.name}`;
+        emitter.log(`[CircuitBreaker] ${stopReason}`);
+        emitter.emitUpdate('circuit_breaker', {
+          agentId: stageCircuitId,
+          reason: stopReason,
+        });
+        break;
+      }
+
+      const iterationDecision = this.services.circuitBreaker.recordIteration(stageCircuitId);
+      if (iterationDecision.action === 'ask_user') {
+        stopReason = iterationDecision.reason || `Circuit breaker iteration budget reached: ${stage.name}`;
+        emitter.log(`[CircuitBreaker] ${stopReason}`);
+        emitter.emitUpdate('circuit_breaker', {
+          agentId: stageCircuitId,
+          reason: stopReason,
+        });
+        break;
       }
 
       if (rounds >= hardMaxRounds) {
