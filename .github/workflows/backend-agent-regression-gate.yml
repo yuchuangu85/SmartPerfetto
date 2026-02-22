@@ -1,0 +1,39 @@
+name: backend-agent-regression-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "test-traces/**"
+      - ".github/workflows/backend-agent-regression-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "test-traces/**"
+      - ".github/workflows/backend-agent-regression-gate.yml"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "backend/package-lock.json"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run agent regression gate
+        run: npm run test:gate
