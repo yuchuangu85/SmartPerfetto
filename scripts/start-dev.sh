@@ -7,25 +7,108 @@
 #   ./start-dev.sh --quick   # Skip build, just start services
 #   ./start-dev.sh --clean   # Clean old logs before starting
 
-set -e
-set -o pipefail  # 【S1 Fix】确保管道中的命令失败能被正确检测
+set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOGS_DIR="$PROJECT_ROOT/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SKIP_BUILD=false
 CLEAN_LOGS=false
+BACKEND_PID=""
+FRONTEND_PID=""
+
+require_command() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "ERROR: required command '$cmd' is not installed."
+    exit 1
+  fi
+}
+
+kill_pid_and_children() {
+  local pid="$1"
+  local name="$2"
+  if [ -z "${pid:-}" ]; then
+    return 0
+  fi
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+
+  echo "Stopping $name (PID: $pid)..."
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  kill "$pid" 2>/dev/null || true
+  sleep 1
+
+  if kill -0 "$pid" 2>/dev/null; then
+    pkill -KILL -P "$pid" 2>/dev/null || true
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+}
+
+kill_processes_on_port() {
+  local port="$1"
+  local pids
+  pids=$(lsof -ti:"$port" 2>/dev/null || true)
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+
+  echo "Stopping processes on port $port: $pids"
+  echo "$pids" | xargs kill 2>/dev/null || true
+  sleep 1
+
+  pids=$(lsof -ti:"$port" 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+  fi
+}
+
+start_with_logs() {
+  local tag="$1"
+  local log_file="$2"
+  shift 2
+
+  "$@" > >(
+    tee -a "$log_file" | sed "s/^/[$tag] /" | tee -a "$COMBINED_LOG"
+  ) 2>&1 &
+  echo "$!"
+}
+
+cleanup() {
+  local code="${1:-0}"
+  trap - EXIT SIGINT SIGTERM
+
+  echo ""
+  echo "Shutting down services..."
+  kill_pid_and_children "$BACKEND_PID" "backend"
+  kill_pid_and_children "$FRONTEND_PID" "frontend"
+
+  # Clean up any child processes
+  pkill -f "tsc.*perfetto.*watch" 2>/dev/null || true
+  pkill -f "rollup.*perfetto.*watch" 2>/dev/null || true
+  pkill -f "node.*perfetto/ui/build.js" 2>/dev/null || true
+
+  # Remove PID files
+  rm -f "$PROJECT_ROOT/.backend.pid" "$PROJECT_ROOT/.frontend.pid" 2>/dev/null || true
+
+  echo "Cleanup complete."
+  exit "$code"
+}
+
+on_exit() {
+  local code=$?
+  cleanup "$code"
+}
 
 # Parse arguments
-for arg in "$@"; do
-  case $arg in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --quick|-q)
       SKIP_BUILD=true
-      shift
       ;;
     --clean|-c)
       CLEAN_LOGS=true
-      shift
       ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
@@ -36,7 +119,13 @@ for arg in "$@"; do
       echo "  --help, -h     Show this help message"
       exit 0
       ;;
+    *)
+      echo "ERROR: unknown option '$1'"
+      echo "Use --help to see available options."
+      exit 1
+      ;;
   esac
+  shift
 done
 
 # Create logs directory
@@ -73,12 +162,26 @@ UI_DIR="$PERFETTO_DIR/ui"
 
 # Environment check
 echo "Checking environment..."
-command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required but not installed."; exit 1; }
+require_command python3
+require_command npm
+require_command curl
+require_command lsof
+require_command pkill
 
 # Verify Perfetto's bundled tools exist
-if [ ! -f "$PERFETTO_PNPM" ]; then
+if [ ! -x "$PERFETTO_PNPM" ]; then
   echo "ERROR: Perfetto's bundled pnpm not found at $PERFETTO_PNPM"
   echo "       Is the perfetto submodule initialized? Try: git submodule update --init"
+  exit 1
+fi
+if [ ! -x "$PERFETTO_NODE" ]; then
+  echo "ERROR: Perfetto's bundled node not found at $PERFETTO_NODE"
+  echo "       Is the perfetto submodule initialized? Try: git submodule update --init"
+  exit 1
+fi
+if [ ! -x "$UI_DIR/run-dev-server" ]; then
+  echo "ERROR: frontend runner not found at $UI_DIR/run-dev-server"
+  echo "       Sync the perfetto submodule and ensure scripts are executable."
   exit 1
 fi
 
@@ -90,7 +193,7 @@ validate_ui_lockfile() {
     return 1
   fi
   local version
-  version=$(head -1 "$lockfile" | grep -o "'[^']*'" | tr -d "'")
+  version=$(awk -F: '/^[[:space:]]*lockfileVersion[[:space:]]*:/ { v=$2; gsub(/[[:space:]'\''"]/, "", v); print v; exit }' "$lockfile")
   if [ "$version" != "6.0" ]; then
     echo "=============================================="
     echo "ERROR: UI pnpm-lock.yaml has incompatible format!"
@@ -222,32 +325,14 @@ fi
 # 【S4 Fix】Ensure data directories exist
 mkdir -p "$PROJECT_ROOT/backend/data/sessions"
 
-# Cleanup function for graceful exit
-cleanup() {
-  echo ""
-  echo "Shutting down services..."
-  [ -n "$BACKEND_PID" ] && kill $BACKEND_PID 2>/dev/null || true
-  [ -n "$FRONTEND_PID" ] && kill $FRONTEND_PID 2>/dev/null || true
-
-  # Clean up any child processes
-  pkill -f "tsc.*perfetto.*watch" 2>/dev/null || true
-  pkill -f "rollup.*perfetto.*watch" 2>/dev/null || true
-  pkill -f "node.*perfetto/ui/build.js" 2>/dev/null || true
-
-  # Remove PID files
-  rm -f "$PROJECT_ROOT/.backend.pid" "$PROJECT_ROOT/.frontend.pid" 2>/dev/null || true
-
-  echo "Cleanup complete."
-  exit 0
-}
-
 # Trap Ctrl+C and other termination signals
-trap cleanup SIGINT SIGTERM
+trap on_exit EXIT
+trap 'cleanup 130' SIGINT SIGTERM
 
 # Kill existing processes on ports 3000 and 10000
 echo "Stopping existing processes..."
-lsof -ti:3000 | xargs kill -9 2>/dev/null || true
-lsof -ti:10000 | xargs kill -9 2>/dev/null || true
+kill_processes_on_port 3000
+kill_processes_on_port 10000
 
 # Kill any zombie tsc/rollup watch processes from previous runs
 echo "Cleaning up zombie watch processes..."
@@ -312,8 +397,7 @@ if [ "$SKIP_BUILD" = false ]; then
   # Build backend
   echo "Building backend..."
   cd "$PROJECT_ROOT/backend"
-  npm run build 2>&1 | tee -a "$BACKEND_LOG"
-  if [ $? -ne 0 ]; then
+  if ! npm run build 2>&1 | tee -a "$BACKEND_LOG"; then
     echo "Backend build failed!"
     exit 1
   fi
@@ -371,14 +455,13 @@ fi
 # Start backend
 echo "Starting backend..."
 cd "$PROJECT_ROOT/backend"
-npm run dev 2>&1 | tee "$BACKEND_LOG" | sed 's/^/[BACKEND] /' | tee -a "$COMBINED_LOG" &
-BACKEND_PID=$!
+BACKEND_PID=$(start_with_logs "BACKEND" "$BACKEND_LOG" npm run dev)
 
 # Wait for backend to start and verify health
 echo "Waiting for backend to start..."
 BACKEND_READY=false
 for i in {1..30}; do
-  if curl -s http://localhost:3000/health >/dev/null 2>&1; then
+  if curl -fsS http://localhost:3000/health >/dev/null 2>&1; then
     BACKEND_READY=true
     echo "Backend is ready! (took ${i}s)"
     break
@@ -393,8 +476,7 @@ fi
 # Start frontend (uses Perfetto's bundled node via run-dev-server)
 echo "Starting frontend..."
 cd "$UI_DIR"
-./run-dev-server 2>&1 | tee "$FRONTEND_LOG" | sed 's/^/[FRONTEND] /' | tee -a "$COMBINED_LOG" &
-FRONTEND_PID=$!
+FRONTEND_PID=$(start_with_logs "FRONTEND" "$FRONTEND_LOG" ./run-dev-server)
 
 # Wait for frontend to start and verify health
 echo "Waiting for frontend to start..."
