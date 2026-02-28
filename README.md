@@ -222,7 +222,7 @@ Logs are stored in `backend/logs/sessions/*.jsonl`.
 git submodule update --init --recursive
 
 # Sync updates
-cd perfetto && git checkout smartperfetto && git pull fork smartperfetto
+cd perfetto && git checkout smartperfetto && git pull origin smartperfetto
 
 # Push both repos
 ./scripts/push-all.sh
