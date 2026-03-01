@@ -18,6 +18,7 @@ import { ExtendExecutor } from '../operations/extendExecutor';
 import type { FocusStore } from '../../agent/context/focusStore';
 import type { FollowUpResolution } from '../../agent/core/followUpHandler';
 import type { PreparedRuntimeContext } from './runtimeContextBuilder';
+import { type ExtendedSqlKnowledgeBase, getExtendedKnowledgeBase } from '../../services/sqlKnowledgeBase';
 
 interface RuntimeExecutionFactoryInput {
   modelRouter: ModelRouter;
@@ -25,6 +26,7 @@ interface RuntimeExecutionFactoryInput {
   agentRegistry: DomainAgentRegistry;
   circuitBreaker: CircuitBreaker;
   focusStore: FocusStore;
+  knowledgeBase?: ExtendedSqlKnowledgeBase;
 }
 
 export class RuntimeExecutionFactory {
@@ -33,6 +35,7 @@ export class RuntimeExecutionFactory {
   private readonly agentRegistry: DomainAgentRegistry;
   private readonly circuitBreaker: CircuitBreaker;
   private readonly focusStore: FocusStore;
+  private readonly knowledgeBase?: ExtendedSqlKnowledgeBase;
 
   constructor(input: RuntimeExecutionFactoryInput) {
     this.modelRouter = input.modelRouter;
@@ -40,9 +43,10 @@ export class RuntimeExecutionFactory {
     this.agentRegistry = input.agentRegistry;
     this.circuitBreaker = input.circuitBreaker;
     this.focusStore = input.focusStore;
+    this.knowledgeBase = input.knowledgeBase;
   }
 
-  createExecutionServices(): AnalysisServices {
+  async createExecutionServices(): Promise<AnalysisServices> {
     const messageBus = createAgentMessageBus({
       maxConcurrentTasks: this.runtimeConfig.maxConcurrentTasks,
       messageTimeoutMs: this.runtimeConfig.taskTimeoutMs ?? DEFAULT_CONFIG.taskTimeoutMs ?? 180000,
@@ -53,11 +57,22 @@ export class RuntimeExecutionFactory {
       messageBus.registerAgent(agent);
     }
 
+    // Resolve knowledge base: use injected instance, or lazily initialize singleton
+    let knowledgeBase = this.knowledgeBase;
+    if (!knowledgeBase) {
+      try {
+        knowledgeBase = await getExtendedKnowledgeBase();
+      } catch {
+        // Non-critical: analysis works without schema context
+      }
+    }
+
     return {
       modelRouter: this.modelRouter,
       messageBus,
       circuitBreaker: this.circuitBreaker,
       emittedEnvelopeRegistry: createEmittedEnvelopeRegistry(),
+      knowledgeBase,
     };
   }
 

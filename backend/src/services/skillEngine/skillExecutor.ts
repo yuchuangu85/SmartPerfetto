@@ -34,6 +34,7 @@ import {
 import logger from '../../utils/logger';
 import { parseLlmJson } from '../../utils/llmJson';
 import { redactObjectForLLM, redactTextForLLM } from '../../utils/llmPrivacy';
+import { SQLLearningSystem } from '../sqlLearningSystem';
 import { getPipelineDocService } from '../pipelineDocService';
 import {
   ensurePipelineSkillsInitialized,
@@ -993,6 +994,7 @@ export class SkillExecutor {
   private aiService: any;  // AI 服务（用于 ai_decision, ai_summary）
   private skillRegistry: Map<string, SkillDefinition>;
   private eventEmitter?: (event: SkillEvent) => void;
+  private sqlLearningSystem?: SQLLearningSystem;
 
   constructor(
     traceProcessor: any,
@@ -1003,6 +1005,18 @@ export class SkillExecutor {
     this.aiService = aiService;
     this.eventEmitter = eventEmitter;
     this.skillRegistry = new Map();
+  }
+
+  /**
+   * 获取 SQL 学习系统实例（懒初始化单例）
+   */
+  private async getSQLLearningSystem(): Promise<SQLLearningSystem> {
+    if (!this.sqlLearningSystem) {
+      const logDir = process.env.SQL_LEARNING_LOG_DIR || './logs/sql_learning';
+      this.sqlLearningSystem = new SQLLearningSystem(logDir);
+    }
+    await this.sqlLearningSystem.init();
+    return this.sqlLearningSystem;
   }
 
   /**
@@ -1770,11 +1784,8 @@ export class SkillExecutor {
       context
     );
 
-
     try {
       const result = await this.traceProcessor.query(context.traceId, sql);
-
-      // Debug log removed for cleaner output
 
       if (result.error) {
         if (step.optional) {
@@ -1786,6 +1797,16 @@ export class SkillExecutor {
             executionTimeMs: Date.now() - startTime,
           };
         }
+
+        // 尝试通过 SQL 学习系统修复
+        const repairResult = await this.attemptSQLRepair(sql, result.error, step, context);
+        if (repairResult) {
+          return {
+            ...repairResult,
+            executionTimeMs: Date.now() - startTime,
+          };
+        }
+
         return {
           stepId: step.id,
           stepType: 'atomic',
@@ -1796,8 +1817,6 @@ export class SkillExecutor {
       }
 
       const data = this.rowsToObjects(result.columns, result.rows);
-      if (data.length > 0) {
-      }
 
       return {
         stepId: step.id,
@@ -1817,7 +1836,89 @@ export class SkillExecutor {
           executionTimeMs: Date.now() - startTime,
         };
       }
+
+      // 尝试通过 SQL 学习系统修复
+      const repairResult = await this.attemptSQLRepair(
+        sql, error.message, step, context
+      );
+      if (repairResult) {
+        return {
+          ...repairResult,
+          executionTimeMs: Date.now() - startTime,
+        };
+      }
+
       throw error;
+    }
+  }
+
+  /**
+   * 尝试通过 SQL 学习系统修复失败的 SQL
+   *
+   * 闭环流程: 记录错误 → 应用已知规则 → 验证 → 执行 → 更新规则置信度
+   * 成功修复后返回 StepResult，失败返回 null（回退到原有错误处理）
+   */
+  private async attemptSQLRepair(
+    failedSQL: string,
+    errorMessage: string,
+    step: AtomicStep,
+    context: SkillExecutionContext
+  ): Promise<Omit<StepResult, 'executionTimeMs'> | null> {
+    try {
+      const learning = await this.getSQLLearningSystem();
+
+      const fixResult = await learning.fixSQL(
+        failedSQL,
+        errorMessage,
+        `skill_step:${step.id}`,
+        // validator: 基本语法检查（SQL 不为空且与原 SQL 不同）
+        (candidateSQL: string) => {
+          const errors: string[] = [];
+          if (!candidateSQL.trim()) errors.push('Empty SQL');
+          if (candidateSQL.trim() === failedSQL.trim()) errors.push('Same as original');
+          return { isValid: errors.length === 0, errors };
+        },
+        // executor: 实际执行修正后的 SQL 验证
+        async (candidateSQL: string) => {
+          try {
+            const result = await this.traceProcessor.query(context.traceId, candidateSQL);
+            if (result?.error) {
+              return { ok: false, error: result.error };
+            }
+            return { ok: true };
+          } catch (execError: any) {
+            return { ok: false, error: execError?.message || String(execError) };
+          }
+        }
+      );
+
+      if (!fixResult.success || !fixResult.fixedSQL || fixResult.fixedSQL.trim() === failedSQL.trim()) {
+        return null;
+      }
+
+      // 修复成功 — 用修正后的 SQL 重新查询并返回结果
+      logger.info(
+        'SkillExecutor',
+        `SQL repair succeeded for step "${step.id}" ` +
+        `(rules: ${fixResult.appliedRules.join(', ')}, method: ${fixResult.method})`
+      );
+
+      const reResult = await this.traceProcessor.query(context.traceId, fixResult.fixedSQL);
+      if (reResult.error) {
+        // 重新执行仍然失败（极少发生，因为 executor 已验证过）
+        return null;
+      }
+
+      const data = this.rowsToObjects(reResult.columns, reResult.rows);
+      return {
+        stepId: step.id,
+        stepType: 'atomic',
+        success: true,
+        data,
+      };
+    } catch {
+      // 学习系统本身出错不应阻塞主流程
+      return null;
     }
   }
 
@@ -3074,6 +3175,22 @@ export class SkillExecutor {
 
     const extractRowObject = (data: any): Record<string, any> | null => {
       if (!data) return null;
+
+      // Handle columnar format: { columns: string[], rows: any[][] }
+      // This is the DataEnvelope v2.0 format returned by trace_processor_shell.
+      if (
+        data.columns && Array.isArray(data.columns) &&
+        Array.isArray(data.rows) && data.rows.length > 0
+      ) {
+        const row: Record<string, any> = {};
+        const cols = data.columns as string[];
+        const firstRow = data.rows[0] as any[];
+        for (let i = 0; i < cols.length && i < firstRow.length; i++) {
+          row[cols[i]] = firstRow[i];
+        }
+        return row;
+      }
+
       if (Array.isArray(data) && data.length > 0) {
         const first = data[0];
         if (first && typeof first === 'object' && !Array.isArray(first)) {

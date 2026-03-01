@@ -196,6 +196,9 @@ export class SlidingWindowStrategy implements ICompactionStrategy {
 
   /**
    * 生成历史结果摘要文本
+   *
+   * 保留每轮分析的目标和关键结论，而不仅仅是统计数字。
+   * 这让 LLM 在后续轮次中能引用早期的具体发现。
    */
   private generateHistoricalSummary(
     results: StageResult[],
@@ -215,11 +218,26 @@ export class SlidingWindowStrategy implements ICompactionStrategy {
       summary += ` 总耗时: ${(duration / 1000).toFixed(1)}s。`;
     }
 
+    // 保留每轮的分析目标（primaryGoal）和关键结论
+    const roundSummaries: string[] = [];
+    for (const result of results) {
+      const goal = (result as any).primaryGoal || (result as any).description || '';
+      if (goal) {
+        roundSummaries.push(`- 轮次 ${result.stageId}: ${goal.slice(0, 120)}`);
+      }
+    }
+    if (roundSummaries.length > 0) {
+      summary += `\n各轮分析目标:\n${roundSummaries.join('\n')}`;
+    }
+
     return summary;
   }
 
   /**
    * 生成发现摘要文本
+   *
+   * 保留 top findings 的 title + description 摘要（不只是统计数字），
+   * 让 LLM 在后续轮次中能理解和引用具体的分析发现。
    */
   private generateFindingsSummary(
     findings: Finding[],
@@ -238,10 +256,27 @@ export class SlidingWindowStrategy implements ICompactionStrategy {
       summary += '。';
     }
 
+    // 保留 top findings 的具体内容（title + 截断的 description）
+    // 按 severity 优先级排序: critical > warning > info
+    const severityOrder: Record<string, number> = {
+      critical: 0, high: 1, warning: 2, medium: 3, low: 4, info: 5,
+    };
+    const sorted = [...findings].sort(
+      (a, b) => (severityOrder[a.severity] ?? 5) - (severityOrder[b.severity] ?? 5)
+    );
+    const topFindings = sorted.slice(0, 5);
+    if (topFindings.length > 0) {
+      summary += '\n关键发现摘要:\n';
+      summary += topFindings.map(f => {
+        const desc = f.description ? `: ${f.description.slice(0, 100)}` : '';
+        return `- [${f.severity}] ${f.title}${desc}`;
+      }).join('\n');
+    }
+
     // 列出主要问题类型（去重）
     const categories = [...new Set(findings.map(f => f.category).filter(Boolean))];
     if (categories.length > 0) {
-      summary += ` 涉及类别: ${categories.slice(0, 5).join(', ')}`;
+      summary += `\n涉及类别: ${categories.slice(0, 5).join(', ')}`;
       if (categories.length > 5) {
         summary += ` 等 ${categories.length} 个类别`;
       }

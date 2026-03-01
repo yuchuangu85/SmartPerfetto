@@ -108,7 +108,7 @@ describe('InitialModeHandler strategy fallback', () => {
       runtimeConfig,
       modelRouter: {} as any,
       executionFactory: {
-        createExecutionServices: () => ({
+        createExecutionServices: async () => ({
           modelRouter: {} as any,
           messageBus: {
             createSharedContext: () => ({ hypotheses: new Map() }),
@@ -236,7 +236,7 @@ describe('InitialModeHandler strategy fallback', () => {
       runtimeConfig,
       modelRouter: {} as any,
       executionFactory: {
-        createExecutionServices: () => ({
+        createExecutionServices: async () => ({
           modelRouter: {} as any,
           messageBus: {
             createSharedContext: () => ({ hypotheses: new Map() }),

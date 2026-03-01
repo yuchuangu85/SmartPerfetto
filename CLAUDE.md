@@ -35,7 +35,9 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 
 **Core Concepts:**
 - Frontend/backend share `trace_processor_shell` via HTTP RPC
-- **Dual-Executor Architecture:** Strategy-Driven (deterministic) + Hypothesis-Driven (adaptive)
+- **Dual-Layer Architecture:** agentv2 (governance + routing) wraps agent/core (execution)
+- **Dual-Executor Pattern:** Strategy-Driven (deterministic) + Hypothesis-Driven (adaptive)
+- **Governance Pipeline:** PrincipleEngine → OperationPlanner → SoulGuard → Execute
 - Domain Agents collect evidence via SQL queries
 - Analysis logic in YAML Skills (`backend/skills/`)
 - Results layered: L1 (overview) → L2 (list) → L3 (diagnosis) → L4 (deep)
@@ -45,12 +47,67 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 
 ## Backend Structure
 
-### Agent System (v6.0 - Conversation-Aware Architecture)
+### Runtime Layer (Primary Path): `backend/src/agentv2/`
+
+The real execution path goes through `agentv2/runtime/`, which wraps the older `agent/core/` executors with a governance layer.
+
+**Runtime:** `agentv2/runtime/`
+| Component | Purpose |
+|-----------|---------|
+| agentRuntime.ts | 主 entry point (API → 意图理解 → 治理流水线 → 模式路由) |
+| runtimeGovernancePipeline.ts | 治理流水线 (PrincipleEngine → Planner → SoulGuard → Execute) |
+| runtimeModeExecutor.ts | 根据 mode 路由到对应 handler |
+| runtimeModeContracts.ts | RuntimeModeHandler 接口定义 |
+| runtimeContextBuilder.ts | 构建 DecisionContext |
+| runtimeExecutionFactory.ts | 创建 AnalysisServices (含 knowledgeBase) |
+| runtimeResultFinalizer.ts | 结果后处理与结论生成 |
+| runtimeUpdateBridge.ts | SSE 事件转发 |
+| runtimeInitialExecutorSelector.ts | 选择 StrategyExecutor 或 HypothesisExecutor |
+
+**Mode Handlers:** `agentv2/runtime/modeHandlers/`
+| Handler | Modes | Description |
+|---------|-------|-------------|
+| initialModeHandler.ts | initial | 首次分析 (Strategy 匹配 → 执行器选择 → 回退机制) |
+| followUpModeHandler.ts | extend, compare, drill_down | 后续查询 (扩展/对比/深钻) |
+| clarifyModeHandler.ts | clarify | 澄清问题 (定向证据收集) |
+
+**Principles & Governance:** `agentv2/principles/`
+| Component | Purpose |
+|-----------|---------|
+| principleEngine.ts | 策略决策 (allow/deny/require_more_evidence/require_approval) |
+| principleRegistry.ts | 活跃原则管理 |
+| principleSchema.ts | 原则定义 schema |
+| policyCompiler.ts | 上下文 → 策略编译 |
+
+**Soul Guard:** `agentv2/soul/`
+| Component | Purpose |
+|-----------|---------|
+| soulGuard.ts | 操作计划完整性校验 (域边界/证据先行/可追溯/置信度诚实) |
+| soulProfile.ts | Android 域边界约束定义 |
+
+**Operations:** `agentv2/operations/`
+| Component | Purpose |
+|-----------|---------|
+| operationPlanner.ts | 分解分析为步骤序列 (collect → test → resolve → conclude) |
+| operationExecutor.ts | 执行计划，委托到 agent/core |
+| evidenceSynthesizer.ts | LLM 综合发现 |
+| approvalController.ts | 用户审批门控 |
+
+**Contracts:** `agentv2/contracts/`
+| Contract | Key Types |
+|----------|-----------|
+| runtime.ts | OperationMode, OperationPlan, OperationStep |
+| policy.ts | DecisionContext, PrincipleDecision, SoulViolation |
+| learning.ts | Learning contracts |
+
+### Agent Core (Delegated): `backend/src/agent/core/`
+
+The agent/core layer provides the actual analysis executors, delegated to by agentv2 mode handlers.
 
 **Core:** `backend/src/agent/core/`
 | Component | Purpose |
 |-----------|---------|
-| agentRuntime.ts | 主协调器 (策略匹配 → 执行器路由) |
+| agentRuntime.ts | Legacy 协调器 (被 agentv2 包装) |
 | circuitBreaker.ts | 熔断器，触发用户介入 |
 | modelRouter.ts | 多模型路由 (DeepSeek/OpenAI/Anthropic/GLM) |
 | stateMachine.ts | 状态机 (IDLE→PLANNING→HYPOTHESIS→ROUNDS→CONCLUSION) |
@@ -201,34 +258,38 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 ## Data Flow
 
 ```
-User Query → POST /api/agent/v1/analyze → AgentRuntime
+User Query → POST /api/agent/v1/analyze → agentv2/AgentRuntime
     │
-    ├─ Phase 1: Intent Understanding + Hypothesis Generation
-    │   └─ intentUnderstanding → generateInitialHypotheses (LLM)
+    ├─ Phase 1: Intent Understanding
+    │   └─ ModelRouter → LLM 意图分类 + 上下文解析
     │
-    ├─ Phase 2: Strategy Matching
-    │   └─ StrategyRegistry.match(query) → scrollingStrategy / null
+    ├─ Phase 2: Governance Pipeline (runtimeGovernancePipeline)
+    │   ├─ PrincipleEngine.decide(context) → 策略决策 (allow/deny/require_more)
+    │   ├─ OperationPlanner.buildPlan() → 步骤序列 (collect → test → conclude)
+    │   ├─ SoulGuard.evaluate() → 完整性校验 (域边界/证据先行/可追溯)
+    │   └─ OperationExecutor → 委托到 Mode Handler
     │
-    ├─ [Strategy Match] StrategyExecutor (Deterministic Pipeline):
-    │   ├─ Stage 0 (overview): scroll_session_analysis → 识别卡顿会话
-    │   ├─ extractIntervals() → FocusInterval[] (卡顿区间)
-    │   ├─ Stage 1 (session_overview): 每会话 FPS/掉帧统计
-    │   ├─ Stage 2 (per_interval): jank_frame_detail → 逐帧分析
-    │   └─ generateConclusion → analysis_completed
-    │
-    ├─ [No Strategy] HypothesisExecutor (Adaptive LLM Loop):
-    │   ├─ Round 1:
-    │   │   ├─ 分派任务 → Domain Agents (Frame/CPU/Memory/Binder)
-    │   │   ├─ Agents 执行 SQL → 收集 Evidence
-    │   │   ├─ 综合 Findings (severity: critical/warning/info)
-    │   │   └─ IterationStrategyPlanner → 评估置信度
+    ├─ Phase 3: Mode-Based Execution (runtimeModeExecutor)
     │   │
-    │   ├─ Round N (if confidence < threshold):
-    │   │   └─ 深入分析，补充证据
+    │   ├─ [initial] InitialModeHandler:
+    │   │   ├─ selectInitialExecutor → Strategy 匹配 / HypothesisExecutor 回退
+    │   │   │
+    │   │   ├─ [Strategy Match] StrategyExecutor (确定性流水线):
+    │   │   │   ├─ Stage 0: scroll_session_analysis → 识别卡顿会话
+    │   │   │   ├─ extractIntervals() → FocusInterval[]
+    │   │   │   ├─ Stage 1: scrolling_analysis → 每会话统计
+    │   │   │   └─ Stage 2: jank_frame_detail → 逐帧分析
+    │   │   │
+    │   │   └─ [No Strategy] HypothesisExecutor (自适应多轮):
+    │   │       ├─ 分派任务 → Domain Agents → SQL 证据收集
+    │   │       ├─ 综合 Findings → 评估置信度
+    │   │       └─ 多轮迭代直到置信度达标
     │   │
-    │   └─ generateConclusion → analysis_completed
+    │   ├─ [clarify] ClarifyModeHandler → entityStore 解析 → 定向分析
+    │   ├─ [extend/compare/drill_down] FollowUpModeHandler → 复用上下文
+    │   └─ Circuit Breaker: 置信度过低时触发用户介入
     │
-    └─ Circuit Breaker: 置信度过低时触发用户介入
+    └─ Phase 4: EvidenceSynthesizer → 结论生成 → analysis_completed
 ```
 
 ### Multi-Round Conversation Flow

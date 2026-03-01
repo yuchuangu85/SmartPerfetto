@@ -265,12 +265,12 @@ steps:
           label: "刷新率"
           type: number
         - name: avg_frame_dur
-          label: "平均帧耗时"
+          label: "平均呈现间隔"
           type: duration
           format: duration_ms
           unit: ns
         - name: p95_frame_dur
-          label: "P95 帧耗时"
+          label: "P95 呈现间隔"
           type: duration
           format: duration_ms
           unit: ns
@@ -352,7 +352,7 @@ steps:
           AND (t.name LIKE '%${package}%' OR '${package}' = '')
           AND (${end_ts} IS NULL OR c.ts < ${end_ts})
       ),
-      -- 在每个 VSync 时刻查找 BufferTX 状态
+      -- 在每个 VSync 时刻查找 BufferTX 状态 + 最近帧的 jank_type
       vsync_with_buffer AS (
         SELECT
           v.vsync_ts,
@@ -362,11 +362,22 @@ steps:
            WHERE b.ts <= v.vsync_ts
            ORDER BY b.ts DESC
            LIMIT 1
-          ) as buffer_at_vsync
+          ) as buffer_at_vsync,
+          -- 查找覆盖此 VSYNC 时刻的帧的 jank_type（±20ms 容差）
+          (SELECT a.jank_type
+           FROM actual_frame_timeline_slice a
+           LEFT JOIN process p ON a.upid = p.upid
+           WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+             AND p.name NOT LIKE '/system/%'
+             AND COALESCE(a.display_frame_token, a.surface_frame_token) IS NOT NULL
+             AND a.ts <= v.vsync_ts AND a.ts + a.dur >= v.vsync_ts - 20000000
+           ORDER BY ABS(a.ts + a.dur / 2 - v.vsync_ts)
+           LIMIT 1
+          ) as frame_jank_type
         FROM vsync_events v
         WHERE v.interval_ns IS NOT NULL
       ),
-      -- 计算掉帧（VSYNC-sf 间隔大 = 用户可见掉帧，BufferTX 状态决定责任）
+      -- 计算掉帧（VSYNC-sf 间隔大 = 用户可见掉帧，jank_type 优先 + BufferTX 补充）
       jank_analysis AS (
         SELECT
           COUNT(*) as total_vsync,
@@ -374,14 +385,19 @@ steps:
           SUM(CASE WHEN interval_ns > (SELECT vsync_period_ns FROM timing_config) * 1.5
                     AND interval_ns <= (SELECT vsync_period_ns FROM timing_config) * 6
                     THEN 1 ELSE 0 END) as total_jank_count,
-          -- App 侧掉帧: VSYNC-sf 间隔大且 BufferTX = 0（App 责任）
+          -- App 侧掉帧: jank_type 优先，BufferTX 补充
           SUM(CASE WHEN interval_ns > (SELECT vsync_period_ns FROM timing_config) * 1.5
                     AND interval_ns <= (SELECT vsync_period_ns FROM timing_config) * 6
-                    AND buffer_at_vsync = 0 THEN 1 ELSE 0 END) as app_jank_count,
-          -- SF 侧掉帧: VSYNC-sf 间隔大但 BufferTX > 0（SF 责任）
+                    AND (
+                      frame_jank_type IN ('Self Jank', 'App Deadline Missed')
+                      OR (frame_jank_type IS NULL AND buffer_at_vsync = 0)
+                      OR (buffer_at_vsync = 0 AND frame_jank_type NOT GLOB '*SurfaceFlinger*')
+                    ) THEN 1 ELSE 0 END) as app_jank_count,
+          -- SF 侧掉帧: 仅当 jank_type 明确标记 SF
           SUM(CASE WHEN interval_ns > (SELECT vsync_period_ns FROM timing_config) * 1.5
                     AND interval_ns <= (SELECT vsync_period_ns FROM timing_config) * 6
-                    AND COALESCE(buffer_at_vsync, 1) > 0 THEN 1 ELSE 0 END) as sf_jank_count,
+                    AND frame_jank_type GLOB '*SurfaceFlinger*'
+                    THEN 1 ELSE 0 END) as sf_jank_count,
           -- 计算最大跳过的 VSync 数（任意掉帧事件）
           MAX(CASE WHEN interval_ns > (SELECT vsync_period_ns FROM timing_config) * 1.5
                     AND interval_ns <= (SELECT vsync_period_ns FROM timing_config) * 6
@@ -414,6 +430,7 @@ steps:
         FROM app_frame_intervals
         WHERE prev_present_ts IS NOT NULL
           AND present_ts > prev_present_ts
+          AND present_ts - prev_present_ts >= (SELECT vsync_period_ns FROM timing_config) * 0.5
           AND present_ts - prev_present_ts <= (SELECT vsync_period_ns FROM timing_config) * 6
       ),
       -- App 报告的掉帧（旧逻辑，仅供参考）
@@ -425,27 +442,27 @@ steps:
             (SELECT CAST(ROUND(AVG(frame_interval_ns)) AS INTEGER) FROM valid_frame_intervals),
             CAST(ROUND(AVG(CASE WHEN dur > 0 THEN dur ELSE NULL END)) AS INTEGER),
             0
-          ) as avg_dur,
+          ) as avg_present_interval,
           COALESCE(
             (SELECT CAST(MAX(frame_interval_ns) AS INTEGER) FROM valid_frame_intervals),
             MAX(CASE WHEN dur > 0 THEN dur ELSE NULL END),
             0
-          ) as max_dur,
+          ) as max_present_interval,
           COALESCE(
             (SELECT CAST(ROUND(PERCENTILE(frame_interval_ns, 0.5)) AS INTEGER) FROM valid_frame_intervals),
             CAST(ROUND(PERCENTILE(CASE WHEN dur > 0 THEN dur ELSE NULL END, 0.5)) AS INTEGER),
             0
-          ) as median_dur,
+          ) as median_present_interval,
           COALESCE(
             (SELECT CAST(ROUND(PERCENTILE(frame_interval_ns, 0.95)) AS INTEGER) FROM valid_frame_intervals),
             CAST(ROUND(PERCENTILE(CASE WHEN dur > 0 THEN dur ELSE NULL END, 0.95)) AS INTEGER),
             0
-          ) as p95_dur,
+          ) as p95_present_interval,
           COALESCE(
             (SELECT CAST(ROUND(PERCENTILE(frame_interval_ns, 0.99)) AS INTEGER) FROM valid_frame_intervals),
             CAST(ROUND(PERCENTILE(CASE WHEN dur > 0 THEN dur ELSE NULL END, 0.99)) AS INTEGER),
             0
-          ) as p99_dur
+          ) as p99_present_interval
         FROM actual_frame_timeline_slice a
         LEFT JOIN process p ON a.upid = p.upid
         WHERE (p.name GLOB '${package}*' OR '${package}' = '')
@@ -543,11 +560,11 @@ steps:
           ) / NULLIF((SELECT total FROM app_stats), 0),
           2
         ) as sf_jank_rate,
-        (SELECT avg_dur FROM app_stats) as avg_frame_dur,
-        (SELECT max_dur FROM app_stats) as max_frame_dur,
-        (SELECT median_dur FROM app_stats) as median_frame_dur,
-        (SELECT p95_dur FROM app_stats) as p95_frame_dur,
-        (SELECT p99_dur FROM app_stats) as p99_frame_dur,
+        (SELECT avg_present_interval FROM app_stats) as avg_frame_dur,
+        (SELECT max_present_interval FROM app_stats) as max_frame_dur,
+        (SELECT median_present_interval FROM app_stats) as median_frame_dur,
+        (SELECT p95_present_interval FROM app_stats) as p95_frame_dur,
+        (SELECT p99_present_interval FROM app_stats) as p99_frame_dur,
         ROUND((SELECT duration_ns FROM time_range) / 1e9, 2) as duration_sec,
         MIN(
           ROUND(1e9 * (SELECT total FROM app_stats) / NULLIF((SELECT duration_ns FROM time_range), 0), 1),
@@ -773,7 +790,7 @@ steps:
         CASE
           WHEN jank_type GLOB '*App*' OR jank_type = 'Self Jank' THEN '标签:App'
           WHEN jank_type GLOB '*SurfaceFlinger*' THEN '标签:SurfaceFlinger'
-          WHEN jank_type GLOB '*Buffer*' THEN '标签:Buffer'
+          WHEN jank_type GLOB '*Buffer*' THEN '标签:Buffer Stuffing(需验证)'
           WHEN jank_type = 'None' THEN '标签:None(可能漏检)'
           ELSE '标签:Other'
         END as responsibility
@@ -974,7 +991,7 @@ steps:
           AND (t.name LIKE '%${package}%' OR '${package}' = '')
           AND (${end_ts} IS NULL OR c.ts < ${end_ts})
       ),
-      -- 在每个 VSync 时刻查找 BufferTX 状态
+      -- 在每个 VSync 时刻查找 BufferTX 状态 + 最近帧的 jank_type
       vsync_with_buffer_for_session AS (
         SELECT
           v.vsync_ts,
@@ -984,7 +1001,18 @@ steps:
            WHERE b.ts <= v.vsync_ts
            ORDER BY b.ts DESC
            LIMIT 1
-          ) as buffer_at_vsync
+          ) as buffer_at_vsync,
+          -- 查找覆盖此 VSYNC 时刻的帧的 jank_type（±20ms 容差）
+          (SELECT a.jank_type
+           FROM actual_frame_timeline_slice a
+           LEFT JOIN process p ON a.upid = p.upid
+           WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+             AND p.name NOT LIKE '/system/%'
+             AND COALESCE(a.display_frame_token, a.surface_frame_token) IS NOT NULL
+             AND a.ts <= v.vsync_ts AND a.ts + a.dur >= v.vsync_ts - 20000000
+           ORDER BY ABS(a.ts + a.dur / 2 - v.vsync_ts)
+           LIMIT 1
+          ) as frame_jank_type
         FROM vsync_intervals_for_session v
         WHERE v.interval_ns IS NOT NULL
       ),
@@ -1028,24 +1056,29 @@ steps:
         HAVING COUNT(*) >= 10
           AND (MAX(ts + dur) - MIN(ts)) > 200000000
       ),
-      -- 基于 VSYNC-sf 间隔 > 1.5x period 检测掉帧（与全局 performance_summary 一致）
+      -- 基于 VSYNC-sf 间隔 > 1.5x period 检测掉帧（jank_type 优先 + BufferTX 补充）
       session_vsync_jank AS (
         SELECT
           s.session_id,
           SUM(CASE WHEN vwb.interval_ns > (SELECT vsync_period_ns FROM vsync_config_for_session) * 1.5
                     AND vwb.interval_ns <= (SELECT vsync_period_ns FROM vsync_config_for_session) * 6
                     THEN 1 ELSE 0 END) as consumer_jank_count,
+          -- App jank: jank_type 优先
           SUM(CASE WHEN vwb.interval_ns > (SELECT vsync_period_ns FROM vsync_config_for_session) * 1.5
                     AND vwb.interval_ns <= (SELECT vsync_period_ns FROM vsync_config_for_session) * 6
-                    AND vwb.buffer_at_vsync = 0 THEN 1 ELSE 0 END) as app_jank_count,
+                    AND (
+                      vwb.frame_jank_type IN ('Self Jank', 'App Deadline Missed')
+                      OR (vwb.frame_jank_type IS NULL AND vwb.buffer_at_vsync = 0)
+                      OR (vwb.buffer_at_vsync = 0 AND vwb.frame_jank_type NOT GLOB '*SurfaceFlinger*')
+                    ) THEN 1 ELSE 0 END) as app_jank_count,
           MAX(CASE WHEN vwb.interval_ns > (SELECT vsync_period_ns FROM vsync_config_for_session) * 1.5
                     AND vwb.interval_ns <= (SELECT vsync_period_ns FROM vsync_config_for_session) * 6
               THEN CAST(ROUND(vwb.interval_ns * 1.0 / (SELECT vsync_period_ns FROM vsync_config_for_session) - 1) AS INTEGER)
               ELSE 0 END) as max_vsync_missed,
+          -- jank_types: 使用 frame_jank_type 而非硬编码
           GROUP_CONCAT(DISTINCT CASE WHEN vwb.interval_ns > (SELECT vsync_period_ns FROM vsync_config_for_session) * 1.5
               AND vwb.interval_ns <= (SELECT vsync_period_ns FROM vsync_config_for_session) * 6
-              THEN (CASE WHEN vwb.buffer_at_vsync = 0 THEN 'App Deadline Missed'
-                         ELSE 'Buffer Stuffing' END)
+              THEN COALESCE(vwb.frame_jank_type, CASE WHEN vwb.buffer_at_vsync = 0 THEN 'App Deadline Missed' ELSE 'Unknown' END)
               END) as jank_types
         FROM sessions s
         CROSS JOIN vsync_with_buffer_for_session vwb
@@ -1124,6 +1157,9 @@ steps:
         - name: jank_responsibility
           label: "责任归属"
           type: enum
+        - name: jank_cause
+          label: "原因说明"
+          type: string
         - name: main_start_ts
           label: "主线程开始"
           type: timestamp
@@ -1268,12 +1304,7 @@ steps:
           v.vsync_ts,
           v.interval_ns,
           CAST(ROUND(v.interval_ns * 1.0 / (SELECT vsync_period_ns FROM timing_config) - 1, 0) AS INTEGER) as vsync_missed,
-          (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= v.vsync_ts ORDER BY b.ts DESC LIMIT 1) as buffer_at_vsync,
-          CASE
-            WHEN (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= v.vsync_ts ORDER BY b.ts DESC LIMIT 1) = 0 THEN 'APP'
-            WHEN (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= v.vsync_ts ORDER BY b.ts DESC LIMIT 1) IS NULL THEN 'UNKNOWN'
-            ELSE 'SF'
-          END as jank_responsibility
+          (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= v.vsync_ts ORDER BY b.ts DESC LIMIT 1) as buffer_at_vsync
         FROM vsync_events v
         WHERE v.interval_ns IS NOT NULL
           AND v.interval_ns > (SELECT vsync_period_ns FROM timing_config) * 1.5
@@ -1334,17 +1365,31 @@ steps:
              ORDER BY je.vsync_ts LIMIT 1),
             CASE WHEN sm.token_gap > 1 THEN sm.token_gap - 1 ELSE 0 END
           ) as vsync_missed,
-          -- 责任归属：APP（BufferTX=0）或 SF（BufferTX>0）
-          COALESCE(
-            (SELECT je.jank_responsibility FROM all_jank_events je
-             WHERE je.vsync_ts >= sm.ts AND je.vsync_ts <= sm.ts + sm.dur + 50000000
-             ORDER BY je.vsync_ts LIMIT 1),
-            CASE
-              WHEN (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= sm.ts ORDER BY b.ts DESC LIMIT 1) = 0 THEN 'APP'
-              WHEN (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= sm.ts ORDER BY b.ts DESC LIMIT 1) IS NULL THEN 'UNKNOWN'
-              ELSE 'SF'
-            END
-          ) as jank_responsibility,
+          -- 责任归属：综合 jank_type + BufferTX 判定
+          CASE
+            -- Android framework 明确标记的 App 侧 jank
+            WHEN sm.jank_type IN ('Self Jank', 'App Deadline Missed') THEN 'APP'
+            -- Android framework 明确标记的 SF 侧 jank
+            WHEN sm.jank_type GLOB '*SurfaceFlinger*' THEN 'SF'
+            -- BufferTX = 0 意味着 App 未及时交付 buffer
+            WHEN COALESCE(
+              (SELECT je.buffer_at_vsync FROM all_jank_events je
+               WHERE je.vsync_ts >= sm.ts AND je.vsync_ts <= sm.ts + sm.dur + 50000000
+               ORDER BY je.vsync_ts LIMIT 1),
+              (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= sm.ts ORDER BY b.ts DESC LIMIT 1)
+            ) = 0 THEN 'APP'
+            -- BufferTX > 0 但 jank_type 标记了 Buffer Stuffing
+            WHEN sm.jank_type GLOB '*Buffer*' THEN 'BUFFER_STUFFING'
+            -- BufferTX 状态不可用
+            WHEN COALESCE(
+              (SELECT je.buffer_at_vsync FROM all_jank_events je
+               WHERE je.vsync_ts >= sm.ts AND je.vsync_ts <= sm.ts + sm.dur + 50000000
+               ORDER BY je.vsync_ts LIMIT 1),
+              (SELECT b.buffer_count FROM buffer_events b WHERE b.ts <= sm.ts ORDER BY b.ts DESC LIMIT 1)
+            ) IS NULL THEN 'UNKNOWN'
+            -- BufferTX > 0 且无明确标记 → 需要进一步分析
+            ELSE 'MIXED'
+          END as jank_responsibility,
           sm.token_gap as token_gap
         FROM sessions_map sm
         WHERE (sm.token_gap > 1)
@@ -1423,6 +1468,9 @@ steps:
           p.name as process_name,
           p.pid,
           p.upid,
+          -- 前序帧信息（用于掉帧原因诊断）
+          LAG(fti.actual_dur) OVER (PARTITION BY fti.session_id ORDER BY fti.actual_start) as prev_frame_dur,
+          LAG(fti.jank_type) OVER (PARTITION BY fti.session_id ORDER BY fti.actual_start) as prev_frame_jank_type,
           -- 按 vsync_missed 排序（最严重的掉帧优先）
           ROW_NUMBER() OVER (PARTITION BY fti.session_id ORDER BY fti.vsync_missed DESC, fti.actual_dur DESC) as rank_in_session
         FROM frame_thread_info fti
@@ -1453,6 +1501,37 @@ steps:
         token_gap,
         vsync_missed,
         jank_responsibility,
+        -- 掉帧原因说明
+        CASE
+          -- Buffer Stuffing: 帧本身很快，但被管线积压阻塞
+          WHEN jank_responsibility = 'BUFFER_STUFFING' THEN
+            '帧耗时 ' || ROUND(actual_dur / 1e6, 2) || 'ms（未超预算），但前序帧积压导致 BufferQueue 阻塞，延迟 ' || vsync_missed || ' 个 VSync 呈现'
+            || CASE WHEN prev_frame_dur IS NOT NULL
+               THEN '（前帧耗时 ' || ROUND(prev_frame_dur / 1e6, 1) || 'ms）'
+               ELSE '' END
+          -- App Self Jank: 主线程自身超时
+          WHEN jank_type = 'Self Jank' THEN
+            'App 自身处理超时（' || ROUND(actual_dur / 1e6, 2) || 'ms，预算 '
+            || ROUND((SELECT vsync_period_ns FROM timing_config) / 1e6, 1) || 'ms），跳过 ' || vsync_missed || ' 帧'
+          -- App Deadline Missed: 未在 deadline 前完成
+          WHEN jank_type = 'App Deadline Missed' THEN
+            'App 未在 VSync deadline 前完成渲染（' || ROUND(actual_dur / 1e6, 2) || 'ms），跳过 ' || vsync_missed || ' 帧'
+          -- SurfaceFlinger 问题
+          WHEN jank_responsibility = 'SF' THEN
+            'SurfaceFlinger 合成延迟（' || jank_type || '），App 已按时交付 buffer'
+          -- Buffer Stuffing (FrameTimeline 标记，无 BufferTX 确认)
+          WHEN jank_type GLOB '*Buffer Stuffing*' THEN
+            '帧耗时 ' || ROUND(actual_dur / 1e6, 2) || 'ms，前序帧积压导致 BufferQueue 阻塞（Buffer Stuffing），延迟 ' || vsync_missed || ' 个 VSync 呈现'
+            || CASE WHEN prev_frame_dur IS NOT NULL
+               THEN '（前帧耗时 ' || ROUND(prev_frame_dur / 1e6, 1) || 'ms）'
+               ELSE '' END
+          -- App + BufferTX=0
+          WHEN jank_responsibility = 'APP' AND jank_type NOT IN ('Self Jank', 'App Deadline Missed') THEN
+            'App 未及时交付 buffer（BufferTX=0），跳过 ' || vsync_missed || ' 帧'
+          -- MIXED / UNKNOWN
+          ELSE
+            COALESCE(jank_type, '未知') || '，跳过 ' || vsync_missed || ' 帧'
+        END as jank_cause,
         ROW_NUMBER() OVER (ORDER BY session_id, actual_start) as frame_index
       FROM ranked_frames
       WHERE rank_in_session <= CASE
@@ -1489,6 +1568,7 @@ steps:
       token_gap: token_gap
       vsync_missed: vsync_missed
       jank_responsibility: jank_responsibility
+      jank_cause: jank_cause
       frame_index: frame_index
     display:
       level: key
@@ -1546,6 +1626,7 @@ steps:
       token_gap: token_gap
       vsync_missed: vsync_missed
       jank_responsibility: jank_responsibility
+      jank_cause: jank_cause
 
   # ==========================================================================
   # Root Cause Classification - Aggregate analysis for final conclusion
@@ -1637,17 +1718,35 @@ steps:
            WHERE b.ts <= v.vsync_ts
            ORDER BY b.ts DESC
            LIMIT 1
-          ) as buffer_at_vsync
+          ) as buffer_at_vsync,
+          -- 查找覆盖此 VSYNC 时刻的帧的 jank_type（±20ms 容差）
+          (SELECT a.jank_type
+           FROM actual_frame_timeline_slice a
+           LEFT JOIN process p ON a.upid = p.upid
+           WHERE (p.name GLOB '${package}*' OR '${package}' = '')
+             AND p.name NOT LIKE '/system/%'
+             AND COALESCE(a.display_frame_token, a.surface_frame_token) IS NOT NULL
+             AND a.ts <= v.vsync_ts AND a.ts + a.dur >= v.vsync_ts - 20000000
+           ORDER BY ABS(a.ts + a.dur / 2 - v.vsync_ts)
+           LIMIT 1
+          ) as frame_jank_type
         FROM vsync_events v
         WHERE v.interval_ns IS NOT NULL
       ),
       vsync_jank AS (
         SELECT
           SUM(CASE WHEN interval_ns > (SELECT vsync_period_ns FROM vsync_config) * 1.5 THEN 1 ELSE 0 END) as total_jank_count,
+          -- App jank: jank_type 优先，BufferTX 补充
           SUM(CASE WHEN interval_ns > (SELECT vsync_period_ns FROM vsync_config) * 1.5
-                     AND buffer_at_vsync = 0 THEN 1 ELSE 0 END) as app_jank_count,
+                     AND (
+                       frame_jank_type IN ('Self Jank', 'App Deadline Missed')
+                       OR (frame_jank_type IS NULL AND buffer_at_vsync = 0)
+                       OR (buffer_at_vsync = 0 AND frame_jank_type NOT GLOB '*SurfaceFlinger*')
+                     ) THEN 1 ELSE 0 END) as app_jank_count,
+          -- SF jank: 仅当 jank_type 明确标记 SF
           SUM(CASE WHEN interval_ns > (SELECT vsync_period_ns FROM vsync_config) * 1.5
-                     AND COALESCE(buffer_at_vsync, 1) > 0 THEN 1 ELSE 0 END) as sf_jank_count
+                     AND frame_jank_type GLOB '*SurfaceFlinger*'
+                     THEN 1 ELSE 0 END) as sf_jank_count
         FROM vsync_with_buffer
         WHERE buffer_at_vsync IS NOT NULL
       ),

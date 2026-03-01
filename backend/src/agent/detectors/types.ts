@@ -93,6 +93,12 @@ export interface ArchitectureInfo {
   compose?: {
     /** 是否检测到 Recomposition */
     hasRecomposition: boolean;
+    /** 是否检测到 Lazy 列表 (LazyColumn/LazyRow/LazyVerticalGrid) */
+    hasLazyLists: boolean;
+    /** 是否是混合架构 (Compose 嵌入传统 View 体系) */
+    isHybridView: boolean;
+    /** 检测到的 Compose 特性列表 */
+    features: string[];
   };
 
   /** 其他架构的附加信息 */

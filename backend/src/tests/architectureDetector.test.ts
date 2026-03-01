@@ -270,6 +270,46 @@ describe('ArchitectureDetector', () => {
       expect(result.type).toBe('COMPOSE');
       expect(result.confidence).toBeGreaterThan(0.5);
       expect(result.metadata?.compose?.hasRecomposition).toBe(true);
+      expect(result.metadata?.compose?.features).toContain('recomposition');
+      expect(result.metadata?.compose?.features).toContain('composer');
+    });
+
+    it('should detect Compose with LazyColumn for scrolling', async () => {
+      mockService.setMockData({
+        threads: ['RenderThread', 'main'],
+        slices: [
+          { name: 'Recomposition', count: 50 },
+          { name: 'Compose:Column', count: 100 },
+          { name: 'LazyColumn.measure', count: 30 },
+          { name: 'AndroidComposeView.dispatchDraw', count: 80 },
+        ],
+      });
+
+      const detector = new ComposeDetector();
+      const result = await detector.detect(context);
+
+      expect(result.type).toBe('COMPOSE');
+      expect(result.metadata?.compose?.hasLazyLists).toBe(true);
+      expect(result.metadata?.compose?.isHybridView).toBe(true);
+      expect(result.metadata?.compose?.features).toContain('lazy_lists');
+      expect(result.metadata?.compose?.features).toContain('compose_view_bridge');
+    });
+
+    it('should not false-positive on SurfaceFlinger Compositor slices', async () => {
+      mockService.setMockData({
+        threads: ['RenderThread', 'main'],
+        slices: [
+          { name: 'Compositor::draw', count: 100 },
+          { name: 'SurfaceComposer', count: 50 },
+          { name: 'DrawFrame', count: 100 },
+        ],
+      });
+
+      const detector = new ComposeDetector();
+      const result = await detector.detect(context);
+
+      // Should NOT detect as Compose — these are SurfaceFlinger slices
+      expect(result.type).toBe('UNKNOWN');
     });
 
     it('should not detect Compose for standard View app', async () => {

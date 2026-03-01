@@ -143,11 +143,15 @@ export class HypothesisExecutor implements AnalysisExecutor {
       // 1. Plan task graph and dispatch tasks
       const plannerHistoryContext = ctx.sessionContext?.generatePromptContext(900) || '';
       const taskHistoryContext = ctx.sessionContext?.generatePromptContext(500) || '';
+      // Inject Perfetto schema context so LLM knows available tables/columns
+      const schemaContext = this.services.knowledgeBase
+        ? await this.services.knowledgeBase.getContextForAI(ctx.query, 3)
+        : '';
       const taskGraph = await planTaskGraph(
         ctx.query, ctx.intent, ctx.sharedContext, informationGaps,
         ctx.options, this.services.modelRouter, this.agentRegistry, emitter,
         // Goal-driven mode: treat "task" as an experiment; default to one per round.
-        { maxTasks: 1, historyContext: plannerHistoryContext }
+        { maxTasks: 1, historyContext: plannerHistoryContext, schemaContext }
       );
       const tasks = buildTasksFromGraph(
         taskGraph, ctx.query, ctx.intent, ctx.sharedContext,

@@ -40,7 +40,7 @@ export class FollowUpModeHandler implements RuntimeModeHandler {
 
   async execute(request: RuntimeModeExecutionRequest): Promise<AnalysisResult> {
     const { runtimeContext, query, sessionId, traceId } = request;
-    const services = this.executionFactory.createExecutionServices();
+    const services = await this.executionFactory.createExecutionServices();
     const emitter = this.updateBridge.createEmitter();
     const sharedContext = services.messageBus.createSharedContext(sessionId, traceId);
 

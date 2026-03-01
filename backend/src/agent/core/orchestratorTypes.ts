@@ -456,6 +456,7 @@ export interface ProgressEmitter {
 // =============================================================================
 
 import type { EmittedEnvelopeRegistry } from './emittedEnvelopeRegistry';
+import type { ExtendedSqlKnowledgeBase } from '../../services/sqlKnowledgeBase';
 
 export interface AnalysisServices {
   modelRouter: ModelRouter;
@@ -463,6 +464,8 @@ export interface AnalysisServices {
   circuitBreaker: CircuitBreaker;
   /** Session-scoped registry for deduplicating emitted DataEnvelopes */
   emittedEnvelopeRegistry?: EmittedEnvelopeRegistry;
+  /** Perfetto SQL schema context for LLM SQL generation */
+  knowledgeBase?: ExtendedSqlKnowledgeBase;
 }
 
 // =============================================================================

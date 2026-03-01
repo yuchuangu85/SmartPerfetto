@@ -96,6 +96,10 @@ inputs:
     type: string
     required: false
     description: "掉帧责任归属: APP（BufferTX=0）或 SF（BufferTX>0）"
+  - name: jank_cause
+    type: string
+    required: false
+    description: "掉帧原因说明，由 scrolling_analysis 生成的中文诊断"
 
 steps:
   - id: init_cpu_topology

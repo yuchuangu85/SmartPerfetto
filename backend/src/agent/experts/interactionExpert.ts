@@ -145,6 +145,8 @@ export class InteractionExpert extends BaseExpert {
           architectureAdjustments: {
             checkComposeFrames: true,
             hasRecomposition: architecture?.compose?.hasRecomposition,
+            hasLazyLists: architecture?.compose?.hasLazyLists,
+            isHybridView: architecture?.compose?.isHybridView,
           },
         };
 

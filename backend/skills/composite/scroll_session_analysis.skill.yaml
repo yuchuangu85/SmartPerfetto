@@ -339,14 +339,14 @@ steps:
         printf('%d', dur) as dur_str,
         ROUND(dur_ms, 2) AS dur_ms,
         CASE
-          WHEN dur_ms > 50 THEN 'severe'
-          WHEN dur_ms > 33 THEN 'bad'
-          WHEN dur_ms > 16.67 THEN 'jank'
+          WHEN dur > ${vsync_period_ns} * 3 THEN 'severe'
+          WHEN dur > ${vsync_period_ns} * 2 THEN 'bad'
+          WHEN dur > ${vsync_period_ns} THEN 'jank'
           ELSE 'normal'
         END AS jank_level,
-        ROUND(dur_ms / 16.67, 1) AS frames_dropped
+        ROUND(dur_ms / (${vsync_period_ns} / 1e6), 1) AS frames_dropped
       FROM frames
-      WHERE dur_ms > 16.67  -- 超过 16.67ms 为掉帧
+      WHERE dur > ${vsync_period_ns}  -- 超过一帧 deadline 为掉帧
       ORDER BY dur_ms DESC
       LIMIT 20
     save_as: janky_frames

@@ -115,7 +115,7 @@ export async function planTaskGraph(
   modelRouter: ModelRouter,
   agentRegistry: DomainAgentRegistry,
   emitter: ProgressEmitter,
-  hints?: { maxTasks?: number; historyContext?: string }
+  hints?: { maxTasks?: number; historyContext?: string; schemaContext?: string }
 ): Promise<TaskGraphPlan> {
   const hypotheses = Array.from(sharedContext.hypotheses.values())
     .filter(h => h.status === 'proposed' || h.status === 'investigating');
@@ -125,6 +125,7 @@ export async function planTaskGraph(
     ? Math.max(1, Math.floor(hints.maxTasks))
     : undefined;
   const historyContext = typeof hints?.historyContext === 'string' ? hints.historyContext : '';
+  const schemaContext = typeof hints?.schemaContext === 'string' ? hints.schemaContext : '';
 
   const cxGaps = (Array.isArray(informationGaps) ? informationGaps : [])
     .map(g => String(g || '').trim())
@@ -161,7 +162,7 @@ ${otherGaps.join('\n') || '无'}
 
 可用 domain:
 ${allowedDomains.join(', ')}
-
+${schemaContext ? `\nPerfetto 表结构参考（设计任务时可参考可用的数据源）:\n${schemaContext}\n` : ''}
 请以 JSON 格式返回：
 {
   "tasks": [
