@@ -59,6 +59,7 @@ export class ClaudeRuntime extends EventEmitter {
         traceProcessorService: this.traceProcessorService,
         skillExecutor,
         packageName: options.packageName,
+        emitUpdate: (update) => this.emitUpdate(update),
       });
 
       let architecture: ArchitectureInfo | undefined;

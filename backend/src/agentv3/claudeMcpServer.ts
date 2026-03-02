@@ -7,6 +7,9 @@ import type { TraceProcessorService } from '../services/traceProcessorService';
 import type { SkillExecutor } from '../services/skillEngine/skillExecutor';
 import { getSkillAnalysisAdapter } from '../services/skillEngine/skillAnalysisAdapter';
 import { createArchitectureDetector } from '../agent/detectors/architectureDetector';
+import { displayResultToEnvelope } from '../types/dataContract';
+import type { DisplayResult as SkillDisplayResult } from '../services/skillEngine/types';
+import type { StreamingUpdate } from '../agent/types';
 import type { SqlSchemaIndex } from './types';
 
 let sqlSchemaCache: SqlSchemaIndex | null = null;
@@ -30,6 +33,8 @@ export interface ClaudeMcpServerOptions {
   traceProcessorService: TraceProcessorService;
   skillExecutor: SkillExecutor;
   packageName?: string;
+  /** Callback to emit StreamingUpdate events (e.g. DataEnvelopes from skill results) */
+  emitUpdate?: (update: StreamingUpdate) => void;
 }
 
 /**
@@ -38,7 +43,7 @@ export interface ClaudeMcpServerOptions {
  * detect_architecture, lookup_sql_schema.
  */
 export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
-  const { traceId, traceProcessorService, skillExecutor, packageName } = options;
+  const { traceId, traceProcessorService, skillExecutor, packageName, emitUpdate } = options;
   const skillAdapter = getSkillAnalysisAdapter(traceProcessorService);
 
   const executeSql = tool(
@@ -97,6 +102,12 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
           effectiveParams.process_name = packageName;
         }
         const result = await skillExecutor.execute(skillId, traceId, effectiveParams);
+
+        // Emit DataEnvelopes for interactive frontend tables
+        if (emitUpdate && result.displayResults?.length) {
+          emitSkillDataEnvelopes(result.displayResults as SkillDisplayResult[], result.skillId || skillId, emitUpdate);
+        }
+
         return {
           content: [{
             type: 'text' as const,
@@ -233,4 +244,22 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
     version: '1.0.0',
     tools: [executeSql, invokeSkill, listSkills, detectArchitecture, lookupSqlSchema],
   });
+}
+
+/**
+ * Convert skill DisplayResults to DataEnvelopes and emit as SSE 'data' events.
+ * This enables interactive tables (clickable timestamps, expandable rows) in the frontend.
+ */
+function emitSkillDataEnvelopes(
+  displayResults: SkillDisplayResult[],
+  skillId: string,
+  emit: (update: StreamingUpdate) => void,
+): void {
+  const envelopes = displayResults
+    .filter(dr => dr.data?.rows?.length)
+    .map(dr => displayResultToEnvelope(dr as any, skillId));
+
+  if (envelopes.length > 0) {
+    emit({ type: 'data', content: envelopes, timestamp: Date.now() });
+  }
 }
