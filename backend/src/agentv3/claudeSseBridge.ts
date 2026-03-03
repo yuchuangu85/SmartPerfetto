@@ -2,6 +2,26 @@ import type { StreamingUpdate } from '../agent/types';
 
 export type UpdateEmitter = (update: StreamingUpdate) => void;
 
+/** Map MCP tool names to user-friendly Chinese descriptions. */
+function getFriendlyToolMessage(toolName: string, args: any): string {
+  switch (toolName) {
+    case 'mcp__smartperfetto__execute_sql':
+      return '执行 SQL 查询';
+    case 'mcp__smartperfetto__invoke_skill': {
+      const skillId = args?.skillId;
+      return skillId ? `调用分析技能: ${skillId}` : '调用分析技能';
+    }
+    case 'mcp__smartperfetto__list_skills':
+      return '查询可用技能列表';
+    case 'mcp__smartperfetto__detect_architecture':
+      return '检测渲染架构';
+    case 'mcp__smartperfetto__lookup_sql_schema':
+      return `查询 SQL 表结构: ${args?.keyword || ''}`;
+    default:
+      return `调用工具: ${toolName}`;
+  }
+}
+
 /**
  * Creates a bridge function that translates Agent SDK messages into
  * SmartPerfetto StreamingUpdate events for SSE forwarding to the frontend.
@@ -36,9 +56,10 @@ export function createSseBridge(emit: UpdateEmitter) {
       for (const block of content) {
         if (block.type === 'tool_use') {
           lastToolUseId = block.id;
+          const friendlyMsg = getFriendlyToolMessage(block.name, block.input);
           emit({
             type: 'agent_task_dispatched',
-            content: { taskId: block.id, toolName: block.name, args: block.input, message: `调用工具: ${block.name}` },
+            content: { taskId: block.id, toolName: block.name, args: block.input, message: friendlyMsg },
             timestamp: now,
           });
         } else if (block.type === 'text' && block.text?.trim().length > 0) {

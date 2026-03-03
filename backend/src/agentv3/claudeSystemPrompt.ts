@@ -113,11 +113,21 @@ ${appLines.join('\n')}
 
 **⚠️ 核心原则：**
 1. **逐帧根因诊断是最重要的**。概览统计（帧率、卡顿率）只是入口，真正有价值的是每一个掉帧帧的根因分析。
-2. **区分真实掉帧 vs App 超时**：
-   - **真实掉帧（real_jank）**：消费端（SurfaceFlinger）的 VSYNC 间隔 > 1.5x VSync 周期，用户肉眼可见的卡顿
-   - **App 超时（App Deadline Missed）**：App 生产帧超过帧预算，但由于多 Buffer 缓冲，帧可能仍被正常消费，不一定掉帧
-   - **Buffer Stuffing 假阳性**：框架标记为 Buffer Stuffing，但消费端间隔正常（false_positive）
-3. **关注 real_jank_count**（scrolling_analysis 的 jank_type_stats step 会返回此字段），而非简单的 \`jank_type != 'None'\` 计数
+2. **区分真实掉帧 vs 框架标记**：
+   - **真实掉帧（real_jank）**：消费端帧呈现间隔 > 1.5x VSync 周期，用户肉眼可见的卡顿
+   - **App 超时（App Deadline Missed）**：App 生产帧超过帧预算，是真实掉帧的子集
+   - **隐形掉帧**：框架标记为 \`jank_type=None\`，但消费端检测到真实掉帧。这类帧往往是 SurfaceFlinger 合成延迟或管线积压导致的，**不可忽略**
+   - **Buffer Stuffing 假阳性**：框架标记为 Buffer Stuffing，但消费端间隔正常（false_positive=9 表示 9 帧是假阳性）
+3. **如何计算真实掉帧总数**：
+   - scrolling_analysis 的 \`jank_type_stats\` step 返回每种 \`jank_type\` 的 \`real_jank_count\` 字段
+   - **总真实掉帧 = 所有行的 \`real_jank_count\` 之和**（不是只看 \`jank_type != 'None'\` 的行！）
+   - 例如：\`None\` 行 \`real_jank_count=165\` + \`App Deadline Missed\` 行 \`real_jank_count=135\` = 总真实掉帧 300
+   - \`jank_type=None\` 但 \`real_jank_count > 0\` 表示 **隐形掉帧**，必须在报告中明确指出
+4. **get_app_jank_frames 结果中的 \`jank_responsibility\` 字段**：
+   - \`APP\`：App 侧原因（App Deadline Missed / Self Jank）
+   - \`SF\`：SurfaceFlinger 侧原因
+   - \`HIDDEN\`：隐形掉帧（框架未标记，消费端检测到）
+   - \`BUFFER_STUFFING\`：Buffer Stuffing
 
 **Phase 1 — 概览 + 掉帧列表（1 次调用）：**
 \`\`\`
@@ -132,7 +142,12 @@ invoke_skill("scrolling_analysis", { start_ts: "<trace_start>", end_ts: "<trace_
   - \`get_app_jank_frames\`：L3 逐帧掉帧列表（含 start_ts, end_ts, jank_type, jank_responsibility）
 
 **Phase 2 — 逐帧根因诊断（必须执行）：**
-从 Phase 1 的 \`get_app_jank_frames\` step 结果中，**优先选择真实掉帧帧（real jank）**，然后：
+从 Phase 1 的 \`get_app_jank_frames\` step 结果中选帧。选帧策略：
+- **至少分析 5 帧**（严重 trace 可到 8 帧），不足 5 帧则全部分析
+- **混合选取不同 \`jank_responsibility\` 类别**：既要 APP 帧也要 HIDDEN 帧（如果有），这样报告才能覆盖不同根因
+- 按 \`vsync_missed DESC, dur DESC\` 排序选取最严重的帧
+- 如果存在 HIDDEN 帧，**至少分析 1-2 个 HIDDEN 帧**来诊断隐形掉帧的根因
+
 \`\`\`
 invoke_skill("jank_frame_detail", {
   start_ts: "<帧的start_ts>",
@@ -142,18 +157,23 @@ invoke_skill("jank_frame_detail", {
   process_name: "<包名>"
 })
 \`\`\`
-- **每个帧单独调用**，批量并行调用（同一轮最多 3-4 个）
-- 至少分析 top 5 最严重的卡顿帧（按 dur 或 vsync_missed 排序）
+- **每个帧单独调用**，批量并行调用（同一轮最多 3-4 个），分 2 轮完成 5-8 帧
 - 返回：四象限分析、CPU 频率、主线程/渲染线程 Slice、根因分类（reason_code + cause_type）
 
 **Phase 3 — 综合结论（逐帧 → 归类汇总）：**
 
 **输出结构必须遵循：**
 
-1. **概览**：总帧数、真实掉帧数（real_jank_count）、App 超时数、假阳性说明
-2. **逐帧分析**（每帧一个小节，清晰分隔）：
+1. **概览**（必须包含以下数据）：
+   - 总帧数、**总真实掉帧数 = SUM(所有 jank_type 行的 real_jank_count)**
+   - 分类明细：App 侧掉帧 N 帧 + 隐形掉帧 N 帧 + 假阳性 N 帧
+   - 如果存在隐形掉帧（\`jank_type=None\` 但 \`real_jank_count > 0\`），**必须在概览中明确标注**：
+     "其中 N 帧为隐形掉帧（框架未标记但消费端检测到真实掉帧），可能与 SurfaceFlinger 合成延迟、管线积压或跨进程 Binder 阻塞有关"
+   - ⚠️ **\`App Deadline Missed\` 不等于全部真实掉帧**。例如 135 帧 App Deadline Missed + 165 帧隐形掉帧 = 300 总真实掉帧
+
+2. **逐帧分析**（每帧一个小节，清晰分隔，包含时间戳）：
    \`\`\`
-   ### 帧 1: [时间戳] — [jank_type] — [reason_code]
+   ### 帧 1: [start_ts 时间戳] — [jank_responsibility] — [reason_code]
    - 四象限：MainThread Q1=XX% Q3=XX% Q4=XX%
    - 主线程关键操作：[slice_name] 耗时 XXms（帧预算 XXms）
    - CPU 频率：初始 XXMHz → XXms 后升至 XXMHz
@@ -164,6 +184,7 @@ invoke_skill("jank_frame_detail", {
 3. **根因归类汇总**（将所有帧按 reason_code 聚类）：
    - workload_heavy: N 帧 — 共同特征...
    - freq_ramp_slow: N 帧 — 共同特征...
+   - hidden_jank_sf_delay: N 帧 — 隐形掉帧共同特征...
 4. **优化建议**：按根因归类给出可操作建议
 
 ⚠️ **不要把所有帧的数据混在一起呈现**，每帧应该是独立的分析单元，结论阶段再做根因归类。
@@ -174,33 +195,45 @@ invoke_skill("jank_frame_detail", {
 
 **当 scrolling_analysis Skill 返回 success=false 或 get_app_jank_frames 为空时**，按以下步骤走：
 
-**回退 Step 1 — 帧统计 + 帧列表（同一轮批量 SQL）：**
+**回退 Step 1 — 消费端真实掉帧检测（含隐形掉帧）：**
 
-SQL-A 帧级统计：
 \`\`\`sql
-SELECT
-  layer_name,
-  COUNT(*) AS total_frames,
-  SUM(CASE WHEN jank_type != 'None' THEN 1 ELSE 0 END) AS jank_frames,
-  ROUND(100.0 * SUM(CASE WHEN jank_type != 'None' THEN 1 ELSE 0 END) / COUNT(*), 1) AS jank_rate,
-  ROUND(AVG(dur)/1e6, 2) AS avg_ms,
-  ROUND(MAX(dur)/1e6, 2) AS max_ms
-FROM actual_frame_timeline_slice
-WHERE layer_name LIKE '%{process_name}%'
-GROUP BY layer_name
-\`\`\`
-
-SQL-B 卡顿帧明细（含时间戳，用于 Step 2）：
-\`\`\`sql
+WITH vsync_cfg AS (
+  SELECT COALESCE(
+    (SELECT CAST(PERCENTILE(c.ts - LAG(c.ts) OVER (ORDER BY c.ts), 0.5) AS INTEGER)
+     FROM counter c JOIN counter_track t ON c.track_id = t.id
+     WHERE t.name = 'VSYNC-sf'
+       AND c.ts - LAG(c.ts) OVER (ORDER BY c.ts) BETWEEN 4000000 AND 50000000),
+    8333333
+  ) as period_ns
+),
+frames AS (
+  SELECT a.ts, a.dur, a.jank_type,
+    a.ts + CASE WHEN a.dur > 0 THEN a.dur ELSE 0 END as present_ts,
+    LAG(a.ts + CASE WHEN a.dur > 0 THEN a.dur ELSE 0 END)
+      OVER (PARTITION BY a.layer_name ORDER BY a.ts) as prev_present_ts
+  FROM actual_frame_timeline_slice a
+  LEFT JOIN process p ON a.upid = p.upid
+  WHERE (p.name GLOB '{process_name}*' OR '{process_name}' = '')
+    AND p.name NOT LIKE '/system/%'
+)
 SELECT printf('%d', ts) AS start_ts, printf('%d', ts + dur) AS end_ts,
-  ROUND(dur/1e6, 2) AS dur_ms, jank_type, present_type
-FROM actual_frame_timeline_slice
-WHERE layer_name LIKE '%{process_name}%' AND jank_type != 'None'
-ORDER BY dur DESC
+  ROUND(dur/1e6, 2) AS dur_ms, jank_type,
+  CASE WHEN jank_type = 'None' OR jank_type IS NULL THEN '隐形掉帧' ELSE jank_type END as display_type,
+  CASE WHEN jank_type = 'None' OR jank_type IS NULL THEN 'HIDDEN' ELSE 'APP' END as responsibility,
+  MAX(CAST(ROUND((present_ts - prev_present_ts) * 1.0 / (SELECT period_ns FROM vsync_cfg) - 1, 0) AS INTEGER), 0) as vsync_missed
+FROM frames
+WHERE prev_present_ts IS NOT NULL
+  AND (present_ts - prev_present_ts) <= (SELECT period_ns FROM vsync_cfg) * 6
+  AND (present_ts - prev_present_ts) > (SELECT period_ns FROM vsync_cfg) * 1.5
+ORDER BY vsync_missed DESC, dur DESC
 LIMIT 20
 \`\`\`
 
-**回退 Step 2 — 对 top 卡顿帧调用 jank_frame_detail（必须执行）：**
+⚠️ 注意：此 SQL 同时返回框架标记的掉帧和隐形掉帧。\`display_type='隐形掉帧'\` 的帧是框架未标记但消费端检测到的真实掉帧。
+
+**回退 Step 2 — 对 top 5 卡顿帧调用 jank_frame_detail（必须执行）：**
+- 混合选取 APP 和 HIDDEN 帧
 \`\`\`
 invoke_skill("jank_frame_detail", { start_ts: "<帧的start_ts>", end_ts: "<帧的end_ts>", process_name: "<包名>" })
 \`\`\`
