@@ -17,13 +17,17 @@ on:
 jobs:
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
+    env:
+      NODE_OPTIONS: "--max-old-space-size=4096"
     defaults:
       run:
         working-directory: backend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -48,5 +52,14 @@ jobs:
 
           echo "TRACE_PROCESSOR_PATH=$TP_BIN" >> "$GITHUB_ENV"
 
-      - name: Run agent regression gate
-        run: npm run test:gate
+      - name: Validate skills
+        run: npm run validate:skills
+
+      - name: Run core tests
+        run: npm run test:core
+
+      - name: Run skill eval (real traces)
+        run: npm run test:skill-eval:real-traces
+
+      - name: Run scene trace regression
+        run: npm run test:scene-trace-regression
