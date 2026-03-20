@@ -859,6 +859,18 @@ router.get('/:sessionId/stream', (req, res) => {
     assistantAppService.removeSseClient(sessionId, res);
   });
 
+  // Handle write errors (EPIPE when client disconnects mid-write).
+  // Without this handler, EPIPE propagates as uncaughtException and can crash
+  // the SDK subprocess (which inherits the process's pipe state).
+  res.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
+      // Expected when SSE client disconnects (e.g., curl timeout, browser navigation)
+      assistantAppService.removeSseClient(sessionId, res);
+      return;
+    }
+    console.error(`[AgentRoutes] SSE response error for ${sessionId}:`, err.message);
+  });
+
   streamProjector.bindKeepAlive(req, res);
 });
 

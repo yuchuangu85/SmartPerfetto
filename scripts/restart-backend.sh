@@ -33,7 +33,12 @@ mkdir -p "$LOGS_DIR"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKEND_LOG="$LOGS_DIR/backend_${TIMESTAMP}.log"
 
-npm run dev > >(tee -a "$BACKEND_LOG") 2>&1 &
+# Redirect directly to log file instead of using tee with process substitution.
+# When restart-backend.sh is called headlessly (e.g., from Claude Code's Bash tool),
+# the calling shell exits after the script completes. If tee's stdout is connected to
+# that shell's pipe, it gets EPIPE when the backend writes — this propagates to the
+# Claude Agent SDK subprocess and crashes the analysis with "exited with code 1".
+npm run dev >> "$BACKEND_LOG" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PROJECT_ROOT/.backend.pid"
 ln -sf "$BACKEND_LOG" "$LOGS_DIR/backend_latest.log"
