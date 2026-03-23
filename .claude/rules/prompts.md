@@ -4,9 +4,10 @@
 
 All prompt content must live in Markdown files, never in TypeScript source:
 
-- Scene strategies → `backend/strategies/*.strategy.md` (YAML frontmatter + markdown body)
+- Scene strategies → `backend/strategies/*.strategy.md` (YAML frontmatter + markdown body, 12 scenes)
 - Selection context → `backend/strategies/selection-*.template.md` (uses `{{variable}}` placeholders)
 - Prompt templates → `backend/strategies/prompt-*.template.md` and `arch-*.template.md`
+- Knowledge templates → `backend/strategies/knowledge-*.template.md` (6 templates: rendering-pipeline, binder-ipc, gc-dynamics, cpu-scheduler, thermal-throttling, lock-contention) — loaded on-demand by `lookup_knowledge` MCP tool
 - TypeScript only does: template loading, variable substitution, structural wiring
 
 ## Template system

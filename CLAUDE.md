@@ -47,9 +47,9 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 ```
 
 **Core Concepts:**
-- **Primary Runtime: agentv3** — Claude Agent SDK as orchestrator (18 MCP tools)
+- **Primary Runtime: agentv3** — Claude Agent SDK as orchestrator (17 MCP tools)
 - **Deprecated Fallback: agentv2** — activated only by `AI_SERVICE=deepseek`
-- Scene Classifier → scene-specific system prompts (scrolling/startup/anr/general)
+- Scene Classifier → scene-specific system prompts (12 scenes: scrolling/startup/anr/pipeline/interaction/touch-tracking/teaching/memory/game/overview/scroll-response/general)
 - Analysis logic in YAML Skills (`backend/skills/`) — L1→L2→L3→L4 layered results
 - SSE for real-time streaming
 
@@ -68,9 +68,25 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 - `POST /api/agent/v1/analyze` — Start analysis
 - `GET /api/agent/v1/:sessionId/stream` — SSE real-time stream
 - `GET /api/agent/v1/:sessionId/status` — Poll status
-- `POST /api/agent/v1/scene-reconstruct` — Scene reconstruction
+- `POST /api/agent/v1/resume` — Resume analysis (multi-turn SDK context recovery)
 
-**Supporting:** `/api/traces/register-rpc`, `/api/skills/*`, `/api/export/*`, `/api/sessions/*`, `/api/agent/v1/logs/*`
+**Multi-turn & interaction:**
+- `GET /api/agent/v1/:sessionId/turns` — Get analysis turns
+- `POST /api/agent/v1/:sessionId/respond` — Multi-turn response
+- `POST /api/agent/v1/:sessionId/intervene` — User intervention
+- `POST /api/agent/v1/:sessionId/cancel` — Cancel analysis
+- `POST /api/agent/v1/:sessionId/interaction` — Handle interaction
+- `GET /api/agent/v1/:sessionId/focus` — Get focus app
+- `GET /api/agent/v1/:sessionId/report` — Get analysis report
+
+**Scene reconstruction:**
+- `POST /api/agent/v1/scene-reconstruct` — Start reconstruction
+- `GET /api/agent/v1/scene-reconstruct/:analysisId/stream` — SSE stream
+- `GET /api/agent/v1/scene-reconstruct/:analysisId/status` — Get status
+- `POST /api/agent/v1/scene-reconstruct/:analysisId/deep-dive` — Deep dive
+- `DELETE /api/agent/v1/scene-reconstruct/:analysisId` — Delete
+
+**Supporting:** `/api/agent/v1/scene-detect-quick`, `/api/agent/v1/teaching/pipeline`, `/api/agent/v1/logs/*`, `/api/agent/v1/sessions`, `/api/traces/*`, `/api/skills/*`, `/api/export/*`, `/api/sessions/*`
 
 ## SSE Events (agentv3)
 
@@ -80,8 +96,11 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 | agent_response | MCP tool results (SQL/Skill) |
 | answer_token | Final text streaming |
 | thought | Intermediate reasoning |
-| analysis_completed | Analysis complete (carries reportUrl) |
+| conclusion | Near-terminal — SDK result arrives, conclusion text ready |
+| analysis_completed | Terminal — HTML report generated (carries reportUrl) |
 | error | Exceptions |
+
+Note: agentv3 sends `conclusion` first (user sees result immediately), then `analysis_completed` follows after report generation.
 
 ## Session Management
 
@@ -97,9 +116,20 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 PORT=3000
 CLAUDE_MODEL=claude-sonnet-4-6          # Optional, default
 # CLAUDE_MAX_TURNS=15                   # Optional
-# CLAUDE_ENABLE_SUB_AGENTS=true         # Optional feature flag
-# CLAUDE_ENABLE_VERIFICATION=false      # Default: true
+# CLAUDE_MAX_BUDGET_USD=5               # Optional, per-analysis budget cap
+# CLAUDE_EFFORT=high                    # Optional, SDK effort level
+# SMARTPERFETTO_API_KEY=xxx             # Optional, bearer token auth
 # AI_SERVICE=deepseek                   # Legacy agentv2 only
+
+# Agent safety limits (optional)
+# AGENT_SQL_MAX_ROWS=1000
+# AGENT_SQL_TABLE_CACHE_TTL_MS=300000
+# AGENT_TASK_TIMEOUT_MS=180000
+
+# Usage throttling (optional)
+# SMARTPERFETTO_USAGE_MAX_REQUESTS=200
+# SMARTPERFETTO_USAGE_MAX_TRACE_REQUESTS=100
+# SMARTPERFETTO_USAGE_WINDOW_MS=86400000
 ```
 
 ## Quick Start

@@ -1,58 +1,60 @@
-# SmartPerfetto 面试准备指南
+# SmartPerfetto 面试准备指南 v2
 
-> 独立开发的 AI 驱动 Android 性能分析平台，基于 Claude Agent SDK + MCP 协议 + Perfetto UI 插件。
+> 独立开发的 AI Agent 驱动 Android 性能分析平台。基于 Claude Agent SDK + MCP 协议 + Perfetto UI 插件。
+> 核心亮点：**Agent 工程化落地** — 不是调 API 的 demo，而是规划→执行→验证→学习的完整闭环。
 
 ---
 
 ## 目录
 
-- [一、项目概览与数据指标](#一项目概览与数据指标)
-- [二、Before vs After：传统分析 vs SmartPerfetto](#二before-vs-after传统分析-vs-smartperfetto)
-- [三、核心架构与技术亮点](#三核心架构与技术亮点)
-- [四、面试场景 Q&A](#四面试场景-qa)
-  - [场景一：项目深挖面](#场景一项目深挖面最常见15-20-分钟)
-  - [场景二：系统设计面](#场景二系统设计面)
-  - [场景三：行为面 / BQ 面](#场景三行为面--bq-面)
-  - [场景四：技术细节追问](#场景四技术细节追问)
-- [五、Vision & Gap：终极形态与当前差距](#五vision--gap终极形态与当前差距)
-- [六、面试完整叙事线（5-8 分钟）](#六面试完整叙事线5-8-分钟)
-- [附录：面试加分 Buzzword 清单](#附录面试加分-buzzword-清单)
+- [一、项目概览与硬数据](#一项目概览与硬数据)
+- [二、Before vs After](#二before-vs-after)
+- [三、为什么 LLM 不能直接分析 Trace？（项目根本动机）](#三为什么-llm-不能直接分析-trace)
+- [四、整体架构](#四整体架构)
+- [五、Agent 系统深度讲解（核心亮点）](#五agent-系统深度讲解)
+- [六、MCP 工具体系 — 为什么是 17 个、为什么这样分](#六mcp-工具体系)
+- [七、Skill 系统 — 为什么不用标准 MCP Resource/Tool](#七skill-系统)
+- [八、Context Engineering](#八context-engineering)
+- [九、验证与纠错](#九验证与纠错)
+- [十、项目特殊性 — 领域专业知识](#十项目特殊性)
+- [十一、面试场景 Q&A](#十一面试场景-qa)
+- [十二、面试完整叙事线](#十二面试完整叙事线)
+- [附录：Buzzword 清单](#附录buzzword-清单)
 
 ---
 
-## 一、项目概览与数据指标
+## 一、项目概览与硬数据
 
 ### 一句话定位
 
-AI 驱动的 Android 性能分析平台，把专家的分析方法论编码成 162 个 YAML Skill + 8 套场景策略，让 AI Agent 自动执行系统化分析，从 45-90 分钟手动分析缩短到 2-3 分钟。
+AI 驱动的 Android 性能分析平台，把资深工程师的分析方法论编码成 **157 个 YAML Skill + 12 套场景策略**，通过 Claude Agent SDK + 17 个 MCP 工具让 AI Agent 自主完成系统化分析，从 45-90 分钟手动分析缩短到 2-3 分钟。
 
 ### 硬数据
 
 | 指标 | 数值 |
 |------|------|
-| 代码规模 | 16 万行 TypeScript + 5.1 万行 YAML |
-| 分析 Skill | 162 个（74 atomic + 28 composite + 30 pipeline + 18 module + 2 deep） |
-| 场景策略 | 8 套场景策略 + 6 个知识库模板 + 6 个 prompt 模板 |
-| MCP 工具 | 18 个 |
-| 测试 | 250 个测试文件，6 条 canonical trace 回归 |
-| Token 节省 | SQL 摘要 ~85%，ArtifactStore 3 级缓存 |
-| 场景分类延迟 | <1ms（纯关键词，无 LLM） |
-| SSE 流延迟 | ~200ms |
-| 生产依赖 | 仅 13 个 |
+| 代码规模 | ~16 万行 TypeScript + ~5 万行 YAML |
+| 分析 Skill | 157 个（80 atomic + 28 composite + 29 pipeline + 18 module + 2 deep） |
+| 场景策略 | 12 套场景策略 + 6 个知识库模板 + 5 个 prompt 模板 + 4 个架构模板 |
+| MCP 工具 | 17 个（9 always-on + 8 conditional） |
+| 测试覆盖 | 6 条 canonical trace 回归 + 单元测试 + Skill 评估 |
+| Token 节省 | SQL 摘要 ~85%，ArtifactStore 3 级缓存（3000→60 tokens） |
+| 场景分类延迟 | <1ms（纯关键词匹配，零 LLM 调用） |
 | 分析效率提升 | 20-30x（45-90min → 2-3min） |
+| SSE 事件类型 | 7 种（progress/thought/agent_response/answer_token/conclusion/analysis_completed/error） |
 
 ---
 
-## 二、Before vs After：传统分析 vs SmartPerfetto
+## 二、Before vs After
 
 ### Before：传统 Perfetto 分析流程
 
 | 步骤 | 耗时 | 说明 |
 |------|------|------|
-| 1. 抓 trace | 5 min | `adb shell perfetto` 或系统 Tracing，10-50MB |
+| 1. 抓 trace | 5 min | `adb shell perfetto` 或系统 Tracing，10-500MB |
 | 2. 人肉看时间线 | 10-20 min | 几十条 track（CPU/线程/SurfaceFlinger/RenderThread/Binder），一帧帧找卡顿位置 |
 | 3. 手写 SQL | 10-15 min | 几百张表、列名不直观，经常试错 |
-| 4. 跨 track 关联 | 10-20 min | 同时看 5-6 条 track 交叉对比定位根因（Binder？GC？CPU 降频？GPU？） |
+| 4. 跨 track 关联 | 10-20 min | 同时看 5-6 条 track 交叉对比定位根因 |
 | 5. 写报告 | 10-15 min | 截图 + 数据 + 结论 |
 | **总计** | **45-90 min** | 高度依赖经验，新人半年才能上手 |
 
@@ -61,55 +63,75 @@ AI 驱动的 Android 性能分析平台，把专家的分析方法论编码成 1
 | 痛点 | 具体表现 |
 |------|---------|
 | 门槛高 | 要理解 VSync、RenderThread、Choreographer、SurfaceFlinger、Binder、CPU 调度等 10+ 子系统 |
-| 效率低 | 一个问题 45-90 分钟，大量时间花在"找位置"和"试 SQL" |
+| 效率低 | 大量时间花在"找位置"和"试 SQL" |
 | 容易遗漏 | 人工分析很难每次都检查所有维度（CPU/GPU/内存/Binder/GC/热降频） |
-| 经验难传承 | 资深工程师脑子里的分析方法论，新人很难习得 |
-| 无法规模化 | 团队每天可能有几十个性能问题，靠人工完全扛不住 |
+| 经验难传承 | 资深工程师脑子里的方法论，新人很难习得 |
 
-### After：SmartPerfetto 分析流程
+### After：SmartPerfetto
 
 ```
-用户: "分析滑动卡顿"
-        │
-        ▼
-[场景分类] ─── <1ms ──→ scrolling
-        │
-        ▼
-[架构检测] ── 自动识别 ──→ Flutter / Standard / Compose / WebView
-        │
-        ▼
-[自动规划] ── Plan 门控 ──→ "Phase 1: 帧概览 → Phase 2: 卡顿帧定位 → Phase 3: 根因分析"
-        │
-        ▼
-[执行 Skills]
-   ├─ L1: 总览（FPS 92.3, 卡顿率 8.7%, 共 487 帧）        ← 5 秒出结果
-   ├─ L2: 帧列表（哪些帧卡了、卡了多久、什么类型）            ← 实时流式展示
-   ├─ L3: 逐帧诊断（Frame #234: Binder 阻塞 23ms）         ← 点击跳转时间线
-   └─ L4: 深度分析（调用栈、线程状态、阻塞链）                ← 按需展开
-        │
-        ▼
-[4 层验证] ── 自动检查证据 + 假设闭环 ──→ 过滤误报
-        │
-        ▼
-[输出报告] ── 结构化结论 + Mermaid 因果链 + 可点击的时间线书签
+用户: "分析滑动卡顿"  →  2-3 分钟  →  分层结构化报告 + 因果链 + 时间线书签
+
+    场景分类 (<1ms) → 架构检测 → 自动规划 → 执行 Skills (L1→L4) → 4 层验证 → 输出
 ```
 
-**关键对比：**
-
-| 维度 | Before（手动） | After（SmartPerfetto） | 提升 |
-|------|---------------|----------------------|------|
-| 分析耗时 | 45-90 分钟 | 2-3 分钟 | **20-30x** |
-| 覆盖维度 | 取决于经验，通常 3-5 个 | 162 个 Skill 系统扫描 | **全覆盖** |
-| 门槛 | 至少 6 个月经验 | 自然语言提问 | **零门槛** |
-| 一致性 | 不同人分析结果不同 | 策略驱动 + 验证 | **确定性** |
-| 可追溯 | 分析过程在工程师脑子里 | 每步工具调用有日志 | **全链路可审计** |
-| 知识沉淀 | 经验在人的脑子里 | 编码成 Skill + Strategy + 跨会话学习 | **可复用** |
+| 维度 | Before（手动） | After（SmartPerfetto） |
+|------|---------------|----------------------|
+| 分析耗时 | 45-90 分钟 | 2-3 分钟 |
+| 覆盖维度 | 取决于经验 | 157 个 Skill 全维度系统扫描 |
+| 门槛 | 至少 6 个月 | 自然语言提问 |
+| 一致性 | 因人而异 | 策略驱动 + 验证保证确定性 |
+| 可追溯 | 在工程师脑子里 | 全链路可审计（每步工具调用有日志） |
 
 ---
 
-## 三、核心架构与技术亮点
+## 三、为什么 LLM 不能直接分析 Trace？
 
-### 整体架构图
+这是面试中最关键的"为什么"——它解释了整个项目存在的根本动机。
+
+### 问题 1：数据规模远超 Context Window
+
+| 维度 | 典型值 |
+|------|--------|
+| Trace 文件大小 | 50MB - 500MB |
+| 事件数 | 百万 ~ 千万级 |
+| 序列化为文本 | 数 GB |
+| Claude 最大 context | ~200K tokens |
+
+**你不可能把 trace "喂给" LLM。**
+
+### 问题 2：LLM 无法做精确计算
+
+性能分析需要精确数值：帧耗时 P50/P90/P99、VSync 周期检测（IQR 过滤中位数）、CPU 利用率百分比。LLM 会**幻觉**——编造看起来合理但完全错误的数字。
+
+### 问题 3：缺乏领域知识的结构化运用
+
+Android 渲染管线极其复杂（30+ 种渲染架构），卡顿根因可能跨线程、跨进程。LLM "知道"这些概念但缺乏将知识**分阶段、分场景**运用到具体 trace 上的能力。
+
+### 问题 4：可靠性不足
+
+幻觉、遗漏、浅层归因、不一致——直接让 LLM 分析性能数据是不可靠的。
+
+### SmartPerfetto 的核心理念
+
+> **让 LLM 做它擅长的事（推理、归因、表达），让工具做它擅长的事（查询、计算、检索）。**
+
+```
+LLM (Claude) 负责:              工具系统负责:
+├─ 理解用户问题                  ├─ SQL 精确查询 (trace_processor)
+├─ 制定分析计划                  ├─ 数值计算与统计
+├─ 推理因果关系                  ├─ 渲染架构检测
+├─ 跨领域关联分析                ├─ 分层数据提取 (L1-L4)
+├─ 生成结构化报告                ├─ Perfetto stdlib 查询
+└─ 自然语言交互                  └─ 数据摘要与压缩
+
+连接层: MCP Protocol — 17 个工具
+质量层: 4 层验证 + 反思纠错
+```
+
+---
+
+## 四、整体架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -133,10 +155,10 @@ AI 驱动的 Android 性能分析平台，把专家的分析方法论编码成 1
 │                     │ Claude Agent SDK                       │
 │           ┌─────────┴──────────┐                            │
 │           │  MCP Server        │                            │
-│           │  (18 Tools)        │                            │
+│           │  (17 Tools)        │                            │
 │           │  execute_sql       │   ┌──────────────────┐     │
 │           │  invoke_skill      ├──►│ Skill Engine      │     │
-│           │  submit_plan       │   │ 162 YAML Skills   │     │
+│           │  submit_plan       │   │ 157 YAML Skills   │     │
 │           │  submit_hypothesis │   │ L1→L2→L3→L4      │     │
 │           │  lookup_knowledge  │   └──────────────────┘     │
 │           │  ...               │                            │
@@ -150,356 +172,671 @@ AI 驱动的 Android 性能分析平台，把专家的分析方法论编码成 1
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 亮点 1：确定性 + 概率性混合架构
+### 核心数据流
 
 ```
-用户提问 → 场景分类(scrolling/startup/ANR/general)
-  ├─ 有匹配策略 → 确定性多阶段 Pipeline（Strategy 驱动，每次不遗漏）
-  └─ 没有匹配 → 假设驱动的多轮推理（Claude 自主探索）
+用户: "分析滑动卡顿"
+    │
+    ├─ Scene Classification → "scrolling" (<1ms, 从 strategy frontmatter 关键词匹配)
+    ├─ Architecture Detection → "Flutter TextureView, 置信度 92%"
+    ├─ System Prompt Assembly → 角色 + 方法论 + 滚动策略 + Flutter 架构指南 + 输出格式
+    │
+    ├─ Claude Agent SDK (自主 MCP 工具调用，最多 15 轮)
+    │   ├─ submit_plan → "Phase 1: 概览 → Phase 2: 逐帧诊断 → Phase 3: 根因深钻"
+    │   ├─ invoke_skill("scrolling_analysis") → L1 帧概览 + L2 卡顿帧列表
+    │   ├─ invoke_skill("jank_frame_detail") → L3 逐帧诊断
+    │   ├─ execute_sql("SELECT ...") → 补充查询
+    │   ├─ lookup_knowledge("cpu-scheduler") → 加载 CPU 调度知识
+    │   └─ submit_hypothesis → resolve_hypothesis → 证据驱动结论
+    │
+    ├─ 4-Layer Verification → 证据检查 + 计划遵守 + 假设闭环 + 场景完整性
+    │
+    └─ 结构化报告 → findings + Mermaid 因果链 + 优化建议
+        └─ SSE 实时流式输出 → 前端
+```
+
+---
+
+## 五、Agent 系统深度讲解
+
+> **这一节是面试核心——它展示了你如何思考 Agent 的设计，而不只是"用了 Claude API"。**
+
+### 5.1 为什么需要 Agent？为什么不是 Pipeline？
+
+性能分析不是一个"给输入得输出"的任务，它本质上是一个**探索性推理过程**：
+
+1. 先看总览 → 发现 47 帧卡顿，P90=23.5ms
+2. 根据总览决定方向 → 40% 卡在 APP 阶段，优先看 APP
+3. 逐帧诊断 → Frame #234 的 RenderThread 被 Binder 阻塞 23ms
+4. 形成假设 → "可能是 system_server 的 Binder 响应慢"
+5. 验证假设 → 查 Binder 对端，发现确实 system_server CPU 调度延迟
+6. 可能需要回退 → 如果假设不成立，换方向
+7. 综合所有发现，形成结论
+
+**这恰好是 Agent 架构的价值——LLM 自主规划、工具调用、迭代推理。** 如果用 Pipeline 硬编码，你无法处理"这个 trace 的问题可能在 GPU，也可能在 GC"这种需要动态决策的场景。
+
+### 5.2 我的 Agent 设计哲学
+
+#### 原则 1：确定性 + 概率性混合
+
+```
+用户问题 → 场景分类(12 种场景)
+  ├─ 有匹配策略 → 确定性多阶段分析（Strategy 约束步骤，每次不遗漏）
+  └─ 无匹配(general) → 假设驱动的自主推理（Claude 自主探索）
 ```
 
 **面试话术：**
-> "纯 LLM 做性能分析有两个问题：一是输出不稳定，二是容易遗漏关键步骤。所以我设计了双轨架构——对已知场景用外部 Strategy 文件约束分析步骤，保证每次不遗漏；对未知场景让 Agent 自主假设-验证。既有确定性保底，又有灵活性。"
+> "纯 LLM 做性能分析有两个问题：输出不稳定、容易遗漏关键步骤。所以我设计了双轨架构——对已知场景（如滚动、启动）用外部 Strategy 文件约束分析步骤，保证确定性；对未知场景让 Agent 自主假设-验证。既有确定性保底，又有灵活性。"
 
-### 亮点 2：18 个 MCP 工具（Plan 门控）
+#### 原则 2：Agent 的"环境"比 prompt 措辞更重要
 
-| 类别 | 工具 | 设计意图 |
-|------|------|----------|
-| 数据获取 | `execute_sql`, `invoke_skill`, `list_skills` | Claude 的"手" |
-| 知识查询 | `lookup_sql_schema`, `list_stdlib_modules`, `lookup_knowledge` | Claude 的"参考资料" |
-| 规划 | `submit_plan`, `update_plan_phase`, `revise_plan` | Claude 的"计划本" |
-| 推理 | `submit_hypothesis`, `resolve_hypothesis`, `flag_uncertainty` | Claude 的"思考记录" |
-| 记忆 | `write_analysis_note`, `fetch_artifact`, `recall_patterns` | Claude 的"笔记本" |
+这是我在项目中最大的一个认知迭代。v3 初期我花了大量时间精心设计 system prompt 的措辞，后来发现——**真正影响 Agent 输出质量的不是你告诉它"怎么说"，而是你给它什么工具、什么数据、什么约束**。
 
-**关键设计：** `execute_sql` 和 `invoke_skill` 被 Plan 门控——必须先 `submit_plan` 才能执行查询，防止 Agent 上来就乱查。
+具体例子：
+- 加了 `submit_plan` 门控后，Claude 不再上来就乱查 SQL，分析质量提升明显
+- 加了 `ArtifactStore` 后，Claude 不再被大量数据淹没，推理聚焦度提升
+- 加了 `lookup_knowledge` 后，根因深度从"主线程阻塞"深入到"Binder 对端 CPU 降频导致响应延迟"
 
-### 亮点 3：Context Engineering（85% token 节省）
+**面试话术：**
+> "与其优化 prompt 的文字，不如优化 Agent 的环境。这也是为什么我在 MCP 工具设计上投入了最多精力。"
 
-**问题：** LLM context window 有限，一个 Skill 可能返回 3000+ tokens。
+#### 原则 3：Plan 门控 — 强制 Agent 先想后做
 
-**三层解决方案：**
+```
+没有 Plan 门控时:
+  Claude → execute_sql("SELECT * FROM slice") → execute_sql("SELECT * FROM thread") → ...
+  （无方向的乱查，浪费 token，输出散乱）
+
+有 Plan 门控时:
+  Claude → submit_plan({phases: [...]})  ← 必须先提交计划
+        → update_plan_phase("p1", "in_progress")
+        → invoke_skill("scrolling_analysis")  ← 现在才能执行
+        → update_plan_phase("p1", "completed")
+```
+
+`execute_sql` 和 `invoke_skill` 在执行前调 `requirePlan()` 检查 session 是否已有 `submit_plan` 记录。没有则返回错误。
+
+### 5.3 Agent 核心组件
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| **ClaudeRuntime** | `claudeRuntime.ts` (65KB) | 主编排器：会话生命周期、超时控制、SDK 调用 |
+| **MCP Server** | `claudeMcpServer.ts` (74KB) | 17 个工具的注册与执行逻辑 |
+| **System Prompt** | `claudeSystemPrompt.ts` (15KB) | 动态组装 system prompt（4500 token 预算） |
+| **SSE Bridge** | `claudeSseBridge.ts` (15KB) | SDK 流式消息 → SSE 事件转换 |
+| **Verifier** | `claudeVerifier.ts` (35KB) | 4 层验证 + 反思纠错 |
+| **Scene Classifier** | `sceneClassifier.ts` | 关键词场景分类（<1ms，从 strategy frontmatter 动态加载） |
+| **Strategy Loader** | `strategyLoader.ts` | 加载 `.strategy.md` 和 `.template.md`，变量替换 |
+| **Artifact Store** | `artifactStore.ts` | Skill 结果缓存 + 分级获取（summary/rows/full） |
+| **SQL Summarizer** | `sqlSummarizer.ts` | SQL 结果摘要（~85% token 节省） |
+| **Pattern Memory** | `analysisPatternMemory.ts` (15KB) | 跨会话分析模式记忆（正/负面经验） |
+| **Agent Definitions** | `claudeAgentDefinitions.ts` | SDK agent 定义、工具描述 + 示例 |
+| **Agent Metrics** | `agentMetrics.ts` | 工具调用计时、性能追踪 |
+| **Finding Extractor** | `claudeFindingExtractor.ts` | 从 Claude 输出中提取结构化发现 |
+| **Focus Detector** | `focusAppDetector.ts` | 3 级 fallback 检测前台应用 |
+| **Config** | `claudeConfig.ts` | Agent SDK 配置管理 |
+| **Session Snapshot** | `sessionStateSnapshot.ts` | 会话状态持久化 |
+
+### 5.4 安全与治理
+
+Agent 自主运行意味着需要严格的安全边界：
+
+| 机制 | 说明 |
+|------|------|
+| **并发守卫** | `activeAnalyses` Set 防止同一 session 并行分析 |
+| **超时控制** | 40s/轮 × 最多 15 轮 = 10 分钟上限 |
+| **Watchdog** | 连续 3 次同工具失败 → 注入策略切换 prompt |
+| **Circuit Breaker** | >60% 工具调用失败 → 简化分析范围 |
+| **Safety Timer** | `Promise.race()` 级别强制超时 |
+| **Stream 取消** | 超时时主动终止 SDK 流，停止 API 消费 |
+| **Budget Cap** | `CLAUDE_MAX_BUDGET_USD` 控制每次分析的 API 成本上限 |
+
+### 5.5 多轮对话
+
+```
+Turn 1: 用户 "分析滑动卡顿"  → 完整分析
+Turn 2: 用户 "Binder 那个帧再详细看看"  → 基于上轮上下文深入
+Turn 3: 用户 "和启动时的 Binder 对比一下"  → 跨场景关联
+```
+
+- SDK session ID 持久化到 `logs/claude_session_map.json`
+- 通过 `resume: sdkSessionId` 恢复 SDK 上下文
+- `write_analysis_note` 抵抗 context compression（SDK 会自动压缩历史消息）
+- 实体追踪 (`entity_context`) 记录已发现的关键实体
+
+### 5.6 SSE 双终结事件
+
+这是一个值得讲的设计细节——agentv3 有两个"终结"事件：
+
+```
+Claude SDK 返回结果
+    │
+    ▼
+conclusion 事件 (近终结)  ← 用户即刻看到分析结论
+    │
+    ▼  (后台异步生成 HTML 报告)
+    │
+analysis_completed 事件 (终结)  ← 携带 reportUrl，前端展示报告链接
+```
+
+**为什么分两步？** 因为 HTML 报告生成需要 200-500ms，但用户不应该等这个时间才看到结论。所以 `conclusion` 先发给前端让用户立刻看到结果，`analysis_completed` 后续补上报告链接。
+
+---
+
+## 六、MCP 工具体系
+
+### 6.1 为什么用 MCP？
+
+三个原因：
+
+1. **可控性** — MCP 工具有 Zod schema 校验，参数不合法直接拒绝
+2. **可观测性** — 所有工具调用有日志，能审计 Claude 调了什么、传了什么、返回了什么
+3. **token 优化空间** — 工具层可以做摘要、缓存、分页，这是让 LLM 直接写 SQL 做不到的
+
+**面试话术：**
+> "Claude 不直接访问 trace 数据，它通过 MCP 工具间接操作。这个间接层让我能在不改 Agent 逻辑的情况下做 token 优化、错误学习、结果缓存。"
+
+### 6.2 工具设计原则
+
+**每个工具对应一个认知动作，而不是一个技术操作。**
+
+- ❌ 错误粒度：`query_frames`, `query_threads`, `query_binder` → 太细，限制了 Claude 的灵活性
+- ❌ 错误粒度：`analyze_everything` → 太粗，Agent 失去控制权
+- ✅ 正确粒度：`execute_sql`（Claude 自己决定查什么）+ `invoke_skill`（封装好的分析流程）
+
+另一个例子：为什么把 `submit_hypothesis` 和 `resolve_hypothesis` 分开？因为"提出假设"和"验证假设"是两个不同的认知步骤，分开后验证层可以检查假设闭环（所有假设都必须被 confirmed 或 rejected）。
+
+### 6.3 完整工具清单
+
+#### Always-on 工具（9 个，始终可用）
+
+| 工具 | 类比 | 用途 | 设计意图 |
+|------|------|------|----------|
+| `execute_sql` | Claude 的"手" | 执行 Perfetto SQL | 支持 `summary=true` 返回摘要而非全量（省 85% token） |
+| `invoke_skill` | Claude 的"流程手册" | 执行 Skill pipeline | 封装好的多步分析，一次调用获取 L1-L4 分层结果 |
+| `list_skills` | Claude 的"技能目录" | 列出可用 Skills | 按 category 过滤，让 Claude 自己发现能力 |
+| `detect_architecture` | Claude 的"眼睛" | 检测渲染架构 | Standard/Flutter/Compose/WebView + 置信度 + 证据 |
+| `lookup_sql_schema` | Claude 的"参考手册" | 查 Perfetto 表结构 | 搜索 761 个 stdlib 表/视图/函数模板 |
+| `query_perfetto_source` | Claude 的"源码搜索" | 查 stdlib 源码 | 找用法模式和示例 |
+| `list_stdlib_modules` | Claude 的"库目录" | 列出 stdlib 模块 | 发现可用的 Perfetto stdlib 预定义模块 |
+| `lookup_knowledge` | Claude 的"教科书" | 加载背景知识 | 6 个领域: 渲染管线/Binder/GC/CPU调度/温控/锁竞争 |
+| `recall_patterns` | Claude 的"经验库" | 跨会话分析模式记忆 | 正模式（成功经验）+ 负模式（失败教训） |
+
+#### Conditional 工具（8 个，按需启用）
+
+| 工具 | 类比 | 用途 |
+|------|------|------|
+| `submit_plan` | Claude 的"计划本" | 提交分析计划（分阶段，含目标和预期工具） |
+| `update_plan_phase` | ↑ | 更新阶段状态（pending → in_progress → completed） |
+| `revise_plan` | ↑ | 中途修订计划（新信息出现时动态调整） |
+| `submit_hypothesis` | Claude 的"假设板" | 提交可验证的假设（含预期验证方法） |
+| `resolve_hypothesis` | ↑ | 确认/否定假设（附证据） |
+| `write_analysis_note` | Claude 的"笔记本" | 写入分析笔记（抗 context compression） |
+| `fetch_artifact` | Claude 的"档案柜" | 分级获取 Skill 结果（summary/rows/full） |
+| `flag_uncertainty` | Claude 的"问号贴纸" | 标记不确定性（非阻塞，影响置信度计算） |
+
+### 6.4 工具描述的精心设计
+
+MCP 工具的 `description` 不只是文档——它是 Agent 的"使用说明"。我在工具描述中嵌入了**具体的调用示例**，这是提升 Agent 工具选择准确率的关键手段：
+
+```typescript
+// execute_sql 的 description 包含示例:
+'1. Full scrolling analysis: skillId="scrolling_analysis", params={process_name: "com.example.app"}\n' +
+'2. Single jank frame detail: skillId="jank_frame_detail", params={frame_number: 42, process_name: "com.example.app"}'
+```
+
+**为什么？** 因为 LLM 对示例的响应比对抽象描述好得多。加了示例后，Claude 调用 `invoke_skill` 时的参数格式错误率从 ~15% 降到 <3%。
+
+### 6.5 工具调用度量
+
+每个 MCP 工具调用都有计时（`agentMetrics.ts`），可以追踪：
+
+- 每个工具的平均/P90 执行时间
+- 工具调用序列（哪些工具总是一起被调用）
+- 失败率（用于 Circuit Breaker 决策）
+
+---
+
+## 七、Skill 系统
+
+### 7.1 为什么需要 Skill？为什么不让 Claude 直接写 SQL？
+
+如果让 LLM 每次从头写 SQL 分析卡顿：
+
+1. **SQL 不稳定** — LLM 可能写出语法错误或逻辑错误的 SQL
+2. **分析不全面** — 可能遗漏关键指标（如 VSync 周期检测需要 IQR 过滤）
+3. **不可复现** — 同样的问题，每次分析路径不同
+4. **Token 浪费** — 复杂的多步 SQL 每次都要重新生成
+5. **领域知识损失** — VSync 检测需要"中位数 + IQR 过滤"这种领域知识，LLM 不一定每次都记得
+
+**Skill 的核心理念：LLM 决定"用哪个 Skill"（战略），Skill 负责"怎么分析"（战术）。**
+
+### 7.2 为什么不用标准 MCP Resource/Tool？
+
+这是一个关键的设计决策——我**自建了 YAML Skill 系统**，而不是把每个分析步骤暴露为独立的 MCP Tool。原因有三：
+
+#### 原因 1：组合爆炸
+
+如果每个分析能力都是一个 MCP Tool：
+- 80 个 atomic 分析 → 80 个 MCP Tool → Claude 的 tool list 会有 80+ 个工具描述
+- **Token 成本爆炸**：每次 API 调用都要把所有工具描述发给 Claude
+- **选择困难**：Claude 面对 80 个工具时选择准确率下降
+
+用 Skill 系统：
+- Claude 只看到 1 个 `invoke_skill` 工具 + 1 个 `list_skills` 工具
+- 通过 `list_skills(category="scrolling")` 按需发现能力
+- **两个 MCP Tool 封装了 157 个分析能力**
+
+#### 原因 2：非工程师也能写
+
+YAML Skill 让**性能专家**可以直接贡献分析逻辑，不需要懂 TypeScript：
+
+```yaml
+name: consumer_jank_detection
+type: composite
+steps:
+  - id: vsync_config
+    sql: |
+      -- 检测 VSync 周期 (中位数 + IQR 过滤)
+      SELECT median_period_ns FROM ...
+    display:
+      level: summary
+  - id: jank_frames
+    sql: |
+      -- 基于 present_ts 间隔检测卡顿
+      SELECT frame_id, duration_ms, jank_type FROM ...
+    display:
+      level: list
+      columns:
+        - { name: duration_ms, type: duration, click: navigate_timeline }
+```
+
+#### 原因 3：自描述渲染 — 前端零改动
+
+每个 Skill 的输出通过 `DataEnvelope` 自描述。前端根据 `display.columns` 的类型（`timestamp`, `duration`, `percentage`）和动作（`navigate_timeline`, `copy`）**自动渲染**。
+
+**这意味着新增一个 Skill，前端不需要写一行代码。** 这是 157 个 Skills 而前端代码量仍然可控的关键。
+
+### 7.3 Skill 全景
+
+| 类型 | 数量 | 位置 | 说明 |
+|------|------|------|------|
+| **Atomic** | 80 | `skills/atomic/` | 单一检测（VSync 周期、CPU 拓扑、GPU 频率、GC 事件...） |
+| **Composite** | 28 | `skills/composite/` | 多步组合（scrolling_analysis = 多个 atomic 编排） |
+| **Pipeline** | 29 | `skills/pipelines/` | 渲染管线检测 + 教学（29 种 Android 渲染架构识别） |
+| **Module** | 18 | `skills/modules/` | 模块分析（app/framework/hardware/kernel） |
+| **Deep** | 2 | `skills/deep/` | 深度分析（CPU profiling, callstack） |
+| **总计** | **157** | | |
+
+另外还有 **厂商适配层**：`skills/vendors/` 下有 8 家厂商（Pixel/Samsung/Xiaomi/Honor/Oppo/Vivo/Qualcomm/MTK）的 `.override.yaml`，覆盖通用 Skill 中的厂商特定逻辑。
+
+### 7.4 分层结果 (L1-L4)
+
+```
+L1 (Overview)  ─── "47 帧卡顿, P90=23.5ms, SEVERE 占 12%"
+    │                    ↑ 聚合指标，快速了解全貌
+    ▼
+L2 (List)      ─── 每一帧的详情列表 (frame_id, duration, jank_type)
+    │                    ↑ 可展开的数据表格
+    ▼
+L3 (Diagnosis) ─── 逐帧诊断 (iterator 遍历每个卡顿帧)
+    │                    ↑ 每帧的线程状态、阻塞原因
+    ▼
+L4 (Deep)      ─── 深度分析 (阻塞链、Binder 根因、调用栈)
+                         ↑ 跨线程/跨进程的因果追踪
+```
+
+### 7.5 Step 类型
+
+| Step 类型 | 说明 | 典型用途 |
+|-----------|------|----------|
+| `atomic` | 单条 SQL 查询 | 大多数检测 |
+| `skill_ref` | 引用另一个 Skill | 组合分析复用 |
+| `iterator` | 遍历数据行（循环） | 逐帧诊断 |
+| `parallel` | 并行执行多个 step | 独立指标同时获取 |
+| `conditional` | 条件分支 | 根据架构类型走不同路径 |
+
+### 7.6 热更新
+
+开发模式下，修改 `.skill.yaml` → 刷新浏览器即生效，无需重启后端。Strategy/Template 同理。这让迭代速度非常快——改 SQL、刷新、看结果，循环周期 < 10 秒。
+
+---
+
+## 八、Context Engineering
+
+> **面试中被追问"最难的技术挑战"时，讲这个。**
+
+### 8.1 核心挑战
+
+LLM 的效果高度依赖你给它的上下文。SmartPerfetto 的 system prompt 不是静态模板——它根据用户问题、trace 特征、历史上下文**动态组装**。
+
+### 8.2 System Prompt 组装（15+ 模块，4500 token 预算）
+
+```
+System Prompt (4500 token 预算)
+    │
+    ├─ [角色定义]     ← prompt-role.template.md
+    ├─ [架构检测结果]  ← arch-{standard|flutter|compose|webview}.template.md
+    ├─ [焦点应用]     ← 自动检测（3 级 fallback）
+    ├─ [选区上下文]   ← selection-area/slice.template.md（如果用户选了时间范围）
+    ├─ [分析方法论]   ← prompt-methodology.template.md
+    │   └─ {{sceneStrategy}} ← 场景策略注入（scrolling/startup/anr/...）
+    ├─ [输出格式]     ← prompt-output-format.template.md
+    ├─ [会话上下文]   ← 多轮对话积累的笔记、发现、实体
+    │
+    └─ [可选，按优先级裁剪]
+        ├─ SQL 知识库（匹配到的 stdlib 表）
+        ├─ 模式记忆（历史分析经验）
+        ├─ 负面记忆（历史踩坑）
+        └─ SQL 错误-修复对（自我学习）
+```
+
+### 8.3 Token 预算管理
+
+当内容超 4500 token 预算，按优先级从低到高裁剪：
+
+1. SQL 知识库引用（最先丢弃）
+2. 模式记忆
+3. 负面模式
+4. SQL 错误-修复对
+5. Sub-agent 指导
+6. 计划历史
+7. **选区上下文永不丢弃**（这是用户的明确意图）
+
+### 8.4 三层 Token 优化
 
 | 技术 | 效果 | 原理 |
 |------|------|------|
-| SQL 摘要 | 2000 tokens → 300 tokens（85% 节省） | 统计分布 + Top10 感兴趣行，完整数据推前端 |
-| ArtifactStore | 3000 tokens → 60 tokens（默认） | 3 级获取：summary(60t) → rows(200-400t) → full(1000+t) |
-| 渐进式 prompt 裁剪 | 15+ section → 按优先级裁剪到 4500 token | 先砍知识库/错误对，永不砍用户意图和场景策略 |
+| **SQL 摘要** | 8000 → 1200 tokens（85% 节省） | 统计分布(min/max/P50/P90) + Top10 感兴趣行，完整数据推前端 |
+| **ArtifactStore** | 3000 → 60 tokens（默认） | 3 级获取：summary(60t) → rows(200-400t) → full(1000+t) |
+| **渐进式 prompt 裁剪** | 15+ section → 按优先级裁到 4500t | 先砍知识库/错误对，永不砍用户意图和场景策略 |
 
-### 亮点 4：4 层验证系统
+**面试话术：**
+> "一个滚动分析 Skill 可能返回 3000+ tokens。如果全放进 Claude 的 context，几个 Skill 调用后 context 就满了。所以我设计了 ArtifactStore——结果先存下来，Claude 只看 summary（60 tokens），需要详情时调 `fetch_artifact` 按页拉取。配合 SQL 摘要，整体省了 85% 的 token。"
 
-| 层 | 内容 | 延迟 |
-|----|------|------|
-| 1. 启发式 | CRITICAL 必须有证据、不超 5 个 CRITICAL、已知误诊模式匹配 | <1ms |
-| 2. Plan 遵守度 | 计划阶段是否执行、预期工具是否调用 | <1ms |
-| 3. 假设闭环 | 所有 hypothesis 必须 confirmed 或 rejected | <1ms |
-| 4. LLM 交叉验证 | 轻量模型(Haiku)验证结论的证据支撑度（可选） | ~200ms |
+### 8.5 知识模板 — 按需注入领域知识
 
-验证不通过 → 生成纠正 prompt → Agent 反思修正（最多 2 轮），不是全部重来。
+不是把所有 Android 知识塞进 system prompt，而是 Claude 在需要时调 `lookup_knowledge` 按需加载：
 
-### 亮点 5：162 个 YAML Skill 分层设计
+| 知识模板 | 内容 |
+|----------|------|
+| `knowledge-rendering-pipeline` | 渲染管线各阶段职责、线程模型、常见瓶颈 |
+| `knowledge-binder-ipc` | Binder 调用链、对端追踪、阻塞判定 |
+| `knowledge-gc-dynamics` | GC 类型、对帧渲染的影响模型、阈值 |
+| `knowledge-cpu-scheduler` | CFS 调度、RT 优先级、频率/核心迁移 |
+| `knowledge-thermal-throttling` | 温控策略、频率限制、mitigation 检测 |
+| `knowledge-lock-contention` | 锁竞争检测、死锁模式、优先级反转 |
 
-```
-L1（概览）─→ FPS、卡顿率、总帧数
-L2（列表）─→ 卡顿帧列表、事件列表
-L3（诊断）─→ 逐帧根因（CPU/Binder/GC）
-L4（深度）─→ 调用栈、线程状态、阻塞链
-```
-
-前端通过 DataEnvelope 自描述数据契约自动渲染，新增 Skill 前端零改动。
-
-### 亮点 6：跨会话学习
+### 8.6 跨会话学习
 
 | 机制 | 说明 | 约束 |
 |------|------|------|
-| SQL 错误-修复对 | Claude 写错 SQL → 记录 error+fix → 下次相似错误自动注入 | 30 天 TTL，200 对上限，Jaccard>0.3 |
-| 正模式记忆 | 记录成功分析的 trace 特征 + 方法 | 60 天 TTL，200 条上限 |
-| 负模式记忆 | 记录失败的方法，避免重复犯错 | 90 天 TTL，100 条上限 |
-| 学习型误诊模式 | 误诊出现 ≥2 次自动加入验证规则 | 90 天 TTL，30 条上限 |
+| SQL 错误-修复对 | Claude 写错 SQL → 记录 error+fix → 下次注入 | 30 天 TTL，200 对上限，Jaccard>0.3 |
+| 正模式记忆 | 成功分析的 trace 特征 + 方法 | 60 天 TTL，200 条上限 |
+| 负模式记忆 | 失败方法，避免重复犯错 | 90 天 TTL，100 条上限 |
+| 学习型误诊模式 | 误诊 ≥2 次自动加入验证规则 | 90 天 TTL，30 条上限 |
+
+**加权 Jaccard 相似度**用于匹配历史模式：trace 特征分 5 类 tag，`arch`/`scene` 权重 3.0（最强信号），`domain` 权重 2.0，`cat` 权重 1.5，`finding` 权重 0.5（太具体，降权），再乘时间衰减（30 天半衰期）。
 
 ---
 
-## 四、面试场景 Q&A
+## 九、验证与纠错
 
-### 场景一：项目深挖面（最常见，15-20 分钟）
+### 为什么需要验证？
+
+LLM 分析可能：幻觉（编造数据）、浅层归因（不够深）、过度标记、遗漏、假设未闭环。实测 ~30% 的发现是误报。
+
+### 四层验证
+
+```
+Layer 1: 启发式检查 (无 LLM, <1ms)
+    ├─ CRITICAL 发现没有证据? → ERROR
+    ├─ >5 个 CRITICAL? → WARNING (过度标记)
+    ├─ 匹配已知误诊模式? → WARNING
+    ├─ 浅层根因(无多级因果链)? → WARNING
+    └─ 结论过短(<50字)? → ERROR
+
+Layer 2: Plan 遵守检查
+    ├─ 未提交计划? → ERROR
+    └─ 有未完成/未调用工具的阶段? → WARNING
+
+Layer 2.5: 假设闭环检查
+    └─ 有未 confirmed/rejected 的假设? → ERROR
+
+Layer 2.7: 场景完整性检查
+    ├─ scrolling: 缺帧/卡顿/VSync 分析? → WARNING
+    ├─ startup: 缺 TTID/TTFD? → WARNING
+    └─ anr: 缺阻塞/死锁分析? → WARNING
+
+Layer 3: LLM 验证 (可选, Haiku 模型)
+    └─ CRITICAL/HIGH 发现证据是否充分?
+```
+
+**反思纠错**：验证不通过 → 生成纠正 prompt（包含具体问题 + 修正建议）→ Claude 补充分析（利用已有数据）→ 再次验证（最多 2 轮，同样错误不重复纠正）。
+
+---
+
+## 十、项目特殊性
+
+> **这一节讲清楚项目对领域专业知识的要求——面试官会感兴趣的"壁垒"。**
+
+### 10.1 需要 Perfetto 深度知识
+
+Perfetto 是 Google 的系统级 trace 工具，数据存储在 SQLite-like 的 `trace_processor` 中：
+
+- **700+ 张表和视图**（Perfetto stdlib），列名不直观（如 `actual_frame_timeline_slice`）
+- 每种分析场景需要不同的表组合和 JOIN 策略
+- stdlib 在持续更新（我维护了 761 个 schema 模板的索引）
+- **SQL 写法有陷阱**：比如卡顿检测应该用 `present_ts` 间隔而不是 `token_gap`（这是我在项目中踩过的坑）
+
+### 10.2 需要 Android 渲染管线知识
+
+Android 有 **30+ 种渲染架构**，每种的线程模型和性能瓶颈完全不同：
+
+| 架构 | 关键线程 | 典型瓶颈 |
+|------|---------|---------|
+| Standard View (Blast) | main + RenderThread | dequeueBuffer, GPU |
+| Flutter TextureView | UI + Raster + Platform | Raster thread GC |
+| Flutter SurfaceView | UI + Raster | SurfaceFlinger 层级冲突 |
+| Jetpack Compose | main + RenderThread | 重组过多 |
+| WebView | main + Renderer + Compositor | JS 阻塞 |
+| Game (OpenGL/Vulkan) | GameThread + GPU | 着色器复杂度 |
+
+SmartPerfetto 通过 29 个 Pipeline Skills 自动识别和教学。
+
+### 10.3 需要 Android 系统知识
+
+分析根因需要理解多个子系统：
+
+- **SurfaceFlinger**：buffer 消费模型、VSYNC 信号分发、Layer 合成
+- **Binder IPC**：跨进程调用链、对端追踪、阻塞判定
+- **CPU 调度**：CFS 调度器、RT 优先级、频率调节、核心迁移
+- **内存管理**：GC 类型(Concurrent/STW)、LMK、OOM Adj
+- **温控系统**：thermal mitigation、频率限制
+- **Input 系统**：触摸事件分发、InputReader → InputDispatcher → App
+
+### 10.4 这些知识如何体现在系统设计中
+
+1. **12 套场景策略** — 每个场景（scrolling/startup/anr/...）的分析步骤不同，来源于对该场景的深度理解
+2. **157 个 Skills 的 SQL** — 每条 SQL 都是针对 Perfetto 表结构精心设计的
+3. **6 个知识模板** — 按需注入的领域知识，让 Claude 的根因分析更深
+4. **4 个架构模板** — 不同渲染架构的线程模型指导
+5. **验证规则** — 场景完整性检查知道每个场景必须包含哪些分析
+
+**面试话术：**
+> "这个项目的门槛不在于 AI 技术——Claude Agent SDK 的 API 不复杂。真正的壁垒是**领域知识的工程化**：你需要知道 Android 渲染管线的 30 种架构，知道 VSync 检测要用 IQR 过滤中位数，知道 Binder 根因追踪需要查对端线程状态。这些知识编码成了 157 个 Skill 和 12 套 Strategy，这才是项目的核心价值。"
+
+---
+
+## 十一、面试场景 Q&A
+
+### 场景一：项目深挖面（15-20 分钟）
 
 #### Q1: "介绍一下你这个项目"（30 秒电梯演讲）
 
-> "SmartPerfetto 是一个 AI 驱动的 Android 性能分析平台。它是 Google Perfetto trace viewer 的插件，核心是用 Claude Agent SDK 构建了一个自动化分析 Agent——工程师上传一个 trace 文件，AI 自动识别场景（滑动卡顿、启动慢、ANR），执行 162 个预定义的分析 Skill，给出分层的诊断报告。整个系统 16 万行 TypeScript + 5 万行 YAML 分析规则，有 250 个测试文件保证质量。"
+> "SmartPerfetto 是一个 AI 驱动的 Android 性能分析平台。它是 Google Perfetto trace viewer 的插件，核心是用 Claude Agent SDK 构建了一个自动化分析 Agent——工程师上传一个 trace 文件，AI 自动识别场景（滚动卡顿、启动慢、ANR 等 12 种），通过 17 个 MCP 工具执行 157 个预定义的分析 Skill，给出分层的诊断报告。分析时间从 45-90 分钟缩短到 2-3 分钟。"
 
-#### Q2: "为什么要做这个？手动分析有什么问题？"
+#### Q2: "为什么要做这个？"
 
-> "Android 性能分析有三个痛点：**一是门槛高**，要看懂 Perfetto trace 需要理解 VSync、RenderThread、Binder 调用链等十几个子系统，新人至少半年才能上手；**二是效率低**，一个复杂卡顿问题，资深工程师手动分析也要 30-60 分钟；**三是容易遗漏**，人工分析很难每次都检查所有维度（CPU 调度、GC、Binder、GPU、热降频等）。这个工具把专家经验编码成 162 个 YAML Skill + 8 套场景策略，让 AI Agent 按专家的分析方法论系统化执行。"
+> "三个痛点：门槛高（需要理解 VSync/Binder/SurfaceFlinger 等十几个子系统，新人半年才能上手）、效率低（一个问题 45-90 分钟）、容易遗漏（人工分析很难每次检查所有维度）。这个工具把专家经验编码成 157 个 YAML Skill + 12 套策略，让 AI 按专家方法论系统化执行。"
 
 #### Q3: "整体架构是怎样的？"
 
-> "分三层：前端是 Perfetto UI 的插件，用 SSE 实时接收分析结果；中间是 Express 后端，核心是 ClaudeRuntime 编排器，通过 MCP 协议给 Claude 暴露 18 个领域工具；底层是 Perfetto 的 C++ trace_processor，通过 HTTP RPC 执行 SQL 查询。**关键设计决策是：Claude 不直接操作数据，而是通过 MCP 工具间接操作**——这样我可以在工具层做 token 优化、错误学习、结果缓存。"
+> "三层：前端是 Perfetto UI 的插件（SSE 实时接收结果）；中间是 Express 后端，核心是 ClaudeRuntime 编排器（通过 MCP 协议给 Claude 暴露 17 个领域工具）；底层是 Perfetto 的 C++ trace_processor（HTTP RPC 执行 SQL）。关键设计：**Claude 不直接操作数据，通过 MCP 工具间接操作**——这个间接层让我能做 token 优化、错误学习、结果缓存。"
 
-（配合上面的架构图讲解）
+#### Q4: "Agent 一次分析的完整流程？"
 
-#### Q4: "Agent 是怎么工作的？一次分析的完整流程？"
+> "五个阶段：
+> 1. 场景识别（<1ms，关键词匹配，12 种场景）
+> 2. 上下文构建（检测渲染架构、前台 App，动态组装 system prompt）
+> 3. 规划（Claude 必须先 submit_plan 才能执行查询——Plan 门控机制）
+> 4. 执行（按计划调用 MCP 工具，获取 L1-L4 分层数据、记录假设和笔记）
+> 5. 验证（4 层验证，不通过则反思修正最多 2 轮）"
 
-> "一次分析有 5 个阶段：
-> 1. **场景识别**：纯关键词匹配（<1ms），把用户问题分类为 scrolling/startup/ANR/general
-> 2. **上下文构建**：检测渲染架构（Standard/Flutter/Compose/WebView）、前台 App、注入对应的场景策略
-> 3. **规划**：Claude 必须先 submit_plan 才能使用 execute_sql 和 invoke_skill（Plan 门控机制）
-> 4. **执行**：按计划调用 MCP 工具——执行 Skill 获取分层数据、写 SQL 查具体细节、记录假设和笔记
-> 5. **验证**：4 层验证（规则检查 → Plan 遵守度 → 假设闭环 → 可选 LLM 交叉验证），不通过会生成纠正 prompt 让 Agent 反思修正，最多 2 轮"
+#### Q5: "为什么用 MCP 协议？不直接让 LLM 写 SQL？"
 
-#### Q5: "为什么要用 MCP 协议？为什么不直接让 LLM 写 SQL？"
+> "三个原因：可控性（Zod schema 校验）、可观测性（全链路日志）、token 优化空间（execute_sql 有 summary 模式省 85%，invoke_skill 结果存 ArtifactStore，Claude 默认只看 60 tokens 摘要）。如果 LLM 直接写 SQL，这些优化都做不了。"
 
-> "三个原因：
-> 1. **可控性**——MCP 工具有 Zod schema 校验，参数不合法直接拒绝
-> 2. **可观测性**——所有工具调用都有日志，能看到 Claude 调了什么、传了什么、返回了什么
-> 3. **token 优化空间**——execute_sql 有 summary 模式省 85% token；invoke_skill 结果存 ArtifactStore，Claude 默认只看 60 tokens 的摘要。如果让 LLM 直接写 SQL，这些优化都做不了。"
+#### Q6: "157 个 Skill 是什么？为什么用 YAML 不用代码？"
 
-#### Q6: "162 个 Skill 是什么概念？为什么用 YAML？"
-
-> "每个 Skill 是一个声明式的分析步骤。用 YAML 有三个好处：
-> 1. **非工程师也能写**——性能专家不需要懂 TypeScript，直接写 SQL + 配置
-> 2. **热更新**——开发环境下改 YAML 刷新浏览器就生效，不用重启后端
-> 3. **自描述渲染**——前端通过 DataEnvelope 的 column 定义自动渲染表格，新增 Skill 前端零改动"
-
-#### Q7: "最难的技术挑战是什么？"（必问题，推荐讲 Context Engineering）
-
-> "最难的是 **Context Engineering**——怎么在有限的 token 预算内给 Claude 足够的上下文。
+> "每个 Skill 是一个声明式的分析 pipeline。用 YAML 三个好处：
+> 1. **非工程师可贡献**——性能专家不需要懂 TypeScript，直接写 SQL + 配置
+> 2. **热更新**——改 YAML 刷新浏览器就生效
+> 3. **自描述渲染**——通过 DataEnvelope 的 column 定义自动渲染，新增 Skill 前端零改动
 >
-> 具体有三个子问题：
+> 更关键的是：如果把 157 个 Skill 都暴露为独立的 MCP Tool，工具列表的 token 成本会爆炸。用 `invoke_skill` 一个工具封装 157 个能力，Claude 通过 `list_skills` 按需发现。"
+
+#### Q7: "最难的技术挑战是什么？"
+
+> "Context Engineering。三个子问题：
 >
-> **第一，系统 prompt 预算管理**。我的系统 prompt 由 15+ 个 section 组成，总量经常超 4500 tokens 上限。我实现了渐进式裁剪——按优先级排序，先砍知识库、再砍历史模式、再砍 SQL 错误对，但用户意图和场景策略永远不砍。
+> 第一，system prompt 预算管理——15+ 个 section，4500 token 上限，渐进式裁剪。
 >
-> **第二，Skill 结果太大**。一个滚动分析 Skill 可能返回 3000+ tokens。所以我设计了 ArtifactStore——结果先存下来，Claude 只看 summary（60 tokens），需要时调 fetch_artifact 按页拉取。配合 SQL 摘要，整体省了 85% 的 token。
+> 第二，Skill 结果太大——ArtifactStore 3 级缓存，Claude 默认只看 60 token 摘要，需要时按页拉取。配合 SQL 摘要省 85%。
 >
-> **第三，跨 turn 记忆**。SDK 会自动 compact 历史消息，早期 turn 的细节会丢失。所以我设计了 write_analysis_note 工具，让 Claude 把关键发现主动写下来。这些 notes 作为结构化数据注入到后续 turn 的 prompt 里，保证分析连贯性。"
+> 第三，跨 turn 记忆——SDK 会自动 compact 历史消息。我设计了 write_analysis_note 工具，让 Claude 主动把关键发现写下来，注入后续 turn 的 prompt。"
 
-#### Q8: "怎么保证 Agent 输出质量？30% 误报率怎么处理？"
+#### Q8: "怎么保证 Agent 输出质量？"
 
-> "四层验证系统：
-> 1. **启发式检查**（<1ms）——CRITICAL 发现必须有证据、不能超过 5 个 CRITICAL、检测已知误诊模式
-> 2. **Plan 遵守度**——检查所有计划阶段是否执行、预期工具是否调用
-> 3. **假设闭环**——所有 submit_hypothesis 必须被 resolve，不能留 'formed' 状态
-> 4. **可选 LLM 验证**——用轻量模型(Haiku)交叉验证结论
+> "四层验证（启发式检查 + Plan 遵守 + 假设闭环 + 可选 LLM 交叉验证）+ 反思纠错（最多 2 轮）。另外有学习机制——误诊模式出现 ≥2 次自动加入检测规则。"
+
+### 场景二：系统设计追问
+
+#### Q9: "17 个 MCP 工具怎么设计的？怎么决定粒度？"
+
+> "按**认知动作**分组而不是技术操作。比如没有拆 execute_sql 为 query_frames / query_threads，因为 Claude 自己知道查什么。但把 submit_hypothesis 和 resolve_hypothesis 分开了，因为'提出'和'验证'是两个认知步骤，分开后验证层能检查闭环。"
+
+#### Q10: "如果要支持多用户并发？"
+
+> "无状态化后端（session state → Redis，ArtifactStore → 对象存储）、trace_processor 池化（K8s Pod 池）、SSE → WebSocket + 消息队列。架构已预留端口池 9100-9900。"
+
+### 场景三：行为面
+
+#### Q11: "你怎么从零设计这个系统的？"
+
+> "三阶段迭代：
 >
-> 验证不通过 → 纠正 prompt → Agent 反思修正。同时有学习机制——误诊模式出现 ≥2 次就自动加入检测规则（90 天 TTL，30 条上限）。"
-
-#### Q9: "有什么具体的数据指标吗？"
-
-参见 [第一节的硬数据表格](#硬数据)。
-
----
-
-### 场景二：系统设计面
-
-#### Q10: "如果要支持多用户并发分析，你会怎么设计？"
-
-> "现在是单机架构。如果要水平扩展：
-> 1. **无状态化后端**——session state 从内存 Map 迁到 Redis，ArtifactStore 迁到对象存储
-> 2. **trace_processor 池化**——现在每个 trace 独占一个进程（端口 9100-9900），可以改成 K8s Pod 池
-> 3. **SSE → WebSocket + 消息队列**——用 Redis Pub/Sub 解耦分析进程和 API 进程
-> 4. **CDN 分发 trace 文件**——trace 文件几十 MB，上传后存 S3"
-
-#### Q11: "18 个 MCP 工具怎么设计的？怎么决定粒度？"
-
-> "按**能力域**分组（数据获取/知识查询/规划/推理/记忆）。
+> v1-v2：直接调 DeepSeek API。发现 context window 装不下，LLM 不了解 Perfetto 表结构。
 >
-> 粒度的设计原则：**每个工具对应一个认知动作，而不是一个技术操作**。比如没有把 'execute_sql' 拆成 'query_frames' 和 'query_threads'，因为 Claude 自己知道该查什么表。但把 'submit_hypothesis' 和 'resolve_hypothesis' 分开了，因为'提出假设'和'验证假设'是两个不同的认知步骤，分开能让验证层检查闭环。"
-
-#### Q12: "Claude API 挂了怎么办？容错机制？"
-
-> "三层容错：
-> 1. **指数退避重试**——529/500/503 错误自动重试，2s → 4s → 8s，最多 3 次
-> 2. **Watchdog + 断路器**——连续 3 次同一工具失败 → 注入策略切换提示；5 次调用中 60% 失败 → 触发断路器
-> 3. **优雅降级**——LLM 验证层失败不阻塞主流程；SDK session 过期（4h）自动降级为完整上下文注入；场景分类失败回退到 general 策略"
-
----
-
-### 场景三：行为面 / BQ 面
-
-#### Q13: "你怎么从零开始设计这个系统的？"
-
-> "按 3 个阶段迭代：
+> v2→v3：抽象 Skill 系统，LLM 调 Skill 而非写原始 SQL，引入场景分类。
 >
-> **阶段一（v1-v2）**：最简单方案——直接调 DeepSeek API，把 trace 数据发过去。很快发现两个问题：context window 装不下完整数据，LLM 不了解 Perfetto 表结构经常写错 SQL。
->
-> **阶段二（v2 → v3 过渡）**：抽象 Skill 系统——把常用 SQL 封装成 YAML，LLM 调用 Skill 而不是写原始 SQL。同时引入场景分类。
->
-> **阶段三（v3）**：全面切到 Claude Agent SDK + MCP 协议。Agent 从'被动回答'变成'主动探索'，能自己规划、执行、验证。花最多时间在 Context Engineering 和验证系统上。"
+> v3：全面切到 Claude Agent SDK + MCP。Agent 从'被动回答'变成'主动探索'——能自己规划、执行、验证。最多时间花在 Context Engineering 和验证系统上。"
 
-#### Q14: "遇到过什么重大决策失误？"
+#### Q12: "遇到过什么重大决策失误？"
 
-> "最大的一次是**过早优化 prompt 措辞**。v3 初期花了很多时间精心设计 system prompt 的措辞，结果发现 Claude 对 prompt 的敏感度比预期低——真正影响输出质量的不是措辞，而是**给它什么工具、什么数据、什么约束**。后来把精力转到 Context Engineering 上（ArtifactStore、SQL 摘要、Plan 门控），效果立刻好了很多。
->
-> 教训：**与其优化 prompt 的文字，不如优化 Agent 的环境。**"
+> "过早优化 prompt 措辞。v3 初期花很多时间精心设计 system prompt 的文字，后来发现真正影响质量的不是措辞，而是给 Agent 什么工具、什么数据、什么约束。把精力转到 Context Engineering 后效果立刻好了。教训：**与其优化 prompt 的文字，不如优化 Agent 的环境。**"
 
-#### Q15: "你怎么测试一个 AI Agent？输出是非确定性的"
+#### Q13: "你怎么测试一个 AI Agent？"
 
-> "分层测试策略：
-> 1. **确定性层全覆盖**——Skill Engine、场景分类、SQL 摘要、DataEnvelope 渲染用常规单元测试
-> 2. **Trace 回归测试**——6 条 canonical trace 必跑。不检查输出文字，检查结构性指标：是否执行了关键 Skill、是否检测到正确架构、是否有 CRITICAL 发现
-> 3. **Skill 评估测试**——独立测试每个 YAML Skill 在特定 trace 上的 SQL 输出
-> 4. **验证系统可测试**——启发式检查是纯函数，可以用预定义数据测试"
-
----
+> "分层：
+> 1. 确定性层全覆盖——Skill Engine、场景分类、SQL 摘要、DataEnvelope 用常规单元测试
+> 2. Trace 回归测试——6 条 canonical trace 必跑，检查结构性指标而非输出文字
+> 3. E2E Agent 测试——完整 SSE 流验证，检查 Agent 推理质量和 phase transitions
+> 4. 验证系统可测试——启发式检查是纯函数"
 
 ### 场景四：技术细节追问
 
-#### Q16: "Plan 门控机制具体怎么实现的？"
+#### Q14: "前台 App 检测为什么需要 3 级 fallback？"
 
-> "`execute_sql` 和 `invoke_skill` 执行前调 `requirePlan()`——检查当前 session 是否已有 submit_plan 记录。没有则返回错误 '请先提交分析计划'。不做门控时 Claude 会上来就执行 20+ 条无关 SQL，加了门控后被迫先思考分析路径，效率和 token 消耗都改善了。"
+> "因为不同 trace 可用的数据源不同：Tier 1 `android_battery_stats`（最可靠但需要开启 battery tracing）→ Tier 2 `android_oom_adj_intervals`（OOM adj=0 是前台）→ Tier 3 从 SurfaceFlinger layer 名解析包名。每层有 sqlite_master 守卫。"
 
-#### Q17: "跨会话学习的 Jaccard 相似度怎么算的？"
+#### Q15: "跨会话学习的 Jaccard 相似度怎么算的？"
 
-> "不是简单 Jaccard——用了**加权 Jaccard**。trace 特征分 5 类 tag：
-> - `arch`（架构）和 `scene`（场景）权重 3.0——最强信号
-> - `domain`（App 家族）权重 2.0
-> - `cat`（发现类别）权重 1.5
-> - `finding`（具体标题）权重 0.5——太具体，降权
->
-> 再乘以**时间衰减**（30 天半衰期指数衰减）和**频率增益**（`1 + log₂(1+matchCount) × 0.1`）。最终取 top 3 且分数 > 0.25 的注入 prompt。"
-
-#### Q18: "前台 App 检测为什么需要 3 级 fallback？"
-
-> "因为不同 trace 可用的数据源不同：
-> - **Tier 1**: `android_battery_stats`——最可靠，但需要 battery stats tracing 开启
-> - **Tier 2**: `android_oom_adj_intervals`——OOM adj=0 是前台，大部分 trace 有
-> - **Tier 3**: `actual_frame_timeline_slice`——从 SurfaceFlinger layer 名解析包名（`TX - com.example.app/Activity#1234`）
->
-> 每层有 sqlite_master 守卫——先检查表是否存在再查询，失败降级。保证不管 trace 怎么抓的都能尽力检测。"
+> "加权 Jaccard。trace 特征分 5 类 tag：arch/scene 权重 3.0，domain 权重 2.0，cat 权重 1.5，finding 权重 0.5（太具体降权）。再乘时间衰减（30 天半衰期指数衰减）和频率增益。取 top 3 且 > 0.25 的注入 prompt。"
 
 ---
 
-## 五、Vision & Gap：终极形态与当前差距
+## 十二、面试完整叙事线
 
-### 终极形态：4 个层次
-
-#### 层次一：实时分析（事后验尸 → 实时诊断）
-
-```
-现在：抓 trace → 上传 → 分析（事后，分钟级）
-理想：实时 trace 流 → 边抓边分析 → 即时告警（实时，秒级）
-```
-
-> 需要流式 trace_processor 支持（Perfetto 上游在做但未就绪）。
-
-#### 层次二：对比分析（单点 → 趋势）
-
-```
-现在：分析单个 trace
-理想：对比 A/B trace → 自动识别回归
-      版本 v1.0 vs v1.1 → 哪些指标退化了？
-      优化前 vs 优化后 → 改进了多少？
-```
-
-> 工程师最常问的不是"这个 trace 怎么样"，而是"比上次好了还是差了"。
-
-#### 层次三：CI/CD 集成（被动分析 → 主动防御）
-
-```
-现在：用户反馈卡 → 抓 trace → 分析（被动，用户已受影响）
-理想：每次 CI 自动跑 benchmark → 自动抓 trace → 自动分析
-      → 性能退化自动拦截 MR（主动，用户无感知）
-```
-
-> Gap 2（对比分析）是 Gap 3 的前置依赖。
-
-#### 层次四：团队知识网络（单人工具 → 团队大脑）
-
-```
-现在：单用户，学习结果在本地
-理想：团队共享分析模式 → 共享 Skill 库 → 跨项目知识迁移
-      A 发现的 pattern → B 分析时自动提示
-```
-
-### 当前完成度（约 60-65%）
-
-| 维度 | 完成度 | 现状 | 差什么 |
-|------|--------|------|--------|
-| 单 trace 分析 | 90% | 162 Skill、8 场景策略、4 层验证、多轮对话 | 误报率 ~30%，深度根因不够深 |
-| Context Engineering | 85% | ArtifactStore、SQL 摘要、渐进裁剪、跨会话学习 | 长对话(>10 轮)上下文质量衰减 |
-| 对比分析 | 20% | v2 有原型，v3 未迁移 | 需要全新对比 Skill 体系 + UI |
-| 实时分析 | 0% | 纯事后分析 | 依赖 Perfetto 流式 trace_processor |
-| CI/CD 集成 | 15% | 有 GitHub Actions 回归门禁 | 缺 benchmark 自动化 + 对比 + MR 拦截 |
-| 团队协作 | 5% | 单用户，无认证 | 需要用户系统 + 共享模式库 |
-| 报告导出 | 40% | CSV/JSON 导出 | 缺 PDF/HTML 可视化报告 |
-| 厂商适配 | 70% | 8 大厂商 Skill 覆盖 | 私有 trace 格式未覆盖 |
-
-### 最值得讲的 3 个 Gap
-
-**Gap 1：误报率 30% → 目标 <10%**
-
-> 4 层验证已拦截很多，根本原因是 LLM 对 Android 性能领域理解不够深。应对：加强知识库注入（已有 6 个知识模板）+ 学习型误诊模式（已实现）。长期看 fine-tuning 效果会更好，但目前 Claude 不支持。
-
-**Gap 2：单 trace → 对比分析**
-
-> 用户最想要的功能。技术上需要：同时加载两个 trace_processor 实例、对比 SQL、对比渲染组件。架构已预留端口池（9100-9900），但对比 Skill 和 UI 都还没做。
-
-**Gap 3：事后分析 → CI/CD 集成**
-
-> 需要三个组件：benchmark runner、baseline 管理、对比分析引擎（依赖 Gap 2）。
-
----
-
-## 六、面试完整叙事线（5-8 分钟）
+### 5-8 分钟版本
 
 ```
 Opening (30s)
 "我独立开发了一个 AI 驱动的 Android 性能分析平台..."
 
-Before (1min)
-"传统分析要 45-90 分钟，门槛高，容易遗漏，经验无法传承..."
+Before / 动机 (1min)
+"传统分析要 45-90 分钟，门槛高，容易遗漏。关键是 LLM 不能直接分析 trace——
+数据太大、需要精确计算、需要结构化的领域知识运用。"
 
-After (2min)
-"现在 2-3 分钟出完整报告，162 个 Skill 全维度扫描..."
+After / 方案 (2min)
+"我的方案是：给 LLM 配备精确的仪器（17 个 MCP 工具）和方法论（12 套场景策略），
+让它像有经验的工程师一样工作。Claude 通过 MCP 调用 157 个 Skill 获取精确数据，
+自主规划分析路径、提出假设、验证结论。"
 （画架构图：Frontend ← SSE → Backend ← MCP → Claude SDK ← RPC → trace_processor）
 
-核心技术亮点 (2min)
+核心亮点 (2-3min，选 2-3 个)
 "三个最有意思的设计：
- 1. Context Engineering（85% token 节省）
- 2. 确定性+概率性混合架构
- 3. 4 层验证系统"
+ 1. Agent 环境工程 — Plan 门控、ArtifactStore、知识按需加载
+ 2. Context Engineering — 85% token 节省（SQL 摘要 + Artifact 分级 + 渐进裁剪）
+ 3. 确定性+概率性混合 — 已知场景策略约束 + 未知场景自主探索"
 
-Vision + Gap (2min)
-"最终要做成 CI/CD 里的性能守门员，现在完成了约 65%，
-最大的 gap 是对比分析和误报率..."
+领域壁垒 (1min)
+"这个项目的壁垒不在 AI 技术——是领域知识的工程化。
+30 种渲染架构、700+ 张 Perfetto 表、VSync/Binder/GC 的分析逻辑...
+这些编码成了 157 个 Skill 和 27 个模板文件。"
 
 收尾 (30s)
-"这个项目让我深刻理解了：AI Agent 不是调 API 的 demo，
-而是一个完整的工程系统——规划、执行、验证、学习的闭环。"
+"这个项目让我深刻理解：AI Agent 不是调 API 的 demo，
+而是一个完整的工程系统——规划、执行、验证、学习的闭环。
+与其优化 prompt 的文字，不如优化 Agent 的环境。"
 ```
 
 ### 主动引导追问方向
 
 讲完一个点后用这些"钩子"引导面试官追问你准备好的话题：
 
-- "这里有个有趣的 trade-off..."（引向混合架构/MCP 设计）
+- "这里有个有趣的 trade-off..."（引向 MCP 工具粒度设计）
 - "最难的其实不是这个，而是..."（引向 Context Engineering）
-- "我们踩过一个坑..."（引向 prompt 优化失误/验证系统迭代）
-- "这个设计背后有个依赖关系..."（引向 Gap 之间的依赖）
-
-### 准备好的追问答案
-
-- **"为什么不直接用 LLM"** → 30% 误报率、输出不稳定、不遵循分析步骤
-- **"为什么用 MCP"** → 标准化工具协议、自动发现、和 Agent SDK 原生集成
-- **"怎么保证质量"** → 4 层验证 + 6 条 canonical trace 回归测试
-- **"怎么处理大数据"** → Artifact 分页 + SQL 摘要 + 渐进式 context 裁剪
+- "我们踩过一个坑..."（引向"prompt 措辞 vs Agent 环境"的认知迭代）
+- "为什么不直接用标准的..."（引向 Skill 系统 vs MCP Tool 的设计决策）
 
 ---
 
-## 附录：面试加分 Buzzword 清单
+## 附录：Buzzword 清单
 
 | 领域 | 术语 | 项目中的对应 |
 |------|------|-------------|
-| AI Engineering | **Context Engineering** | 15-section prompt + 渐进裁剪 + ArtifactStore |
-| AI Engineering | **Tool Use / Function Calling** | 18 个 MCP 工具 |
-| AI Engineering | **Guardrails** | 4 层验证 + Plan 门控 + Watchdog |
+| AI Engineering | **Context Engineering** | 15-section 动态 prompt + 渐进裁剪 + ArtifactStore |
+| AI Engineering | **Tool Use / MCP** | 17 个领域工具，按认知动作设计 |
+| AI Engineering | **Guardrails** | 4 层验证 + Plan 门控 + Watchdog + Circuit Breaker |
 | AI Engineering | **Agentic Architecture** | 假设-验证循环 + 多轮反思修正 |
+| AI Engineering | **Content-Code Separation** | Strategy/Skill 外置 Markdown/YAML，零代码新增场景 |
 | System Design | **Schema-driven Rendering** | DataEnvelope 自描述数据契约 |
 | System Design | **Progressive Disclosure** | L1→L4 分层结果 |
 | System Design | **Circuit Breaker** | 工具调用断路器 |
 | System Design | **Graceful Degradation** | 3 级 fallback + 验证层容错 |
-| System Design | **Content-Code Separation** | Strategy/Skill 外置 Markdown/YAML |
 | Engineering | **Deterministic + Probabilistic Hybrid** | 策略驱动 + 假设推理双轨 |
 | Engineering | **Cross-session Learning** | 加权 Jaccard + 负模式 + SQL 错误对 |
+| Domain | **Android Rendering Pipeline** | 30 种架构识别 + 29 个 Pipeline Skills |
+| Domain | **Perfetto stdlib** | 761 个 schema 模板索引 + 22 个 critical preload |
 
 ---
 
-> **核心记忆点：** 这个项目最独特的卖点不是"调了 Claude API"，而是**真正落地的 AI Agent 工程化**——规划、执行、验证、学习的完整闭环。在 2026 年，这是非常稀缺的实战经验。16 万行代码 + 162 个 Skill + 250 个测试文件，独立从零搭建，本身就是很强的信号。
+> **核心记忆点：** 这个项目最独特的卖点不是"调了 Claude API"，而是**真正落地的 AI Agent 工程化**——规划、执行、验证、学习的完整闭环。领域知识的工程化（157 个 Skill + 12 套 Strategy + 6 个知识模板）才是核心壁垒。
+>
+> **一句话金句：** "与其优化 prompt 的文字，不如优化 Agent 的环境。"
+
+---
+
+*文档更新日期: 2026-03-23*
+*基于 SmartPerfetto v3 代码库当前状态*

@@ -13,14 +13,22 @@ Key components:
 | File | Purpose |
 |------|---------|
 | claudeRuntime.ts | Main orchestrator — `IOrchestrator`, wraps `sdkQuery()` |
-| claudeMcpServer.ts | 18 MCP tools for trace data access (8 core + 10 conditional) |
+| claudeMcpServer.ts | 17 MCP tools for trace data access (9 always-on + 8 conditional) |
 | claudeSystemPrompt.ts | Dynamic system prompt — scene-specific strategy injection |
 | strategyLoader.ts | Load `*.strategy.md` and `*.template.md` — parse frontmatter + variable substitution |
 | claudeSseBridge.ts | SDK stream → SSE events bridge |
-| sceneClassifier.ts | Keyword scene classification (scrolling/startup/anr/general, <1ms) |
+| sceneClassifier.ts | Keyword scene classification (12 scenes from strategy frontmatter, <1ms) |
 | claudeVerifier.ts | 4-layer verification (heuristic + plan + hypothesis + scene + LLM) |
 | artifactStore.ts | Skill result reference storage — 3-level fetch (summary/rows/full) |
 | sqlSummarizer.ts | SQL result summarization — ~85% token savings with `summary=true` |
+| analysisPatternMemory.ts | Long-term pattern matching, negative pattern learning |
+| agentMetrics.ts | Agent performance metrics tracking |
+| claudeAgentDefinitions.ts | SDK agent tool definitions, tool descriptions with examples |
+| claudeFindingExtractor.ts | Extract structured findings from Claude responses |
+| claudeConfig.ts | Claude Agent SDK configuration |
+| focusAppDetector.ts | Detect focus application from trace |
+| sessionStateSnapshot.ts | Session state persistence |
+| types.ts | TypeScript types (SqlSchemaIndex, ClaudeAnalysisContext, planning types) |
 
 ## agentv2 (Deprecated Fallback)
 

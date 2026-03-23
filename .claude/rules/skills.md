@@ -30,9 +30,10 @@ steps:
 - `backend/skills/atomic/` — single-step detection (80 skills)
 - `backend/skills/composite/` — combined analysis (28 skills)
 - `backend/skills/deep/` — deep analysis (2 skills)
-- `backend/skills/pipelines/` — render pipeline detection + teaching (30 skills)
-- `backend/skills/modules/` — module config (app/framework/hardware/kernel)
-- `backend/skills/vendors/` — vendor adaptation (pixel/samsung/xiaomi/honor/oppo/vivo/qualcomm/mtk)
+- `backend/skills/pipelines/` — render pipeline detection + teaching (29 skills)
+- `backend/skills/modules/` — module config: app/framework/hardware/kernel (18 skills)
+- `backend/skills/vendors/` — vendor-specific overrides via `.override.yaml` (pixel/samsung/xiaomi/honor/oppo/vivo/qualcomm/mtk)
+- `backend/skills/config/` — conclusion scene templates
 
 ## DataEnvelope (v2.0)
 

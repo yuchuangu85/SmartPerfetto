@@ -26,6 +26,10 @@ Key files:
 - `types.ts` — AIPanelState, Message, AISession, StreamingFlowState
 - `index.ts` — Plugin entry point
 
+Subdirectories:
+- `generated/` — Auto-generated types from backend (`data_contract.types.ts`, `frame_analysis.types.ts`, `jank_frame_detail.types.ts`) — do NOT edit manually, use `npm run generate:frontend-types`
+- `renderers/` — Data formatters (`formatters.ts`)
+
 ## Mermaid chart support
 
 - Lazy-load from same-origin `assets/mermaid.min.js` (CSP compliant)

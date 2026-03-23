@@ -42,8 +42,8 @@ Frontend (Perfetto UI @ :10000) ◄─SSE/HTTP─► Backend (Express @ :3000)
 | Component | Purpose |
 |-----------|---------|
 | **ClaudeRuntime** | Main orchestrator: scene classification → dynamic system prompt → Claude Agent SDK → verification |
-| **MCP Server** | 18 tools bridging Claude to trace data (SQL, Skills, schema lookup, planning, hypothesis) |
-| **Skill Engine** | 140 YAML-defined analysis pipelines producing layered results (L1 overview → L4 deep root cause) |
+| **MCP Server** | 17 tools bridging Claude to trace data (SQL, Skills, schema lookup, planning, hypothesis) |
+| **Skill Engine** | 157 YAML-defined analysis pipelines producing layered results (L1 overview → L4 deep root cause) |
 | **Scene Classifier** | Keyword-based routing (<1ms) to 12 scene-specific strategies |
 | **Verifier** | 4-layer quality check (heuristic + plan + hypothesis + LLM) with reflection retry |
 | **Artifact Store** | Caches skill results as compact references (~3000 tokens saved per invocation) |
@@ -71,31 +71,29 @@ User Query: "分析滑动卡顿"
         └─ SSE streaming → Frontend real-time display
 ```
 
-### Skill Categories (140 total)
+### Skill Categories (157 total)
 
 | Category | Count | Description |
 |----------|-------|-------------|
 | **Atomic** | 80 | Single SQL query (VSync detection, CPU topology, GPU metrics, ...) |
 | **Composite** | 28 | Multi-step analysis (scrolling, startup, ANR, memory, ...) |
-| **Pipeline** | 30 | Rendering pipeline detection + teaching (30 Android render architectures) |
+| **Pipeline** | 29 | Rendering pipeline detection + teaching (29 Android render architectures) |
+| **Module** | 18 | Module analysis (app/framework/hardware/kernel) |
 | **Deep** | 2 | CPU profiling, callstack analysis |
 
-### MCP Tools (18)
+### MCP Tools (17)
 
-**Core Data Access (8, always available):**
-execute_sql, invoke_skill, list_skills, detect_architecture, lookup_sql_schema, query_perfetto_source, list_stdlib_modules, lookup_knowledge
+**Always-on (9):**
+execute_sql, invoke_skill, list_skills, detect_architecture, lookup_sql_schema, query_perfetto_source, list_stdlib_modules, lookup_knowledge, recall_patterns
 
-**Planning & Hypothesis (8, conditional):**
+**Conditional (8, feature-flag dependent):**
 submit_plan, update_plan_phase, revise_plan, submit_hypothesis, resolve_hypothesis, write_analysis_note, fetch_artifact, flag_uncertainty
-
-**Memory & Patterns (2):**
-recall_patterns, learned misdiagnosis pattern system
 
 ## Technology Stack
 
 - **Backend:** Node.js, Express, TypeScript (strict)
 - **Frontend:** Mithril.js (Perfetto UI framework)
-- **AI Runtime:** Claude Agent SDK (Anthropic) via MCP protocol
+- **AI Runtime:** Claude Agent SDK (Anthropic) via MCP protocol (17 tools)
 - **Trace Processing:** trace_processor_shell (Perfetto, WASM + HTTP RPC)
 - **Testing:** Jest, ts-jest (44 test files, 1029 tests)
 - **Build:** esbuild, npm scripts
