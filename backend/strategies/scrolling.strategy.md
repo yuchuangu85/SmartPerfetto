@@ -61,9 +61,10 @@ invoke_skill("scrolling_analysis", { start_ts: "<trace_start>", end_ts: "<trace_
   - `scroll_sessions`：滑动区间列表
   - `batch_frame_root_cause`（主掉帧列表）：所有掉帧帧的**完整分析**（frame_id + start_ts + jank_type + jank_responsibility + vsync_missed + reason_code + 四象限 MainThread/RenderThread + CPU 频率 + Binder/GC 重叠 + 根因分类），覆盖所有掉帧帧
   - `get_app_jank_frames`（内部数据源，无独立显示）：掉帧帧列表，供 Agent 内部使用（焦点区间、帧实体捕获）
-  - `session_quadrant_summary`：**滑动过程整体**四象限分布（MainThread + RenderThread 全程），非逐帧
-  - `session_cpu_freq`：**滑动过程整体** CPU 频率分布（各核心类型的均频/峰频/最低频）
-  - `session_thread_core_affinity`：**关键线程大小核分布**（MainThread/RenderThread/GPU completion 在各核心类型上的运行时间占比）
+  - `scroll_sessions` 可展开：点击展开某个滑动区间，可查看该区间的**四象限分布、CPU 频率、关键线程大小核分布**（由 `session_stats_batch` 提供）
+  - `session_quadrant_summary`（兼容数据源，不独立显示）：**滑动过程整体**四象限分布，Agent 可通过 save_as 引用
+  - `session_cpu_freq`（兼容数据源，不独立显示）：CPU 频率分布
+  - `session_thread_core_affinity`（兼容数据源，不独立显示）：关键线程大小核分布
 - **获取详细数据**：对大型 artifact 使用分页获取：
   `fetch_artifact(artifactId, detail="rows", offset=0, limit=50)`
   响应包含 `totalRows` 和 `hasMore`，继续翻页获取所有数据。
@@ -87,9 +88,13 @@ invoke_skill("scrolling_analysis", { start_ts: "<trace_start>", end_ts: "<trace_
 | **多帧 `big_avg_freq_mhz` 显著低于设备峰值** | 调用 `invoke_skill("thermal_throttling")` 检查是否存在热节流。CPU 频率被 thermal 限制是常见的跨帧系统级根因 |
 | **VRR 设备（通过 `vrr_detection` 或 VSync 周期 ≠ 16.67ms 判断）** | 注意 1.5x VSync 阈值需基于检测到的实际 VSync 周期（如 120Hz = 8.33ms, 1.5x = 12.5ms），而非固定 16.67ms |
 
-**Phase 1.9 — 根因深钻（必须执行 ⚠️，对主要根因类别追问 WHY）：**
+**Phase 1.9 — 根因深钻（🔴 强制执行，不可跳过）：**
 
-对 `batch_frame_root_cause` 中占比 >15% 的每个 reason_code，**必须**选最严重的 1 帧执行深钻。仅靠 batch_frame_root_cause 的统计数据做结论是不够的——必须通过工具调用获取机制级证据。跳过此步骤将触发验证警告。
+对 `batch_frame_root_cause` 中占比 >15% 的每个 reason_code，**必须**选最严重的 1 帧执行深钻。
+**⛔ 禁止**仅靠 batch_frame_root_cause 的统计分类直接出结论——reason_code（如 workload_heavy）只是分类标签，不是真正的根因。
+**必须**通过至少一次工具调用（blocking_chain_analysis / binder_root_cause / lookup_knowledge / jank_frame_detail）获取机制级证据，回答"WHY 这帧慢"。跳过此步骤将触发验证错误。
+
+**常见错误：** 看到 reason_code=workload_heavy 就结论"工作负载过重"，但没有回答：具体是哪段代码？为什么在这个时机执行？是否可异步/分帧？这不是根因分析，这只是分类。
 
 | 条件 | 深钻动作 | 目标 |
 |------|---------|------|
@@ -104,17 +109,17 @@ invoke_skill("scrolling_analysis", { start_ts: "<trace_start>", end_ts: "<trace_
 - ✅ Level 1: "帧超时" → Level 2: "Binder 阻塞" → Level 3: "服务端 system_server monitor_contention"
 - ❌ 仅 Level 1: "帧超时 45ms，workload_heavy"（缺少机制解释）
 
-**Phase 2 — 补充深钻（可选，仅在需要时执行）：**
-Phase 1 的 `batch_frame_root_cause` 已包含每帧的**完整详细分析数据**：
+**Phase 2 — 补充深钻（可选，仅在 Phase 1.9 深钻后仍需更多细节时执行）：**
+Phase 1 的 `batch_frame_root_cause` 已包含每帧的**完整统计数据**（但统计数据 ≠ 根因，Phase 1.9 的工具调用深钻不可省略）：
 - MainThread 四象限（Q1 大核运行 / Q2 小核运行 / Q3 调度等待 / Q4 休眠）
 - RenderThread 四象限（render_q1 大核 / render_q3 调度 / render_q4 休眠）
 - CPU 大核频率（big_avg_freq_mhz / big_max_freq_mhz）+ 升频延迟（ramp_ms）
 - Binder 同步重叠（binder_overlap_ms）+ GC 重叠（gc_overlap_ms）
 - 根因分类（reason_code）+ 关键操作（top_slice_name / top_slice_ms）
 
-此外，`session_quadrant_summary`、`session_cpu_freq`、`session_thread_core_affinity` 提供了滑动过程的**整体运行特征**（非逐帧），无需调用 jank_frame_detail 或 blocking_chain_analysis 来获取全局指标。
+此外，每个滑动区间的**整体运行特征**（四象限分布、CPU 频率、关键线程大小核分布）已内嵌在 `scroll_sessions` 的展开行中（由 `session_stats_batch` 提供），无需调用 jank_frame_detail 或 blocking_chain_analysis 来获取全局指标。兼容数据源 `session_quadrant_summary`、`session_cpu_freq`、`session_thread_core_affinity` 仍可通过 save_as 引用。
 
-**大多数情况下 batch_frame_root_cause 数据已足够出结论**，无需调用 jank_frame_detail。
+**batch_frame_root_cause 的统计数据可用于分类和概览，但 Phase 1.9 的深钻工具调用不可省略**。jank_frame_detail 仅在以下特殊情况需要调用：
 仅在以下情况才调用 jank_frame_detail（**最多 2 帧**）：
 - 需要查看 CPU 频率**时间线**（帧内频率变化过程）
 - 需要查看 RenderThread 或主线程的 top N slices 详情
@@ -138,11 +143,23 @@ invoke_skill("jank_frame_detail", {
 1. **概览**（必须包含以下数据）：
    - 总帧数、**总真实掉帧数 = SUM(所有 jank_type 行的 real_jank_count)**
    - 分类明细：App 侧掉帧 N 帧 + 隐形掉帧 N 帧 + 假阳性 N 帧
+   - **峰值体验指标**（仅看掉帧率会掩盖极端长帧对用户感知的影响）：
+     - 最长帧耗时：XXms（超预算 N 倍）
+     - 最长连续丢帧 VSync 数：N 个 VSync（= XXms 无响应）
+     - 如有 >3 帧超过 3× VSync 预算，标注"存在用户强感知卡顿峰值"
+   - **综合评级标准**（不能只看掉帧率，必须同时考虑峰值）：
+     - 优秀：掉帧率 <1% 且最长帧 <2× VSync
+     - 良好：掉帧率 <3% 且最长帧 <4× VSync
+     - 一般：掉帧率 <5% 或最长帧 <8× VSync
+     - 差：掉帧率 ≥5% 或最长帧 ≥8× VSync
+     - 例：掉帧率 2% 但最长帧 62ms（7.5× VSync）→ 评级应为"一般"而非"良好"
+   - **指标口径说明**：FPS 基于滑动时间窗口（非分析耗时），时间范围需标注来源
    - 如果存在隐形掉帧（`jank_type=None` 但 `real_jank_count > 0`），**必须在概览中明确标注**：
      "其中 N 帧为隐形掉帧（框架未标记但消费端检测到真实掉帧），可能与 SurfaceFlinger 合成延迟、管线积压或跨进程 Binder 阻塞有关"
    - ⚠️ **`App Deadline Missed` 不等于全部真实掉帧**。例如 135 帧 App Deadline Missed + 165 帧隐形掉帧 = 300 总真实掉帧
 
-2. **滑动过程整体运行特征**（from session_quadrant_summary + session_cpu_freq + session_thread_core_affinity）：
+2. **各滑动区间运行特征**（from scroll_sessions 展开行，或兼容数据源 session_quadrant_summary / session_cpu_freq / session_thread_core_affinity）：
+   - 对每个滑动区间分别报告（如有多个区间，逐区间列出）：
    - 主线程四象限：Q1=XX% Q2=XX% Q3=XX% Q4a=XX% Q4b=XX%
    - RenderThread 四象限：Q1=XX% Q3=XX% Q4a=XX% Q4b=XX%
    - CPU 频率：prime 均频 XXMHz / big 均频 XXMHz / little 均频 XXMHz
@@ -171,7 +188,10 @@ invoke_skill("jank_frame_detail", {
    ```
    如有额外深钻帧（来自 jank_frame_detail），标注其 CPU freq timeline 和 slices 详情。
 
-5. **优化建议**：按根因类别给出可操作建议，优先级按帧数占比排序
+5. **优化建议**：按根因类别给出可操作建议，优先级按帧数占比排序。**必须分层标注**：
+   - **[App 层]**：App 开发者可直接实施的优化（异步化、分帧、预加载、减少主线程阻塞等）— 建议要具体到代码模式
+   - **[系统/ROM 层]**：需要厂商协同或系统级权限的优化（governor 调优、thermal 策略、SCHED_UTIL_CLAMP 等）— 标注"需系统级能力"
+   - 优先给出 App 层建议；系统层建议仅作为补充参考
 
 **当报告隐形掉帧时，必须提醒用户：**
 - 隐形掉帧在 Perfetto 时间线上帧颜色为**绿色**（框架标记 jank_type=None）

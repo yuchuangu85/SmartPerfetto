@@ -1563,10 +1563,14 @@ export class SkillExecutor {
     // Build lookup maps lazily — only construct the map if its matching column exists
     const frameIndexCol = isColumnar ? targetColumns.indexOf('frame_index') : -1;
     const hasFrameIndex = isColumnar ? frameIndexCol >= 0 : targetObjects?.some(o => o.frame_index != null);
+    const sessionIdCol = isColumnar ? targetColumns.indexOf('session_id') : -1;
+    const hasSessionId = isColumnar ? sessionIdCol >= 0 : targetObjects?.some(o => o.session_id != null);
+    const processNameCol = isColumnar ? targetColumns.indexOf('process_name') : -1;
     const startTsCol = isColumnar ? targetColumns.indexOf('start_ts') : -1;
     const hasStartTs = isColumnar ? startTsCol >= 0 : targetObjects?.some(o => o.start_ts != null);
 
     let sourceByFrameIndex: Map<number, Record<string, any>> | undefined;
+    let sourceBySessionKey: Map<string, Record<string, any>> | undefined;
     let sourceByStartTs: Map<string, Record<string, any>> | undefined;
 
     if (hasFrameIndex) {
@@ -1575,7 +1579,17 @@ export class SkillExecutor {
         if (row.frame_index != null) sourceByFrameIndex.set(Number(row.frame_index), row);
       }
     }
-    if (hasStartTs && !sourceByFrameIndex) {
+    // Composite key: process_name + session_id (for session-level expandable)
+    if (hasSessionId && !sourceByFrameIndex) {
+      sourceBySessionKey = new Map();
+      for (const row of sourceData) {
+        if (row.session_id != null) {
+          const key = `${row.process_name ?? ''}::${row.session_id}`;
+          sourceBySessionKey.set(key, row);
+        }
+      }
+    }
+    if (hasStartTs && !sourceByFrameIndex && !sourceBySessionKey) {
       sourceByStartTs = new Map();
       for (const row of sourceData) {
         if (row.start_ts != null) sourceByStartTs.set(String(row.start_ts), row);
@@ -1587,21 +1601,31 @@ export class SkillExecutor {
     for (let i = 0; i < rowCount; i++) {
       // Get matching keys without constructing the full item yet
       let frameIndexVal: any;
+      let sessionIdVal: any;
+      let processNameVal: any;
       let startTsVal: any;
       if (isColumnar) {
         const row = targetRows[i];
         if (frameIndexCol >= 0) frameIndexVal = row[frameIndexCol];
+        if (sessionIdCol >= 0) sessionIdVal = row[sessionIdCol];
+        if (processNameCol >= 0) processNameVal = row[processNameCol];
         if (startTsCol >= 0) startTsVal = row[startTsCol];
       } else {
         const obj = targetObjects![i];
         frameIndexVal = obj.frame_index;
+        sessionIdVal = obj.session_id;
+        processNameVal = obj.process_name;
         startTsVal = obj.start_ts;
       }
 
-      // Find matching source row: frame_index → start_ts → positional
+      // Find matching source row: frame_index → session_key → start_ts → positional
       let matched: Record<string, any> | undefined;
       if (sourceByFrameIndex && frameIndexVal != null) {
         matched = sourceByFrameIndex.get(Number(frameIndexVal));
+      }
+      if (!matched && sourceBySessionKey && sessionIdVal != null) {
+        const key = `${processNameVal ?? ''}::${sessionIdVal}`;
+        matched = sourceBySessionKey.get(key);
       }
       if (!matched && sourceByStartTs && startTsVal != null) {
         matched = sourceByStartTs.get(String(startTsVal));
@@ -1637,12 +1661,129 @@ export class SkillExecutor {
   }
 
   /**
-   * Group a batch root cause row into named sections for the expandable UI.
+   * Group a batch row into named sections for the expandable UI.
+   * Uses a declarative registry for JSON columns + imperative handlers for scalar fields.
    */
   private groupBatchRowIntoSections(row: Record<string, any>): Record<string, any> {
     const sections: Record<string, any> = {};
 
-    // Section 1: Root cause diagnosis
+    // ── Declarative JSON column registry ─────────────────────────────────
+    // Each entry maps a JSON column name → { key, title, transform }.
+    // The transform receives the parsed array and returns formatted data rows.
+    const jsonSectionRegistry: Array<{
+      column: string;
+      key: string;
+      title: string;
+      transform: (items: any[]) => Record<string, any>[];
+    }> = [
+      // --- Per-frame sections (from batch_frame_root_cause) ---
+      {
+        column: 'cpu_freq_clusters_json',
+        key: 'CPU 频率',
+        title: 'CPU 频率 (Prime / Big / Little)',
+        transform: (items) => items.map((c: any) => ({
+          核心类型: c.core_type,
+          平均频率: (c.avg_mhz / 1000).toFixed(2) + 'GHz',
+          最高频率: (c.max_mhz / 1000).toFixed(2) + 'GHz',
+          最低频率: (c.min_mhz / 1000).toFixed(2) + 'GHz',
+        })),
+      },
+      {
+        column: 'freq_timeline_json',
+        key: 'CPU 频率变化',
+        title: '各 CPU 频率变化时间线',
+        transform: (items) => items.map((e: any) => ({
+          相对时间: e.relative_ms + 'ms',
+          CPU: e.cpu,
+          核心类型: e.core_type,
+          频率: e.freq_ghz + 'GHz',
+          变化: e.change === 'up' ? '↑升频' : e.change === 'down' ? '↓降频' : '初始',
+        })),
+      },
+      {
+        column: 'main_slices_json',
+        key: '主线程耗时操作',
+        title: '主线程耗时操作 (Top 8)',
+        transform: (items) => items.map((s: any) => ({
+          操作: s.name, 总耗时: s.total_ms + 'ms', 次数: s.count, 最大耗时: s.max_ms + 'ms',
+        })),
+      },
+      {
+        column: 'render_slices_json',
+        key: 'RenderThread 耗时操作',
+        title: 'RenderThread 耗时操作 (Top 8)',
+        transform: (items) => items.map((s: any) => ({
+          操作: s.name, 总耗时: s.total_ms + 'ms', 次数: s.count, 最大耗时: s.max_ms + 'ms',
+        })),
+      },
+      {
+        column: 'binder_calls_json',
+        key: 'Binder 调用详情',
+        title: 'Binder 调用（按耗时降序）',
+        transform: (items) => items.map((b: any) => ({
+          目标进程: b.server, 调用次数: b.count, 总耗时: b.dur_ms + 'ms', 最大耗时: b.max_ms + 'ms',
+        })),
+      },
+      {
+        column: 'gc_events_json',
+        key: 'GC 事件详情',
+        title: 'GC 事件（按类型聚合）',
+        transform: (items) => items.map((g: any) => ({
+          类型: g.gc_type, 次数: g.count, 总耗时: g.total_ms + 'ms', 帧重叠: g.overlap_ms + 'ms',
+        })),
+      },
+      {
+        column: 'lock_contention_json',
+        key: '锁竞争详情',
+        title: '锁竞争（按等待时间降序）',
+        transform: (items) => items.map((l: any) => ({
+          阻塞方法: l.method, 阻塞线程: l.blocker, 等待: l.wait_ms + 'ms',
+          主线程阻塞: l.main_blocked ? '是' : '否',
+        })),
+      },
+      // --- Per-session sections (from session_stats_batch) ---
+      {
+        column: 'quadrant_json',
+        key: '四象限分布',
+        title: '滑动区间四象限分布 (Q1大核运行/Q2小核运行/Q3调度等待/Q4a IO阻塞/Q4b 休眠)',
+        transform: (items) => items.map((q: any) => ({
+          线程: q.thread,
+          'Q1 大核%': q.q1_big_pct + '%',
+          'Q2 小核%': q.q2_little_pct + '%',
+          'Q3 调度%': q.q3_runnable_pct + '%',
+          'Q4a IO%': q.q4a_io_pct + '%',
+          'Q4b 休眠%': q.q4b_sleep_pct + '%',
+          '总时间': q.total_ms + 'ms',
+        })),
+      },
+      {
+        column: 'cpu_freq_json',
+        key: 'CPU 频率统计',
+        title: '滑动区间 CPU 频率',
+        transform: (items) => items.map((f: any) => ({
+          核心类型: f.core_type,
+          核心数: f.num_cores,
+          '均频(MHz)': f.avg_freq_mhz,
+          '最高频(MHz)': f.max_freq_mhz,
+          '最低频(MHz)': f.min_freq_mhz,
+        })),
+      },
+      {
+        column: 'core_affinity_json',
+        key: '大小核分布',
+        title: '滑动区间关键线程大小核分布',
+        transform: (items) => items.map((a: any) => ({
+          线程: a.thread_name,
+          核心类型: a.core_type,
+          '运行时间(ms)': a.run_ms,
+          '占比%': a.pct + '%',
+        })),
+      },
+    ];
+
+    // ── Scalar field sections (per-frame only) ───────────────────────────
+
+    // Section: Root cause diagnosis
     const diagnosisFields = ['reason_code', 'primary_cause', 'confidence', 'top_slice_name', 'top_slice_ms'];
     const diagnosisData: Record<string, any> = {};
     for (const f of diagnosisFields) {
@@ -1652,7 +1793,7 @@ export class SkillExecutor {
       sections['根因诊断'] = { title: '根因诊断', data: [diagnosisData] };
     }
 
-    // Section 2: MainThread quadrant
+    // Section: MainThread quadrant (scalar fields)
     const mainFields = ['main_q1_pct', 'main_q2_pct', 'main_q3_pct', 'main_q4a_pct', 'main_q4b_pct'];
     const mainData: Record<string, any> = {};
     let hasMainData = false;
@@ -1663,7 +1804,7 @@ export class SkillExecutor {
       sections['主线程四象限'] = { title: '主线程四象限 (Q1大核运行/Q2小核运行/Q3调度等待/Q4a IO阻塞/Q4b 锁等待)', data: [mainData] };
     }
 
-    // Section 3: RenderThread quadrant
+    // Section: RenderThread quadrant (scalar fields)
     const renderFields = ['render_q1_pct', 'render_q2_pct', 'render_q3_pct', 'render_q4a_pct', 'render_q4b_pct'];
     const renderData: Record<string, any> = {};
     let hasRenderData = false;
@@ -1674,20 +1815,8 @@ export class SkillExecutor {
       sections['渲染线程四象限'] = { title: '渲染线程四象限 (Q1大核运行/Q2小核运行/Q3调度等待/Q4a IO阻塞/Q4b 锁等待)', data: [renderData] };
     }
 
-    // Section 4: CPU frequency (full cluster detail from JSON, fallback to scalar fields)
-    const cpuClusters = this.parseJsonColumn(row, 'cpu_freq_clusters_json');
-    if (cpuClusters.length > 0) {
-      sections['CPU 频率'] = {
-        title: 'CPU 频率 (Prime / Big / Little)',
-        data: cpuClusters.map((c: any) => ({
-          核心类型: c.core_type,
-          平均频率: (c.avg_mhz / 1000).toFixed(2) + 'GHz',
-          最高频率: (c.max_mhz / 1000).toFixed(2) + 'GHz',
-          最低频率: (c.min_mhz / 1000).toFixed(2) + 'GHz',
-        })),
-      };
-    } else {
-      // Fallback to legacy scalar fields
+    // Section: CPU frequency fallback (scalar, when cpu_freq_clusters_json is absent)
+    if (!row['cpu_freq_clusters_json'] || row['cpu_freq_clusters_json'] === '[]') {
       const cpuData: Record<string, any> = {};
       let hasCpuData = false;
       for (const f of ['big_avg_freq_mhz', 'big_max_freq_mhz', 'ramp_ms']) {
@@ -1698,7 +1827,7 @@ export class SkillExecutor {
       }
     }
 
-    // Section 5: Top Slice CPU mix
+    // Section: Top Slice CPU mix
     const cpuMixFields = ['top_slice_little_pct', 'top_slice_big_pct', 'top_slice_runnable_pct'];
     const cpuMixData: Record<string, any> = {};
     let hasCpuMix = false;
@@ -1712,7 +1841,7 @@ export class SkillExecutor {
       sections['关键操作 CPU 分布'] = { title: '关键操作 CPU 分布 (大核/小核/Runnable)', data: [cpuMixData] };
     }
 
-    // Section 6: GPU / Shader
+    // Section: GPU / Shader
     const gpuFields = ['gpu_fence_ms', 'gpu_fence_total_ms', 'shader_count', 'shader_ms'];
     const gpuData: Record<string, any> = {};
     let hasGpu = false;
@@ -1723,7 +1852,7 @@ export class SkillExecutor {
       sections['GPU / Shader'] = { title: 'GPU / Shader', data: [gpuData] };
     }
 
-    // Section 7: Interference factors (Binder + GC)
+    // Section: Interference factors (Binder + GC)
     const interferenceData: Record<string, any> = {};
     let hasInterference = false;
     if (row['binder_overlap_ms'] != null && Number(row['binder_overlap_ms']) > 0) {
@@ -1742,80 +1871,17 @@ export class SkillExecutor {
       sections['干扰因素'] = { title: '干扰因素 (Binder/GC)', data: [interferenceData] };
     }
 
-    // Section 8: Frame budget reference
+    // Section: Frame budget reference
     if (row['frame_budget_ms'] != null) {
       sections['帧预算'] = { title: '帧预算参考', data: [{ frame_budget_ms: row['frame_budget_ms'] + 'ms' }] };
     }
 
-    // Section 9: CPU frequency timeline (initial state + all changes, per CPU)
-    const freqTimeline = this.parseJsonColumn(row, 'freq_timeline_json');
-    if (freqTimeline.length > 0) {
-      sections['CPU 频率变化'] = {
-        title: '各 CPU 频率变化时间线',
-        data: freqTimeline.map((e: any) => ({
-          相对时间: e.relative_ms + 'ms',
-          CPU: e.cpu,
-          核心类型: e.core_type,
-          频率: e.freq_ghz + 'GHz',
-          变化: e.change === 'up' ? '↑升频' : e.change === 'down' ? '↓降频' : '初始',
-        })),
-      };
-    }
-
-    // Section 10: Main thread top slices
-    const mainSlices = this.parseJsonColumn(row, 'main_slices_json');
-    if (mainSlices.length > 0) {
-      sections['主线程耗时操作'] = {
-        title: '主线程耗时操作 (Top 8)',
-        data: mainSlices.map((s: any) => ({
-          操作: s.name, 总耗时: s.total_ms + 'ms', 次数: s.count, 最大耗时: s.max_ms + 'ms',
-        })),
-      };
-    }
-
-    // Section 11: RenderThread top slices
-    const renderSlices = this.parseJsonColumn(row, 'render_slices_json');
-    if (renderSlices.length > 0) {
-      sections['RenderThread 耗时操作'] = {
-        title: 'RenderThread 耗时操作 (Top 8)',
-        data: renderSlices.map((s: any) => ({
-          操作: s.name, 总耗时: s.total_ms + 'ms', 次数: s.count, 最大耗时: s.max_ms + 'ms',
-        })),
-      };
-    }
-
-    // Section 12: Binder call details
-    const binderCalls = this.parseJsonColumn(row, 'binder_calls_json');
-    if (binderCalls.length > 0) {
-      sections['Binder 调用详情'] = {
-        title: 'Binder 调用（按耗时降序）',
-        data: binderCalls.map((b: any) => ({
-          目标进程: b.server, 调用次数: b.count, 总耗时: b.dur_ms + 'ms', 最大耗时: b.max_ms + 'ms',
-        })),
-      };
-    }
-
-    // Section 13: GC event details
-    const gcEvents = this.parseJsonColumn(row, 'gc_events_json');
-    if (gcEvents.length > 0) {
-      sections['GC 事件详情'] = {
-        title: 'GC 事件（按类型聚合）',
-        data: gcEvents.map((g: any) => ({
-          类型: g.gc_type, 次数: g.count, 总耗时: g.total_ms + 'ms', 帧重叠: g.overlap_ms + 'ms',
-        })),
-      };
-    }
-
-    // Section 14: Lock contention details
-    const lockContention = this.parseJsonColumn(row, 'lock_contention_json');
-    if (lockContention.length > 0) {
-      sections['锁竞争详情'] = {
-        title: '锁竞争（按等待时间降序）',
-        data: lockContention.map((l: any) => ({
-          阻塞方法: l.method, 阻塞线程: l.blocker, 等待: l.wait_ms + 'ms',
-          主线程阻塞: l.main_blocked ? '是' : '否',
-        })),
-      };
+    // ── Apply JSON column registry ───────────────────────────────────────
+    for (const entry of jsonSectionRegistry) {
+      const items = this.parseJsonColumn(row, entry.column);
+      if (items.length > 0) {
+        sections[entry.key] = { title: entry.title, data: entry.transform(items) };
+      }
     }
 
     return sections;
