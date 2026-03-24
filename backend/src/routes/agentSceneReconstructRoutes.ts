@@ -213,8 +213,22 @@ export function registerSceneReconstructRoutes<TSession extends SceneReconstruct
       timestamp: Date.now(),
     });
 
+    // Replay buffered events BEFORE registering as live client — ensures events
+    // broadcast before SSE connect (e.g., state_timeline) are delivered exactly once.
+    // This matches the ordering in the primary agent SSE endpoint (agentRoutes.ts).
+    const eventBuffer = (session as any).sseEventBuffer as Array<{seqId: number; eventType: string; eventData: string}> | undefined;
+    const bufLen = eventBuffer?.length ?? 0;
+    session.logger?.info('SSE', 'Scene SSE connect', { buffer: bufLen, sseClients: session.sseClients.length, status: session.status });
+    if (eventBuffer && eventBuffer.length > 0) {
+      const lastEventId = parseInt(req.headers['last-event-id'] as string, 10) || 0;
+      const eventTypes = eventBuffer.map(e => e.eventType).join(',');
+      session.logger?.info('SSE', 'Replaying buffer', { count: eventBuffer.length, lastEventId, eventTypes });
+      const replayed = deps.streamProjector.replayBufferedEvents(res, eventBuffer, lastEventId);
+      session.logger?.info('SSE', 'Replay complete', { replayed, total: eventBuffer.length });
+    }
+
     deps.assistantAppService.addSseClient(analysisId, res);
-    console.log(`[AgentRoutes] Scene SSE client connected for ${analysisId}`);
+    session.logger?.info('SSE', 'Client registered', {});
 
     if (session.status === 'completed' && session.result) {
       deps.sendAgentDrivenResult(res, session);

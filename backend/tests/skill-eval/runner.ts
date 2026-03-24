@@ -555,3 +555,19 @@ export function createSkillEvaluator(skillId: string): SkillEvaluator {
 export function getTestTracePath(traceName: string): string {
   return path.join('test-traces', traceName);
 }
+
+/** Find a step result across all 4 layer types (overview → list → session → deep). */
+export function findStepInLayers(layers: any, stepId: string): { success?: boolean; error?: string; data?: any[] } | null {
+  if (layers?.overview?.[stepId]) return layers.overview[stepId];
+  if (layers?.list?.[stepId]) return layers.list[stepId];
+
+  for (const sessionData of Object.values(layers?.session || {})) {
+    const step = (sessionData as any)?.[stepId];
+    if (step) return step;
+  }
+  for (const sessionData of Object.values(layers?.deep || {})) {
+    const step = (sessionData as any)?.[stepId];
+    if (step) return step;
+  }
+  return null;
+}

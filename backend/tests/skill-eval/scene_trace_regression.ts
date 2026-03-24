@@ -9,7 +9,7 @@
  * 3) trace-specific minimum expectations remain true.
  */
 
-import { createSkillEvaluator, getTestTracePath } from './runner';
+import { createSkillEvaluator, getTestTracePath, findStepInLayers } from './runner';
 
 type StepResultLike = {
   success?: boolean;
@@ -84,22 +84,7 @@ const REQUIRED_STEPS = [
   'jank_events',
 ] as const;
 
-function findStep(layers: any, stepId: string): StepResultLike | null {
-  if (layers?.overview?.[stepId]) return layers.overview[stepId];
-  if (layers?.list?.[stepId]) return layers.list[stepId];
-
-  for (const sessionData of Object.values(layers?.session || {})) {
-    const step = (sessionData as any)?.[stepId];
-    if (step) return step;
-  }
-
-  for (const sessionData of Object.values(layers?.deep || {})) {
-    const step = (sessionData as any)?.[stepId];
-    if (step) return step;
-  }
-
-  return null;
-}
+const findStep = findStepInLayers;
 
 async function runCase(testCase: TraceCase): Promise<void> {
   const evaluator = createSkillEvaluator('scene_reconstruction');

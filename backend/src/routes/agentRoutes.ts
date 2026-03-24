@@ -2769,21 +2769,29 @@ interface StateLaneSegment {
 /** Lane step IDs from state_timeline skill */
 const STATE_LANE_STEP_IDS = new Set([
   'device_state_lane',
-  'input_state_lane',
+  'device_state_lane_fallback',
+  'input_state_lane_frames',
+  'input_state_lane_fallback',
   'app_state_lane',
+  'app_state_lane_fallback',
   'system_state_lane',
 ]);
 
 /** Map stepId → lane name */
 const STEP_TO_LANE: Record<string, string> = {
   device_state_lane: 'device',
-  input_state_lane: 'input',
+  device_state_lane_fallback: 'device',
+  input_state_lane_frames: 'input',
+  input_state_lane_fallback: 'input',
   app_state_lane: 'app',
+  app_state_lane_fallback: 'app',
   system_state_lane: 'system',
 };
 
-type LaneStatus = 'available' | 'table_missing' | 'no_data';
-const VALID_LANE_STATUSES = new Set<string>(['available', 'table_missing', 'no_data']);
+type LaneStatus = 'available' | 'available_frame_based' | 'available_heuristic' | 'table_missing' | 'no_data';
+const VALID_LANE_STATUSES = new Set<string>(['available', 'available_frame_based', 'available_heuristic', 'table_missing', 'no_data']);
+/** Statuses indicating data is expected (table exists, may have rows). */
+const DATA_PRESENT_STATUSES = new Set<string>(['available', 'available_frame_based', 'available_heuristic']);
 
 /**
  * Single-pass extraction of state timeline lanes + lane availability from DataEnvelopes.
@@ -2817,6 +2825,13 @@ function extractStateTimelineData(envelopes: DataEnvelope[]): {
     if (!STATE_LANE_STEP_IDS.has(stepId)) continue;
 
     const laneName = STEP_TO_LANE[stepId] || stepId;
+
+    // Real data over fallback: conditions are mutually exclusive, but be safe.
+    const isFallbackStep = stepId.endsWith('_fallback');
+    if (isFallbackStep && timeline[laneName]?.length > 0) {
+      continue;
+    }
+
     const rows = payloadToObjectRowsLocal(env.data);
     if (rows.length === 0) continue;
 
@@ -2846,14 +2861,14 @@ function extractStateTimelineData(envelopes: DataEnvelope[]): {
 
   // Reconcile: if a lane has segments, it's available; if lane_summary said
   // 'available' but we got no segments, it's really 'no_data'.
-  for (const lane of Object.keys(STEP_TO_LANE).map(k => STEP_TO_LANE[k])) {
+  for (const lane of [...new Set(Object.values(STEP_TO_LANE))]) {
     if (timeline[lane] && timeline[lane].length > 0) {
       // Has real data — check if it's all UNKNOWN (empty-source fallback)
       const allUnknown = timeline[lane].every(s => s.state === 'UNKNOWN' || s.state === 'IDLE');
       if (!availability[lane]) {
         availability[lane] = allUnknown ? 'no_data' : 'available';
       }
-    } else if (availability[lane] === 'available') {
+    } else if (DATA_PRESENT_STATUSES.has(availability[lane])) {
       // lane_summary said available, but no segments arrived → no_data
       availability[lane] = 'no_data';
     }

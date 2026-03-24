@@ -387,6 +387,8 @@ steps:
           CASE WHEN event_action = 'DOWN' THEN 1 ELSE 0 END AS is_start
         FROM android_input_events
         WHERE event_type = 'MOTION'
+          AND process_name NOT IN ('system_server', '/system/bin/inputflinger')
+          AND process_name NOT GLOB 'com.android.systemui*'
       ),
       gesture_groups AS (
         SELECT ts, event_action, process_name,
@@ -867,6 +869,8 @@ steps:
         FROM android_input_events
         WHERE event_type = 'MOTION'
           AND event_action = 'DOWN'
+          AND process_name NOT IN ('system_server', '/system/bin/inputflinger')
+          AND process_name NOT GLOB 'com.android.systemui*'
 
         UNION ALL
 
@@ -1590,7 +1594,10 @@ steps:
         SELECT
           read_time AS ts, event_action,
           SUM(CASE WHEN event_action = 'DOWN' THEN 1 ELSE 0 END) OVER (ORDER BY read_time) AS gid
-        FROM android_input_events WHERE event_type = 'MOTION'
+        FROM android_input_events
+        WHERE event_type = 'MOTION'
+          AND process_name NOT IN ('system_server', '/system/bin/inputflinger')
+          AND process_name NOT GLOB 'com.android.systemui*'
       ),
       gesture_agg AS (
         SELECT gid, MIN(ts) AS ts, MAX(ts) - MIN(ts) AS dur,
@@ -1700,7 +1707,7 @@ steps:
   - id: clean_timeline
     type: atomic
     name: "场景时间线"
-    condition: table_availability.data[0]?.has_screen_state === 1 || table_availability.data[0]?.has_input_events === 1 || table_availability.data[0]?.has_startups === 1
+    condition: table_availability.data[0]?.has_input_events === 1 || table_availability.data[0]?.has_startups === 1
     display:
       level: detail
       layer: list
@@ -1750,32 +1757,8 @@ steps:
           SELECT ts FROM counter WHERE value IS NOT NULL
         )
       ),
-      -- ========== 数据源 1: 屏幕状态 ==========
-      screen_ev AS (
-        SELECT
-          ts,
-          dur,
-          CASE screen_state
-            WHEN 1 THEN '屏幕熄灭'
-            WHEN 2 THEN '屏幕点亮'
-            WHEN 3 THEN '屏幕休眠'
-            ELSE '屏幕状态 ' || screen_state
-          END AS event,
-          CASE screen_state
-            WHEN 1 THEN 'screen_off'
-            WHEN 2 THEN 'screen_on'
-            WHEN 3 THEN 'screen_sleep'
-            ELSE 'screen'
-          END AS event_type,
-          NULL AS app_package,
-          'screen' AS category,
-          1 AS priority
-        FROM android_screen_state
-        WHERE dur > 0
-          AND EXISTS (SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name='android_screen_state')
-        LIMIT 30
-      ),
-      -- ========== 数据源 2: App 启动 ==========
+      -- Screen state removed: now shown in dedicated Device State lane (state_timeline skill)
+      -- ========== 数据源 1: App 启动 ==========
       launch_ev AS (
         SELECT
           s.ts,
@@ -1809,6 +1792,8 @@ steps:
           SUM(CASE WHEN event_action = 'DOWN' THEN 1 ELSE 0 END) OVER (ORDER BY read_time) AS gid
         FROM android_input_events
         WHERE event_type = 'MOTION'
+          AND process_name NOT IN ('system_server', '/system/bin/inputflinger')
+          AND process_name NOT GLOB 'com.android.systemui*'
           AND EXISTS (SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name='android_input_events')
       ),
       gesture_agg AS (
@@ -1932,6 +1917,8 @@ steps:
           FROM (
             SELECT read_time AS ts FROM android_input_events
             WHERE event_type = 'MOTION' AND event_action = 'DOWN'
+              AND process_name NOT IN ('system_server', '/system/bin/inputflinger')
+              AND process_name NOT GLOB 'com.android.systemui*'
               AND EXISTS (SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name='android_input_events')
             UNION ALL
             SELECT ts FROM android_startups WHERE dur > 0
@@ -1943,8 +1930,6 @@ steps:
       ),
       -- ========== 合并 + 过滤 + 排序 ==========
       all_events AS (
-        SELECT ts, dur, event, event_type, app_package, category, priority FROM screen_ev
-        UNION ALL
         SELECT ts, dur, event, event_type, app_package, category, priority FROM launch_ev
         UNION ALL
         SELECT ts, dur, event, event_type, app_package, category, priority FROM gesture_ev
