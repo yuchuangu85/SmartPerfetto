@@ -14,15 +14,16 @@ import type { AnalysisResult, AnalysisOptions, IOrchestrator } from '../agent/co
 import type { ArchitectureInfo } from '../agent/detectors/types';
 
 import { createClaudeMcpServer, loadLearnedSqlFixPairs, MCP_NAME_PREFIX } from './claudeMcpServer';
-import { buildSystemPrompt } from './claudeSystemPrompt';
+import { buildSystemPrompt, buildQuickSystemPrompt } from './claudeSystemPrompt';
 import { createSseBridge } from './claudeSseBridge';
 import { extractFindingsFromText, extractFindingsFromSkillResult, mergeFindings } from './claudeFindingExtractor';
-import { loadClaudeConfig, resolveEffort, createSdkEnv, type ClaudeAgentConfig } from './claudeConfig';
+import { loadClaudeConfig, resolveEffort, createSdkEnv, createQuickConfig, type ClaudeAgentConfig } from './claudeConfig';
 import { detectFocusApps } from './focusAppDetector';
-import { classifyScene } from './sceneClassifier';
+import { classifyScene, type SceneType } from './sceneClassifier';
+import { classifyQueryComplexity } from './queryComplexityClassifier';
 import { buildAgentDefinitions } from './claudeAgentDefinitions';
 import { getExtendedKnowledgeBase } from '../services/sqlKnowledgeBase';
-import type { AnalysisNote, AnalysisPlanV3, ClaudeAnalysisContext, FailedApproach, Hypothesis, UncertaintyFlag } from './types';
+import type { AnalysisNote, AnalysisPlanV3, ClaudeAnalysisContext, ComplexityClassifierInput, FailedApproach, Hypothesis, UncertaintyFlag } from './types';
 import { ArtifactStore } from './artifactStore';
 import type { SessionStateSnapshot, SessionFieldsForSnapshot } from './sessionStateSnapshot';
 import { AgentMetricsCollector, persistSessionMetrics } from './agentMetrics';
@@ -249,7 +250,55 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
     const metricsCollector = new AgentMetricsCollector(sessionId);
 
     try {
-      const ctx = await this.prepareAnalysisContext(query, sessionId, traceId, options);
+      // Phase 0: Complexity classification — runs in parallel with early context prep
+      const sessionContext = sessionContextManager.getOrCreate(sessionId, traceId);
+      const previousTurns = sessionContext.getAllTurns?.() || [];
+      const sceneType = classifyScene(query);
+
+      const classifierInput: ComplexityClassifierInput = {
+        query,
+        sceneType,
+        hasSelectionContext: !!options.selectionContext,
+        hasReferenceTrace: !!options.referenceTraceId,
+        // Only count findings from full (non-simple) turns as "existing findings" for drill-down detection
+        hasExistingFindings: previousTurns.some(t => t.intent?.complexity !== 'simple' && t.findings?.length > 0),
+        // Distinguish: only full analysis turns trigger multi-turn continuity (not prior quick turns)
+        hasPriorFullAnalysis: previousTurns.some(t => t.intent?.complexity !== 'simple'),
+      };
+
+      // Run classifier in parallel with focus app detection
+      const cachedArch = this.architectureCache.get(traceId);
+      const [classifierResult, focusResult] = await Promise.all([
+        classifyQueryComplexity(classifierInput),
+        detectFocusApps(this.traceProcessorService, traceId).catch((err) => {
+          console.warn('[ClaudeRuntime] Focus app detection failed (graceful):', (err as Error).message);
+          return { apps: [], primaryApp: undefined, method: 'none' as const };
+        }),
+      ]);
+
+      const queryComplexity = classifierResult.complexity;
+      console.log(`[ClaudeRuntime] Query complexity: ${queryComplexity} (source: ${classifierResult.source}, reason: ${classifierResult.reason})`);
+
+      // Quick path: lightweight analysis for simple factual queries
+      if (queryComplexity === 'quick') {
+        return await this.analyzeQuick(query, sessionId, traceId, options, {
+          sceneType,
+          focusResult,
+          cachedArch,
+          sessionContext,
+          previousTurns,
+          metricsCollector,
+          startTime,
+        });
+      }
+
+      // Full path: original comprehensive analysis pipeline
+      const ctx = await this.prepareAnalysisContext(query, sessionId, traceId, options, {
+        focusResult,
+        sessionContext,
+        previousTurns,
+        sceneType,
+      });
 
       const { handleMessage: bridge, getAccumulatedAnswer } = createSseBridge((update: StreamingUpdate) => {
         this.emitUpdate(update);
@@ -788,7 +837,7 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
       });
 
       // P2-2: Save analysis pattern to long-term memory (fire-and-forget)
-      const sceneType = ctx.sceneType;
+      // Note: sceneType is from the outer analyze() scope (classified before context prep)
       const fullFeatures = extractTraceFeatures({
         architectureType: ctx.architecture?.type,
         sceneType,
@@ -887,6 +936,239 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
         persistSessionMetrics(metricsCollector.summarize());
       } catch (metricsErr) {
         console.warn('[ClaudeRuntime] Failed to persist metrics:', (metricsErr as Error).message);
+      }
+    }
+  }
+
+  /**
+   * Quick analysis path for simple factual queries.
+   * Minimal context prep, 3 MCP tools, no planning/verification/report.
+   * Target: 3-8s latency, 2k-5k tokens.
+   */
+  private async analyzeQuick(
+    query: string,
+    sessionId: string,
+    traceId: string,
+    options: AnalysisOptions,
+    precomputed: {
+      sceneType: SceneType;
+      focusResult: Awaited<ReturnType<typeof detectFocusApps>>;
+      cachedArch: ArchitectureInfo | undefined;
+      sessionContext: ReturnType<typeof sessionContextManager.getOrCreate>;
+      previousTurns: any[];
+      metricsCollector: AgentMetricsCollector;
+      startTime: number;
+    },
+  ): Promise<AnalysisResult> {
+    const { sceneType, focusResult, cachedArch, sessionContext, previousTurns, metricsCollector, startTime } = precomputed;
+
+    try {
+      let effectivePackageName = options.packageName;
+      if (!effectivePackageName && focusResult.primaryApp) {
+        effectivePackageName = focusResult.primaryApp;
+      }
+
+      // Architecture detection + skill registry init in parallel
+      const [architecture, _skillRegistryReady] = await Promise.all([
+        cachedArch ? Promise.resolve(cachedArch) : (async () => {
+          try {
+            const detector = createArchitectureDetector();
+            const arch = await detector.detect({
+              traceId,
+              traceProcessorService: this.traceProcessorService,
+              packageName: effectivePackageName,
+            });
+            if (arch) {
+              this.architectureCache.set(traceId, arch);
+              // LRU eviction: match full path's 50-entry cap
+              if (this.architectureCache.size > 50) {
+                const firstKey = this.architectureCache.keys().next().value;
+                if (firstKey) this.architectureCache.delete(firstKey);
+              }
+            }
+            return arch;
+          } catch (err) {
+            console.warn('[ClaudeRuntime] Quick: architecture detection failed:', (err as Error).message);
+            return undefined;
+          }
+        })(),
+        ensureSkillRegistryInitialized(),
+      ]);
+
+      const skillExecutor = createSkillExecutor(this.traceProcessorService);
+      skillExecutor.registerSkills(skillRegistry.getAllSkills());
+      skillExecutor.setFragmentRegistry(skillRegistry.getFragmentCache());
+
+      const watchdogWarning: { current: string | null } = { current: null };
+      const { server: mcpServer, allowedTools } = createClaudeMcpServer({
+        traceId,
+        traceProcessorService: this.traceProcessorService,
+        skillExecutor,
+        packageName: effectivePackageName,
+        emitUpdate: (update) => this.emitUpdate(update),
+        watchdogWarning,
+        sceneType,
+        lightweight: true,
+      });
+
+      const systemPrompt = buildQuickSystemPrompt({
+        architecture,
+        packageName: effectivePackageName,
+        focusApps: focusResult.apps.length > 0 ? focusResult.apps : undefined,
+        focusMethod: focusResult.method,
+      });
+
+      const quickConfig = createQuickConfig(this.config);
+
+      const { handleMessage: bridge, getAccumulatedAnswer } = createSseBridge((update: StreamingUpdate) => {
+        this.emitUpdate(update);
+      });
+
+      this.emitUpdate({
+        type: 'progress',
+        content: { phase: 'answering', message: `快速问答模式 (${quickConfig.model})...` },
+        timestamp: Date.now(),
+      });
+
+      const sessionMapKey = sessionId;
+      const existingSdkSessionId = this.sessionMap.get(sessionMapKey)?.sdkSessionId;
+      const sdkEnv = createSdkEnv();
+
+      const stream = sdkQueryWithRetry({
+        prompt: query,
+        options: {
+          model: quickConfig.model,
+          maxTurns: quickConfig.maxTurns,
+          systemPrompt,
+          mcpServers: { smartperfetto: mcpServer },
+          includePartialMessages: true,
+          permissionMode: 'bypassPermissions' as const,
+          allowDangerouslySkipPermissions: true,
+          cwd: quickConfig.cwd,
+          effort: quickConfig.effort,
+          allowedTools,
+          env: sdkEnv,
+          stderr: (data: string) => {
+            console.warn(`[ClaudeRuntime] Quick SDK stderr [${sessionId}]: ${data.trimEnd()}`);
+          },
+          ...(existingSdkSessionId ? { resume: existingSdkSessionId } : {}),
+        },
+      }, { emitUpdate: (update) => this.emitUpdate(update) });
+
+      let finalResult: string | undefined;
+      let quickSdkSessionId: string | undefined;
+      let quickRounds = 0;
+
+      const timeoutMs = quickConfig.maxTurns * 20_000;
+      let timedOut = false;
+      let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        safetyTimer = setTimeout(() => {
+          timedOut = true;
+          try {
+            if (typeof (stream as any).return === 'function') {
+              const ret = (stream as any).return();
+              if (ret && typeof ret.catch === 'function') ret.catch(() => {});
+            }
+          } catch { /* non-fatal */ }
+          reject(new Error(`Quick analysis timeout after ${timeoutMs / 1000}s`));
+        }, timeoutMs);
+      });
+
+      const processStream = async () => {
+        for await (const msg of stream) {
+          if (timedOut) break;
+
+          if (msg.session_id && !quickSdkSessionId) {
+            quickSdkSessionId = msg.session_id;
+            this.sessionMap.set(sessionMapKey, { sdkSessionId: quickSdkSessionId, updatedAt: Date.now() });
+            savePersistedSessionMap(this.sessionMap);
+          }
+
+          try { bridge(msg); } catch { /* non-fatal */ }
+
+          if (msg.type === 'result') {
+            quickRounds = (msg as any).num_turns || quickRounds;
+            if ((msg as any).subtype === 'success') {
+              finalResult = (msg as any).result;
+            }
+          }
+        }
+      };
+
+      try {
+        await Promise.race([processStream(), timeoutPromise]);
+      } catch (err) {
+        if (timedOut) {
+          console.warn('[ClaudeRuntime] Quick analysis timeout reached');
+        } else {
+          throw err;
+        }
+      } finally {
+        if (safetyTimer) clearTimeout(safetyTimer);
+      }
+
+      const conclusionText = finalResult || getAccumulatedAnswer() || '';
+      const mergedFindings = mergeFindings([extractFindingsFromText(conclusionText)]);
+
+      if (conclusionText.length > 0 && conclusionText.length < 20) {
+        console.warn(`[ClaudeRuntime] Quick: suspiciously short answer (${conclusionText.length} chars)`);
+      }
+
+      // Record turn in session context
+      sessionContext.addTurn(
+        query,
+        {
+          primaryGoal: query,
+          aspects: [],
+          expectedOutputType: 'summary',
+          complexity: 'simple',
+          followUpType: previousTurns.length > 0 ? 'extend' : 'initial',
+        },
+        {
+          agentId: 'claude-agent',
+          success: true,
+          findings: mergedFindings,
+          confidence: mergedFindings.length > 0 ? 0.8 : 0.5,
+          message: conclusionText,
+        },
+        mergedFindings,
+      );
+
+      console.log(`[ClaudeRuntime] Quick analysis completed: ${quickRounds} rounds, ${Date.now() - startTime}ms, ${conclusionText.length} chars`);
+
+      return {
+        sessionId,
+        success: true,
+        findings: mergedFindings,
+        hypotheses: [],
+        conclusion: conclusionText,
+        confidence: mergedFindings.length > 0 ? 0.8 : 0.5,
+        rounds: quickRounds,
+        totalDurationMs: Date.now() - startTime,
+      };
+    } catch (error) {
+      const errMsg = (error as Error).message || 'Unknown error';
+      console.error('[ClaudeRuntime] Quick analysis failed:', errMsg);
+      this.emitUpdate({ type: 'error', content: { message: `快速问答失败: ${errMsg}` }, timestamp: Date.now() });
+      return {
+        sessionId,
+        success: false,
+        findings: [],
+        hypotheses: [],
+        conclusion: `快速问答过程中出错: ${errMsg}`,
+        confidence: 0,
+        rounds: 0,
+        totalDurationMs: Date.now() - startTime,
+      };
+    } finally {
+      this.activeAnalyses.delete(sessionId);
+      try {
+        metricsCollector.recordTurn();
+        persistSessionMetrics(metricsCollector.summarize());
+      } catch (metricsErr) {
+        console.warn('[ClaudeRuntime] Failed to persist quick metrics:', (metricsErr as Error).message);
       }
     }
   }
@@ -1140,6 +1422,12 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
     sessionId: string,
     traceId: string,
     options: AnalysisOptions,
+    precomputed?: {
+      focusResult?: Awaited<ReturnType<typeof detectFocusApps>>;
+      sessionContext?: ReturnType<typeof sessionContextManager.getOrCreate>;
+      previousTurns?: any[];
+      sceneType?: SceneType;
+    },
   ) {
     // Phase 0: Selection context logging
     if (options.selectionContext) {
@@ -1150,9 +1438,9 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
       console.log(`[ClaudeRuntime] Selection context received: kind=${sc.kind}, ${detail}`);
     }
 
-    // Phase 0.5: Detect focus apps from trace data
+    // Phase 0.5: Detect focus apps from trace data (reuse precomputed if available)
     let effectivePackageName = options.packageName;
-    const focusResult = await detectFocusApps(this.traceProcessorService, traceId);
+    const focusResult = precomputed?.focusResult ?? await detectFocusApps(this.traceProcessorService, traceId);
 
     if (focusResult.primaryApp) {
       if (!effectivePackageName) {
@@ -1288,9 +1576,9 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
         `capDiff=${capabilityDiff ? `cur=${capabilityDiff.currentOnly.length}/ref=${capabilityDiff.referenceOnly.length}` : 'none'}`);
     }
 
-    // Phase 3: Session context + conversation history
-    const sessionContext = sessionContextManager.getOrCreate(sessionId, traceId);
-    const previousTurns = sessionContext.getAllTurns?.() || [];
+    // Phase 3: Session context + conversation history (reuse precomputed if available)
+    const sessionContext = precomputed?.sessionContext ?? sessionContextManager.getOrCreate(sessionId, traceId);
+    const previousTurns = precomputed?.previousTurns ?? (sessionContext.getAllTurns?.() || []);
     // Composite key for comparison mode session identity isolation
     const sessionMapKey = referenceTraceId
       ? `${sessionId}:ref:${referenceTraceId}`
@@ -1315,8 +1603,8 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
     const entityStore = sessionContext.getEntityStore();
     const entityContext = this.buildEntityContext(entityStore);
 
-    // Phase 5: Scene classification + effort resolution
-    const sceneType = classifyScene(query);
+    // Phase 5: Scene classification + effort resolution (reuse precomputed if available)
+    const sceneType = precomputed?.sceneType ?? classifyScene(query);
     const effectiveEffort = resolveEffort(this.config, sceneType);
 
     // Phase 5.5: Pattern memory — match similar historical traces (P2-2)

@@ -2133,8 +2133,9 @@ async function runAgentDrivenAnalysis(
   session.orchestrator.on('update', handleUpdate);
 
   // Run state_timeline skill in parallel with Agent analysis (fire-and-forget).
-  // This bypasses Agent decision-making to guarantee state lane tracks are always created.
-  if (shouldGenerateTracks && options.traceProcessorService) {
+  // Only execute when explicitly requested (e.g. scene reconstruction flow),
+  // NOT on every analyze call — raw state lane data needs LLM reasoning before display.
+  if (options.executeStateTimeline && options.traceProcessorService) {
     executeStateTimelineSkill(options.traceProcessorService, traceId)
       .then((envelopes) => {
         if (envelopes.length === 0) return;

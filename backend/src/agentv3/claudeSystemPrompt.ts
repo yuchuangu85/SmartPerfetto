@@ -1,5 +1,7 @@
 import type { ClaudeAnalysisContext, ComparisonContext, SelectionContext, SelectionTrackInfo } from './types';
 import type { SceneType } from './sceneClassifier';
+import type { ArchitectureInfo } from '../agent/detectors/types';
+import type { DetectedFocusApp } from './focusAppDetector';
 import { formatDurationNs } from './focusAppDetector';
 import { getStrategyContent, loadPromptTemplate, loadSelectionTemplate, renderTemplate } from './strategyLoader';
 
@@ -23,6 +25,51 @@ function estimateTokens(text: string): number {
 
 /** Maximum system prompt token budget. Sections are progressively dropped if exceeded. */
 const MAX_PROMPT_TOKENS = 4500;
+
+/**
+ * Build architecture description section. Used by both full and quick prompts.
+ * @param detailed When true, includes Compose/WebView details and loads arch-specific guidance template.
+ */
+function buildArchitectureSection(
+  arch: ArchitectureInfo,
+  packageName?: string,
+  detailed = true,
+): string {
+  let desc = `## 当前 Trace 架构\n\n- **渲染架构**: ${arch.type} (置信度: ${(arch.confidence * 100).toFixed(0)}%)`;
+  if (arch.flutter) {
+    desc += `\n- **Flutter 引擎**: ${arch.flutter.engine}`;
+    if (detailed && arch.flutter.versionHint) desc += ` (${arch.flutter.versionHint})`;
+    if (detailed && arch.flutter.newThreadModel) desc += ` — 新线程模型`;
+  }
+  if (detailed && arch.compose) {
+    desc += `\n- **Compose**: recomposition=${arch.compose.hasRecomposition}, lazyLists=${arch.compose.hasLazyLists}, hybrid=${arch.compose.isHybridView}`;
+  }
+  if (detailed && arch.webview) {
+    desc += `\n- **WebView**: ${arch.webview.engine}, surface=${arch.webview.surfaceType}`;
+  }
+  if (packageName) desc += `\n- **包名**: ${packageName}`;
+  if (detailed) {
+    const archGuidance = loadPromptTemplate('arch-' + arch.type.toLowerCase());
+    if (archGuidance) desc += '\n\n' + archGuidance;
+  }
+  return desc;
+}
+
+/** Build focus app list section. Used by both full and quick prompts. */
+function buildFocusAppSection(
+  focusApps: DetectedFocusApp[],
+  focusMethod?: 'battery_stats' | 'oom_adj' | 'frame_timeline' | 'none',
+): string {
+  const isFrameMode = focusMethod === 'frame_timeline';
+  const appLines = focusApps.map((app, i) => {
+    const marker = i === 0 ? ' **(主焦点)** ' : ' ';
+    const countLabel = isFrameMode
+      ? `${app.switchCount} 帧`
+      : `切换 ${app.switchCount} 次`;
+    return `- \`${app.packageName}\`${marker}— 前台时长 ${formatDurationNs(app.totalDurationNs)}，${countLabel}`;
+  });
+  return `## 焦点应用\n\n以下应用在 trace 期间处于前台：\n${appLines.join('\n')}\n\n默认分析第一个（主焦点）应用。调用 Skill 时，使用 process_name="${focusApps[0].packageName}" 作为参数。`;
+}
 
 /**
  * Build scene-specific strategy section based on classified scene type.
@@ -177,55 +224,13 @@ export function buildSystemPrompt(context: ClaudeAnalysisContext, maxTokens?: nu
   sections.push(roleContent ?? '# 角色\n\n你是 SmartPerfetto 的 Android 性能分析专家。');
 
   if (context.architecture) {
-    const arch = context.architecture;
-    let archDesc = `## 当前 Trace 架构
-
-- **渲染架构**: ${arch.type} (置信度: ${(arch.confidence * 100).toFixed(0)}%)`;
-
-    if (arch.flutter) {
-      archDesc += `\n- **Flutter 引擎**: ${arch.flutter.engine}`;
-      if (arch.flutter.versionHint) archDesc += ` (${arch.flutter.versionHint})`;
-      if (arch.flutter.newThreadModel) archDesc += ` — 新线程模型`;
-    }
-    if (arch.compose) {
-      archDesc += `\n- **Compose**: recomposition=${arch.compose.hasRecomposition}, lazyLists=${arch.compose.hasLazyLists}, hybrid=${arch.compose.isHybridView}`;
-    }
-    if (arch.webview) {
-      archDesc += `\n- **WebView**: ${arch.webview.engine}, surface=${arch.webview.surfaceType}`;
-    }
-    if (context.packageName) {
-      archDesc += `\n- **包名**: ${context.packageName}`;
-    }
-
-    // Architecture-specific analysis guidance — loaded from external templates.
-    // New arch type = new `arch-<type>.template.md` file, no code change needed.
-    const archGuidance = loadPromptTemplate('arch-' + arch.type.toLowerCase());
-    if (archGuidance) archDesc += '\n\n' + archGuidance;
-
-    sections.push(archDesc);
+    sections.push(buildArchitectureSection(context.architecture, context.packageName, true));
   } else if (context.packageName) {
-    sections.push(`## 当前 Trace 信息
-
-- **包名**: ${context.packageName}
-- **架构**: 未检测（建议先调用 detect_architecture）`);
+    sections.push(`## 当前 Trace 信息\n\n- **包名**: ${context.packageName}\n- **架构**: 未检测（建议先调用 detect_architecture）`);
   }
 
-  // Focus app context
   if (context.focusApps && context.focusApps.length > 0) {
-    const isFrameMode = context.focusMethod === 'frame_timeline';
-    const appLines = context.focusApps.map((app, i) => {
-      const marker = i === 0 ? ' **(主焦点)** ' : ' ';
-      const countLabel = isFrameMode
-        ? `${app.switchCount} 帧`
-        : `切换 ${app.switchCount} 次`;
-      return `- \`${app.packageName}\`${marker}— 前台时长 ${formatDurationNs(app.totalDurationNs)}，${countLabel}`;
-    });
-    sections.push(`## 焦点应用
-
-以下应用在 trace 期间处于前台：
-${appLines.join('\n')}
-
-默认分析第一个（主焦点）应用。调用 Skill 时，使用 process_name="${context.focusApps[0].packageName}" 作为参数。`);
+    sections.push(buildFocusAppSection(context.focusApps, context.focusMethod));
   }
 
   // User selection context — scopes analysis to a specific time range or slice.
@@ -426,4 +431,31 @@ ${context.knowledgeBaseContext}
   }
 
   return prompt;
+}
+
+/**
+ * Build a minimal system prompt for quick (factual) queries.
+ * Loads the prompt-quick template and injects architecture + focus app context.
+ * Target: ~1500 tokens — much smaller than the full 4500-token prompt.
+ */
+export function buildQuickSystemPrompt(opts: {
+  architecture?: ArchitectureInfo;
+  packageName?: string;
+  focusApps?: DetectedFocusApp[];
+  focusMethod?: 'battery_stats' | 'oom_adj' | 'frame_timeline' | 'none';
+}): string {
+  const template = loadPromptTemplate('prompt-quick');
+  if (!template) {
+    return '你是 Android 性能 trace 分析专家。请简洁直接地回答用户的问题。';
+  }
+
+  const architectureContext = opts.architecture
+    ? buildArchitectureSection(opts.architecture, opts.packageName, false)
+    : opts.packageName ? `## 当前 Trace 信息\n\n- **包名**: ${opts.packageName}` : '';
+
+  const focusAppContext = opts.focusApps && opts.focusApps.length > 0
+    ? buildFocusAppSection(opts.focusApps, opts.focusMethod)
+    : '';
+
+  return renderTemplate(template, { architectureContext, focusAppContext });
 }

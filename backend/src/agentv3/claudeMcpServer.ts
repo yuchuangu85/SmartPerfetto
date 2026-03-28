@@ -246,6 +246,10 @@ export interface ClaudeMcpServerOptions {
   referenceTraceId?: string;
   /** Pre-computed comparison context (capabilities, metadata) for get_comparison_context tool */
   comparisonContext?: import('./types').ComparisonContext;
+  /** Lightweight mode for quick queries — only registers core tools (execute_sql, invoke_skill, lookup_sql_schema).
+   *  Skips planning, hypothesis, knowledge, patterns, notes, artifacts, and comparison tools.
+   *  Also disables the plan gate since planning tools are not available. */
+  lightweight?: boolean;
 }
 
 /**
@@ -1785,29 +1789,42 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
 
   // P2-G1: Co-locate tool objects with their names — auto-derives allowedTools
   // so adding a new MCP tool automatically makes it available to the SDK.
-  const toolEntries: Array<{ tool: any; name: string }> = [
-    { tool: executeSql, name: 'execute_sql' },
-    { tool: invokeSkill, name: 'invoke_skill' },
-    { tool: listSkills, name: 'list_skills' },
-    { tool: detectArchitecture, name: 'detect_architecture' },
-    { tool: lookupSqlSchema, name: 'lookup_sql_schema' },
-    { tool: queryPerfettoSource, name: 'query_perfetto_source' },
-    { tool: listStdlibModules, name: 'list_stdlib_modules' },
-    { tool: lookupKnowledge, name: 'lookup_knowledge' },
-  ];
-  if (writeAnalysisNote) toolEntries.push({ tool: writeAnalysisNote, name: 'write_analysis_note' });
-  if (fetchArtifact) toolEntries.push({ tool: fetchArtifact, name: 'fetch_artifact' });
-  if (submitPlan) toolEntries.push({ tool: submitPlan, name: 'submit_plan' });
-  if (updatePlanPhase) toolEntries.push({ tool: updatePlanPhase, name: 'update_plan_phase' });
-  if (revisePlan) toolEntries.push({ tool: revisePlan, name: 'revise_plan' });
-  if (submitHypothesis) toolEntries.push({ tool: submitHypothesis, name: 'submit_hypothesis' });
-  if (resolveHypothesis) toolEntries.push({ tool: resolveHypothesis, name: 'resolve_hypothesis' });
-  if (flagUncertainty) toolEntries.push({ tool: flagUncertainty, name: 'flag_uncertainty' });
-  toolEntries.push({ tool: recallPatterns, name: 'recall_patterns' });
-  // Comparison mode tools — only when referenceTraceId is provided
-  if (compareSkill) toolEntries.push({ tool: compareSkill, name: 'compare_skill' });
-  if (executeSqlOn) toolEntries.push({ tool: executeSqlOn, name: 'execute_sql_on' });
-  if (getComparisonContext) toolEntries.push({ tool: getComparisonContext, name: 'get_comparison_context' });
+  const toolEntries: Array<{ tool: any; name: string }> = [];
+
+  if (options.lightweight) {
+    // Lightweight mode: only 3 core data-access tools — no planning, hypothesis, notes, or advanced tools.
+    // Plan gate is automatically disabled because analysisPlan is not passed in lightweight mode.
+    toolEntries.push(
+      { tool: executeSql, name: 'execute_sql' },
+      { tool: invokeSkill, name: 'invoke_skill' },
+      { tool: lookupSqlSchema, name: 'lookup_sql_schema' },
+    );
+  } else {
+    // Full mode: all always-on tools + conditional tools
+    toolEntries.push(
+      { tool: executeSql, name: 'execute_sql' },
+      { tool: invokeSkill, name: 'invoke_skill' },
+      { tool: listSkills, name: 'list_skills' },
+      { tool: detectArchitecture, name: 'detect_architecture' },
+      { tool: lookupSqlSchema, name: 'lookup_sql_schema' },
+      { tool: queryPerfettoSource, name: 'query_perfetto_source' },
+      { tool: listStdlibModules, name: 'list_stdlib_modules' },
+      { tool: lookupKnowledge, name: 'lookup_knowledge' },
+    );
+    if (writeAnalysisNote) toolEntries.push({ tool: writeAnalysisNote, name: 'write_analysis_note' });
+    if (fetchArtifact) toolEntries.push({ tool: fetchArtifact, name: 'fetch_artifact' });
+    if (submitPlan) toolEntries.push({ tool: submitPlan, name: 'submit_plan' });
+    if (updatePlanPhase) toolEntries.push({ tool: updatePlanPhase, name: 'update_plan_phase' });
+    if (revisePlan) toolEntries.push({ tool: revisePlan, name: 'revise_plan' });
+    if (submitHypothesis) toolEntries.push({ tool: submitHypothesis, name: 'submit_hypothesis' });
+    if (resolveHypothesis) toolEntries.push({ tool: resolveHypothesis, name: 'resolve_hypothesis' });
+    if (flagUncertainty) toolEntries.push({ tool: flagUncertainty, name: 'flag_uncertainty' });
+    toolEntries.push({ tool: recallPatterns, name: 'recall_patterns' });
+    // Comparison mode tools — only when referenceTraceId is provided
+    if (compareSkill) toolEntries.push({ tool: compareSkill, name: 'compare_skill' });
+    if (executeSqlOn) toolEntries.push({ tool: executeSqlOn, name: 'execute_sql_on' });
+    if (getComparisonContext) toolEntries.push({ tool: getComparisonContext, name: 'get_comparison_context' });
+  }
 
   const server = createSdkMcpServer({
     name: 'smartperfetto',

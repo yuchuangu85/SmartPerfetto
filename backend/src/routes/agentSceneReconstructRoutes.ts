@@ -161,6 +161,7 @@ export function registerSceneReconstructRoutes<TSession extends SceneReconstruct
       deps.runAgentDrivenAnalysis(analysisId, query, traceId, {
         ...options,
         generateTracks,
+        executeStateTimeline: true,
         traceProcessorService,
       }).catch((error) => {
         console.error(`[AgentRoutes] Scene reconstruction (agent-driven) error for ${analysisId}:`, error);

@@ -74,6 +74,21 @@ export function isClaudeCodeEnabled(): boolean {
 isClaudeCodeEnabled._warned = false;
 
 /**
+ * Create a lightweight config for quick (factual) queries.
+ * Reduces maxTurns, effort, and disables verification/sub-agents
+ * to optimize for fast response on simple questions.
+ */
+export function createQuickConfig(baseConfig: ClaudeAgentConfig): ClaudeAgentConfig {
+  return {
+    ...baseConfig,
+    maxTurns: 5,
+    effort: 'low',
+    enableVerification: false,
+    enableSubAgents: false,
+  };
+}
+
+/**
  * Create a sanitized copy of process.env for SDK subprocess spawning.
  * Strips Claude Code nesting-detection env vars so the SDK subprocess
  * doesn't refuse to start when the backend runs inside a Claude Code session.

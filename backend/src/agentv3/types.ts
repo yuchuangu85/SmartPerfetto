@@ -3,6 +3,28 @@ import type { Finding } from '../agent/types';
 import type { DetectedFocusApp } from './focusAppDetector';
 import type { SceneType } from './sceneClassifier';
 
+// =============================================================================
+// Query Complexity Classification
+// =============================================================================
+
+/** Query complexity level — determines which analysis pipeline to use. */
+export type QueryComplexity = 'quick' | 'full';
+
+/** Input signals for the complexity classifier. */
+export interface ComplexityClassifierInput {
+  query: string;
+  /** Scene type already classified by keyword matcher */
+  sceneType: SceneType;
+  /** Whether user selected a time range or slice in Perfetto UI */
+  hasSelectionContext: boolean;
+  /** Whether a reference trace is loaded for comparison */
+  hasReferenceTrace: boolean;
+  /** Whether prior turns have produced findings (drill-down context) */
+  hasExistingFindings: boolean;
+  /** Whether the session already has a full analysis in a prior turn */
+  hasPriorFullAnalysis: boolean;
+}
+
 export interface SqlSchemaEntry {
   id: string;
   name: string;
