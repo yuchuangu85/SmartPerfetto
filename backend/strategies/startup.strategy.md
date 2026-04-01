@@ -129,6 +129,28 @@ fetch_artifact("art-N", detail="rows", offset=0, limit=50)  // 对每个关键 a
 ```
 **在所有关键 artifact 数据到手之前，不要开始写结论。**
 
+**背景知识指引（结论生成阶段按需调用）：**
+
+在结论生成（Phase 3）阶段，按**根因类型聚合**调用 `lookup_knowledge`，每类根因最多 1 个 📚 知识块（避免重复调用同一模板）。知识块附在对应的 CRITICAL/HIGH 发现之后：
+
+| 根因类型 | 知识模板 | 触发条件 |
+|---------|---------|---------|
+| Binder 阻塞 | `lookup_knowledge("binder-ipc")` | S 状态中 Binder 占比高 |
+| 锁竞争 / futex | `lookup_knowledge("lock-contention")` | blocked_functions 含 futex_wait |
+| GC 压力 | `lookup_knowledge("gc-dynamics")` | GC 占主线程时间 >5% |
+| CPU 调度 / 大小核 / 升频 | `lookup_knowledge("cpu-scheduler")` | Q2>15% 或 CPU 争抢 >1.5x 或升频异常 |
+| Thermal 限频 | `lookup_knowledge("thermal-throttling")` | 均频远低于峰值或检测到限频 |
+| DEX/OAT 加载、ART 运行时 | Agent 自行编写背景知识（当前无专用模板） | bindApplication 阶段 IO 为主因 |
+
+📚 知识块展示格式：
+```
+> 📚 **背景知识：[机制名称]**
+> [2-3 句话解释底层机制]
+> **当前 trace 体现**：[将机制与 trace 数据关联]
+```
+
+每类根因最多 1 个知识块。DEX/OAT 加载是冷启动常见根因但暂无专用知识模板，Agent 应基于自身知识编写 ART OAT/AppImage 加载机制的背景解释。⚠️ **防幻觉约束**：自行编写的知识块只允许解释"通用 ART 机制 + 当前 trace 中可见的 slice 现象"（如 `OpenDexFilesFromOat`、`MapImageFile`、`LZ4 decompress`），**禁止**推断 OAT 编译状态、Baseline Profile 缺失、AppImage 有效性等未被 trace 直接证实的判断——除非同时有 `startup_slow_reasons`/JIT/blocked_functions 等直接证据；数据不足时必须用"可能"/"需进一步确认"限定。
+
 **Phase 2.56 — 内存压力检测（D 状态异常偏高时应执行 ⚠️）：**
 
 **触发条件**（满足任一即执行）：
@@ -464,9 +486,49 @@ TTID 和 TTFD 是两个不同的指标，必须区分：
    ```
    ⚠️ 树中百分比用 self_percent，不要用 wall percent（否则总和超过 100%）
 
-4. **优化建议**：按预期收益排列，标注优先级和预期收益
+4. **优化建议**（双视角，按预期收益排列）：
+
+   **[App 层]**（应用开发者可直接实施）：
    - 收益估算基于 self_ms（不是 wall time）
    - 嵌套 slice 的收益不能简单相加
+
+   **[系统/平台层]**（系统工程师 / ROM 开发者参考）：
+
+   **核心优先检查**（Phase 1/2 通常已包含数据，优先输出结论；若对应 artifact 缺失则标注"数据不足"）：
+
+   | 维度 | 检查项 | 数据来源 |
+   |------|--------|---------|
+   | CPU 调度 | 主线程大小核摆放（Q2 占比）、核迁移频率 | 四象限分析、摆核时序（如 critical_tasks 缺失则标注） |
+   | CPU 频率 | 启动初期升频延迟、频率是否达峰 | CPU 频率分析（如 freq_rampup 缺失则仅看均频） |
+   | Binder 阻塞 | 主线程同步 Binder 中 system_server 响应延迟 | 主线程同步 Binder、Binder 阻塞分析 |
+   | 调度延迟 | >8ms 严重延迟次数、整体调度质量 | sched_latency |
+
+   **条件触发**（仅当有对应数据或满足触发条件时分析，数据不足时输出"当前数据不足以判断"）：
+
+   | 维度 | 触发条件 | 数据来源 |
+   |------|---------|---------|
+   | 内存压力 | Phase 2.56 被执行（D 状态 >40% 或 filemap_fault 密集）| memory_pressure_in_range |
+   | Binder 线程池 | binder_pool artifact 存在 | Binder 线程池利用率（optional artifact） |
+   | Thermal | 均频远低于峰值（>10% 差距）| thermal_zone counters（需 execute_sql 查询） |
+   | IO 子系统 | D 状态 >30% 且 memory_pressure 排除 | 文件 IO 类型、blocked_functions |
+   | 进程管理 | LMK 事件 > 0 或 Binder 中有 freezer 相关调用 | oom_adj_intervals（需 execute_sql 查询） |
+   | OEM 差异 | 检测到厂商特定 Slice（HyperBoost/TurboX/MiBoost 等）| slice 名称匹配 |
+
+   格式示例：
+   ```
+   **[系统/平台层] P1 — CPU 调度优化**
+   - 发现：主线程启动前 200ms 被调度到小核（Q2=15%），核迁移 12 次
+   - 建议：配置 uclamp.min=512 确保启动关键路径获得大核调度；检查 EAS 是否正确识别前台启动场景
+
+   **[系统/平台层] P2 — 系统内存治理**
+   - 发现：内存压力 moderate，2 次 LMK，Page Cache 被回收导致 D 状态放大
+   - 建议：检查后台进程 oom_adj 策略；考虑在启动场景下临时提升 Page Cache 优先级
+
+   **[系统/平台层] 可排除项**
+   - Thermal：prime 核均频 2499/2500MHz，无限频 ✓
+   - CPU 调度：主线程 100% 大核运行，无小核调度问题 ✓
+   - 调度延迟：max 0.67ms，0 次严重延迟 ✓
+   ```
 
 ⚠️ **禁止的做法：**
 - 只说"XX 耗时 YYms"但不解释为什么慢

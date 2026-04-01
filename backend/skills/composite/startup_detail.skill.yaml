@@ -554,6 +554,7 @@ steps:
     display:
       level: key
       layer: deep
+      show: false
       title: "主线程耗时操作 Top10"
       columns:
         - name: slice_name
@@ -708,6 +709,7 @@ steps:
     display:
       level: key
       layer: deep
+      show: false
       title: "主线程文件 IO Top10"
       columns:
         - name: io_slice
@@ -747,6 +749,7 @@ steps:
     display:
       level: key
       layer: deep
+      show: false
       title: "Binder 调用"
       columns:
         - name: client_process
@@ -788,6 +791,7 @@ steps:
     display:
       level: key
       layer: deep
+      show: false
       title: "主线程同步 Binder Top10"
       columns:
         - name: server_process
@@ -854,6 +858,7 @@ steps:
     display:
       level: detail
       layer: deep
+      show: false
       title: "主线程调度延迟"
       columns:
         - name: thread_name
@@ -896,6 +901,7 @@ steps:
     display:
       level: key
       layer: deep
+      show: false
       title: "主线程状态分布"
       columns:
         - name: state
