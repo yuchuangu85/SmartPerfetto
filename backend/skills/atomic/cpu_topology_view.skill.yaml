@@ -94,7 +94,7 @@ steps:
           -- Last resort: no capacity or cpufreq data.
           -- Position-based guessing (cpu_id >= N → big) removed — unreliable:
           -- Samsung Exynos: big at CPU 0-3; Qualcomm: big at 4-7; MTK varies.
-          -- Conservative default: 'little' (won't inflate big-core time).
+          -- Conservative default: 'little' (will not inflate big-core time).
           ELSE 'little'
         END as core_type
       FROM cpu_capacity cc

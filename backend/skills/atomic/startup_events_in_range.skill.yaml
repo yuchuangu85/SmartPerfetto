@@ -101,8 +101,8 @@ sql: |
   --   bindApplication exists           → cold  (process created from zygote)
   --   performCreate:* without above    → warm  (activity recreated, process alive)
   --   handleRelaunchActivity           → warm  (config change rebuild)
-  --   performRestart:* only            → hot   (positive signal: Activity.onRestart)
-  --   neither present                  → keep original
+  --   performRestart:* exists           → collected as signal but NOT used for reclassification
+  --   none of above                    → keep original platform classification (Rule 5)
   -- Also checks process creation time as fallback cold signal.
   --
   -- Uses android_startup_threads (stdlib, correct process resolution via

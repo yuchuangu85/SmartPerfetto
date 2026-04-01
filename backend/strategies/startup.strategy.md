@@ -86,25 +86,37 @@ invoke_skill("startup_detail", {
 
 **Phase 2.5 — 获取详细数据（必须执行，不可跳过）：**
 
-invoke_skill 返回 artifact 摘要（仅含列名和行数）。**必须用 fetch_artifact 获取以下关键数据的完整行**，否则无法做根因分析：
+invoke_skill 返回 artifact 摘要（仅含列名和行数）。**必须用 fetch_artifact 获取以下关键数据的完整行**，否则无法做根因分析。
 
-| 必须获取的 artifact | 匹配 stepId / title 关键词 | 用途 |
+**必须获取**（startup_detail 稳定产出）：
+
+| artifact | 匹配 stepId / title 关键词 | 用途 |
 |---|---|---|
 | 主线程状态分布 | `main_thread_state` / "主线程状态" | **Q4 根因定位**：blocked_functions 列 |
 | 四象限分析 | `quadrant_analysis` / "四大象限" | 确定时间花在 Q1/Q2/Q3/Q4 哪里 |
 | CPU 频率 | `cpu_freq_analysis` / "CPU 频率" | 判断是否升频不足 |
 | 可操作热点 | `actionable_main_thread_slices` / "可操作热点" | 确定优化目标（注意 self_ms 列） |
-| **热点 Slice 线程状态** | `hot_slice_states` / "热点 Slice 线程状态" | **per-slice 根因定位（必须获取）**：每个热点 slice 内部的 Running/S/D 分布及 blocked_functions。这是判断 slice 慢在"计算"还是"阻塞"的唯一直接证据 |
-| **启动关键任务** | `critical_tasks` / "关键任务" | **全线程视角（必须获取）**：所有活跃线程的四象限+摆核+核迁移。回答"哪些线程消耗了多少 CPU""JIT/GC/RenderThread 是否与主线程争抢大核""核迁移是否频繁" |
-| **线程阻塞关系** | `thread_blocking_graph` / "阻塞关系" | **线程间因果（必须获取）**：主线程被谁阻塞？唤醒者是谁？唤醒者当时在做什么 slice？是 system_server/Binder/GC/锁竞争中的哪一种？ |
 | 主线程同步 Binder | `main_thread_sync_binder` / "同步 Binder" | Binder 阻塞量化 |
-| Binder 线程池 | `binder_pool` / "Binder 线程池" | 线程池利用率/饱和度 |
-| GC 事件 | `gc_during_startup` / "GC" | GC 影响量化 |
 | 主线程文件 IO | `main_thread_file_io` / "文件 IO" | IO 阻塞量化 |
 | 调度延迟 | `sched_latency` / "调度延迟" | Q3 根因量化 |
-| 摆核时序 | `cpu_placement_timeline` / "摆核时序" | 启动初期是否被困小核（按 50ms 桶的核类型变化） |
-| CPU 频率爬升 | `freq_rampup` / "频率爬升" | 初期 vs 稳态频率对比，检测升频延迟 |
-| JIT 影响 | `jit_analysis` / "JIT 影响" | 仅冷启动：JIT 编译量、大核竞争、Code Cache GC |
+
+**优先获取**（startup_detail 标记为 optional，可能缺失——缺失时标注"数据不足"，不做排除性结论）：
+
+| artifact | 匹配 stepId / title 关键词 | 用途 |
+|---|---|---|
+| **热点 Slice 线程状态** | `hot_slice_states` / "热点 Slice 线程状态" | **per-slice 根因定位**：每个热点 slice 内部的 Running/S/D 分布及 blocked_functions |
+| **启动关键任务** | `critical_tasks` / "关键任务" | **全线程视角**：所有活跃线程的四象限+摆核+核迁移 |
+| **线程阻塞关系** | `thread_blocking_graph` / "阻塞关系" | **线程间因果**：主线程被谁阻塞、唤醒者是谁 |
+| Binder 线程池 | `binder_pool` / "Binder 线程池" | 线程池利用率/饱和度 |
+| 摆核时序 | `cpu_placement_timeline` / "摆核时序" | 启动初期是否被困小核 |
+| CPU 频率爬升 | `freq_rampup` / "频率爬升" | 初期 vs 稳态频率对比 |
+| JIT 影响 | `jit_analysis` / "JIT 影响" | 仅冷启动：JIT 编译量、大核竞争 |
+
+**来自 Phase 1（startup_analysis）的数据**（无需再次 fetch，Phase 1 返回时已包含）：
+
+| artifact | 来源 | 用途 |
+|---|---|---|
+| GC 事件 | `gc_during_startup`（Phase 1 startup_analysis 产出） | GC 影响量化 |
 
 **Phase 2.55 — Critical Task 分析（基于关键任务数据，不可跳过）：**
 

@@ -39,7 +39,7 @@ detect_architecture()
 **Phase 2 — 管线匹配与教学：**
 ```
 list_skills(type="pipeline")
-invoke_skill("<matched_pipeline_skill>")
+# 根据架构类型动态匹配并调用对应的 pipeline skill（如 android_view_standard_blast）
 ```
 
 根据检测到的架构类型匹配对应的 Pipeline Skill：

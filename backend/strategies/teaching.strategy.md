@@ -49,7 +49,7 @@ compound_patterns:
 ```
 detect_architecture()  → 确定渲染架构类型
 list_skills(type="pipeline") → 查看可用管线教学
-invoke_skill("<matched_pipeline_skill>") → 获取教学内容
+# 根据架构类型动态匹配 pipeline skill → 获取教学内容
 ```
 - 展示 Mermaid 时序图，说明帧从生产到消费的完整流程
 - 解释关键线程角色（main thread、render thread、SurfaceFlinger 等）

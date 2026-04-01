@@ -93,7 +93,7 @@ sql: |
       AND (${end_ts} IS NULL OR a.ts < ${end_ts})
   ),
   -- Note: _android_critical_blocking_calls is an internal Perfetto stdlib table (underscore prefix).
-  -- It is widely used within Perfetto's own codebase and is stable in practice.
+  -- It is widely used within the Perfetto codebase and is stable in practice.
   -- No public equivalent exists without RUN_METRIC.
   blocking AS (
     SELECT
