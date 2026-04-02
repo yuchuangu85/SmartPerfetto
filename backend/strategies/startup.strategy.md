@@ -147,6 +147,7 @@ fetch_artifact("art-N", detail="rows", offset=0, limit=50)  // 对每个关键 a
 
 | 根因类型 | 知识模板 | 触发条件 |
 |---------|---------|---------|
+| **启动根因分类体系** | `lookup_knowledge("startup-root-causes")` | 需要根因编号参考(A1-A18/B1-B12)或交叉因素分析(C1-C4) |
 | Binder 阻塞 | `lookup_knowledge("binder-ipc")` | S 状态中 Binder 占比高 |
 | 锁竞争 / futex | `lookup_knowledge("lock-contention")` | blocked_functions 含 futex_wait |
 | GC 压力 | `lookup_knowledge("gc-dynamics")` | GC 占主线程时间 >5% |
@@ -227,12 +228,34 @@ invoke_skill("memory_pressure_in_range", {
 2. **类加载影响**：检查 Phase 1 返回的 `class_loading` 数据，分析类加载/类验证（`OpenDexFilesFromOat`）耗时占 bindApplication 阶段的比例。冷启动的 DEX 加载和类验证是特有开销
 3. **结论中必须提及**：JIT 和类加载的影响评估结果，作为冷启动特有的排除/确认因素
 
-**Phase 2.6 — 官方启动慢原因交叉验证（冷启动必须执行 ⚠️）：**
+**Phase 2.6 — 启动慢原因检测与交叉验证（冷启动必须执行 ⚠️）：**
 ```
 invoke_skill("startup_slow_reasons")
 ```
-将 Google 官方启动慢原因分类与自有分析交叉验证。重点关注 RUN_METRIC 是否检测到自有分析未覆盖的因素（如 DEX2OAT 并发、missing baseline profiles、debuggable 模式等）。
-**⚠️ 冷启动时此步骤为必须，跳过将触发验证警告。** 即使是测试/基准应用，也应执行此步骤展示官方交叉验证能力——Google 官方分类可能检测到非代码层面的系统因素（如 DEX2OAT 并发、缺失 Baseline Profile）。
+检测 20 种已知启动慢原因（SR01-SR20），与自有分析交叉验证。
+
+**SR 分类概览**（v3.0）：
+
+| 分类 | SR Codes | 检测内容 |
+|------|----------|---------|
+| App 层基础 | SR01-SR08 | JIT/DEX2OAT/GC/锁/IO/Binder/广播/类验证 |
+| App 层扩展 | SR09-SR15 | ContentProvider 过多/SP 阻塞/显式 sleep/SDK 初始化/Native 库/.so/WebView/Inflate |
+| 系统层 | SR16-SR20 | 热节流/后台干扰/system_server 锁/并发启动/数据库 fsync |
+
+**解读指引**：
+- **SR09(ContentProvider过多)**: 结合 A1 根因，检查每个 CP 的包名是否为三方 SDK。仅冷启动有意义（需有 bindApplication slice）
+- **SR10(futex等待) 与 SR04(锁竞争) 的去重**：两者可能同时命中同一把锁（SR04 靠 Lock contention slice，SR10 靠 blocked_function）。**优先级规则**：若 SR04 已命中且 futex 时间落在同一窗口 → SR10 作为补充证据归入同一发现，不单列独立根因。SR10 独立报告的条件：SR04 未命中（无 Lock contention slice，如 SharedPreferences awaitLoadedLocked）
+- **SR11(显式sleep)**: 最容易修复的根因(A17)，直接定位 Thread.sleep() 调用
+- **SR12(SDK初始化)**: bindApplication 阶段非框架 slice 占比高 → 三方 SDK 累积(A11)
+- **SR13-SR14(Native库/WebView)**: 冷启动特有，受 page cache(B3) 影响大
+- **SR15(inflate)**: CPU-bound(A4)，检查 Q1 而非 Q4
+- **SR16(热节流)**: 系统因素(B4)，对比设备冷却后重测
+- **SR17(后台干扰)**: Runnable >10% 说明 CPU 被抢占(B9)
+- **SR18(system_server锁)**: 间接影响 Binder 延迟(B6→B7)
+- **SR19(并发启动)**: Boot storm 场景(B12)，放大所有系统层问题
+- **SR20(fsync/数据库)**: 数据库初始化(A8)或 SP commit 在主线程
+
+**⚠️ 冷启动时此步骤为必须，跳过将触发验证警告。** 即使是测试/基准应用，也应执行此步骤——SR 检测可发现自有分析未覆盖的系统因素。
 
 **Phase 2.7 — 阻塞链深钻（Q4>25% 时必须执行 ⚠️）：**
 
@@ -473,34 +496,43 @@ TTID 和 TTFD 是两个不同的指标，必须区分：
    - 如果检测到模拟器/测试应用特征，必须在此标注
    - 如果启动类型与 bindApplication 存在矛盾，必须在此说明
 
-2. **关键发现**（每个发现必须包含**根因推理链**，不能只报数字）：
+2. **关键发现**（每个发现必须包含**根因推理链**和**根因编号**，不能只报数字）：
    ```
-   **[CRITICAL] 标题**
+   **[CRITICAL] 标题 ← 根因 A9: SharedPreferences 阻塞**
    - 描述：XX slice 自身耗时 YY ms（self_percent ZZ%）[wall time AA ms]
    - 根因推理链：
      ① 四象限显示 Q4=NN%（主线程大量时间被阻塞）
      ② 线程状态：S(Sleeping) = XX ms >> D(IO) = YY ms → 阻塞主因是 S 状态
      ③ blocked_functions 含 futex_wait_queue → 锁等待
      ④ 结合热点 slice：该 slice 内部存在 [锁竞争/sleep/同步Binder/IO阻塞]
+   - SR 交叉验证：SR10 检测到 futex 等待 XX ms，与此发现一致
    - 结论：此 slice 慢的根因是 [具体根因]，不是 [排除的因素]
    - 建议：[可操作的优化建议]
    ```
+   ⚠️ **根因编号标注规则**（A1-A18 / B1-B12，参见 `knowledge-startup-root-causes` 模板）：
+   - **CRITICAL/HIGH 发现**：必须标注根因编号 + SR 交叉验证
+   - **WARNING/INFO 发现**：可写"疑似 A9 / 待确认"
+   - **数据不足时**：标注"数据不足，无法归类"而非强行贴标签
+   - **纯排除项**：编号可选（如"Binder 阻塞(B6) < 10ms ✓"）
 
-3. **根因分析树**：层级式展示启动耗时分解，**必须体现嵌套关系和使用 self_ms**
+3. **根因分析树**：层级式展示启动耗时分解，**必须体现嵌套关系、使用 self_ms、标注根因编号**
    ```
    启动总耗时 XXms
    ├── [Phase 1] bindApplication = XXms wall
    │     └── app.onCreate = XXms wall (self=YYms)
-   │           ├── contentProviderCreate = XXms (self=YYms) ← 根因: [IO/锁等待/...]
-   │           └── OpenDexFilesFromOat = XXms (self=YYms) ← DEX 加载
+   │           ├── contentProviderCreate = XXms (self=YYms) ← A1: ContentProvider 初始化
+   │           └── OpenDexFilesFromOat = XXms (self=YYms) ← A5: DEX 加载
    ├── [Phase 2] activityStart = XXms wall
    │     └── performCreate = XXms wall (self=YYms)
-   │           ├── inflate = XXms (self=YYms) ← CPU-bound (布局复杂度)
+   │           ├── inflate = XXms (self=YYms) ← A4: Layout Inflation (CPU-bound)
    │           └── Choreographer#doFrame = XXms (self=YYms) ← 首帧渲染
+   ├── [交叉因素]（当多个根因同时出现时，说明放大关系）
+   │     └── B3 内存压力 × A2 磁盘 IO → Page Cache 被回收放大 IO 延迟
    └── [可排除因素]
-         ├── Binder 阻塞 < Xms ✓
-         ├── GC [主线程/后台线程] ✓
-         └── 调度延迟 < Xms ✓
+         ├── Binder 阻塞(B6) < Xms ✓
+         ├── GC(A6) [主线程/后台线程] ✓
+         ├── 热节流(B4)：大核频率达标称 XX% ✓
+         └── 调度延迟(B9) < Xms ✓
    ```
    ⚠️ 树中百分比用 self_percent，不要用 wall percent（否则总和超过 100%）
 
