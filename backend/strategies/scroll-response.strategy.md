@@ -44,7 +44,7 @@ compound_patterns:
 
 首先定位滑动手势的起始输入事件：
 ```
-invoke_skill("input_events_in_range", { event_type: "motion", event_action: "move" })
+invoke_skill("input_events_in_range", { event_type: "MOTION", event_action: "MOVE" })
 ```
 
 如果该 Skill 不可用，使用 SQL 回退：

@@ -12,6 +12,7 @@ meta:
 prerequisites:
   modules:
     - android.input
+    - android.binder
     - android.screen_state
     - android.battery_stats
     - android.startup.startups
@@ -1166,39 +1167,19 @@ steps:
           label: "接口名"
           type: string
     sql: |
-      WITH binder_txn AS (
-        SELECT
-          client.ts,
-          client.dur,
-          client_proc.name AS client_process,
-          server_proc.name AS server_process,
-          COALESCE(
-            (SELECT s2.name FROM slice s2 WHERE s2.id = client.id),
-            'binder transaction'
-          ) AS interface_name
-        FROM slice client
-        JOIN thread_track client_tt ON client.track_id = client_tt.id
-        JOIN thread client_t ON client_tt.utid = client_t.utid
-        JOIN process client_proc ON client_t.upid = client_proc.upid
-        JOIN flow f ON f.slice_out = client.id
-        JOIN slice server ON f.slice_in = server.id
-        JOIN thread_track server_tt ON server.track_id = server_tt.id
-        JOIN thread server_t ON server_tt.utid = server_t.utid
-        JOIN process server_proc ON server_t.upid = server_proc.upid
-        WHERE client.name GLOB '*binder transaction*'
-          AND client.dur > 10000000
-          AND client_proc.name IS NOT NULL
-          AND server_proc.name IS NOT NULL
-          AND client_proc.name != server_proc.name
-      )
+      -- 使用 stdlib android_binder_txns 替代手动 7-table JOIN
       SELECT
-        printf('%d', ts) AS ts,
-        client_process,
-        server_process,
-        ROUND(dur / 1e6, 1) AS dur_ms,
-        interface_name
-      FROM binder_txn
-      ORDER BY dur DESC
+        printf('%d', bt.client_ts) AS ts,
+        bt.client_process,
+        bt.server_process,
+        ROUND(bt.client_dur / 1e6, 1) AS dur_ms,
+        COALESCE(bt.aidl_name, 'binder transaction') AS interface_name
+      FROM android_binder_txns bt
+      WHERE bt.client_dur > 10000000
+        AND bt.client_process IS NOT NULL
+        AND bt.server_process IS NOT NULL
+        AND bt.client_process != bt.server_process
+      ORDER BY bt.client_dur DESC
       LIMIT 100
     save_as: cross_process_interactions
     optional: true

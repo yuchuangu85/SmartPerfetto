@@ -1,25 +1,31 @@
 # =============================================================================
-# 滚动响应延迟分析（原子 Skill）
+# 滚动响应延迟分析（原子 Skill）v2.0
 # =============================================================================
-# 测量滚动手势从输入到首帧渲染的响应延迟。
-# 依赖 android_input_event_dispatch 表（部分 trace 可能不包含）。
+# 使用 Perfetto stdlib android_input_events 测量滚动手势从输入到首帧渲染的响应延迟。
+# 基于 slice 解析（sendMessage/receiveMessage），兼容大多数 atrace 配置。
+#
+# v2.0 变更：
+# - 从 android_input_event_dispatch (proto) 迁移到 android_input_events (slice-based)
+# - event_action 使用大写格式（MOVE, DOWN, UP）
+# - 时间戳基准统一为 dispatch_ts
+#
+# 注意：android_input_events 仅包含完成完整 IPC 周期的事件。
+# 手势分割逻辑：连续 MOVE 事件间隔 > 500ms 视为新手势。
 
 name: scroll_response_latency
-version: "1.0"
+version: "2.0"
 type: atomic
 category: input_response
 
 meta:
   display_name: "滚动响应延迟 (区间)"
-  description: "测量滚动手势从输入事件到首帧渲染的响应延迟"
+  description: "基于 android_input_events 测量滚动手势从输入事件到首帧渲染的响应延迟"
   icon: "swipe_right"
   tags: [scroll, response, latency, input, atomic]
 
 prerequisites:
-  required_tables:
-    - slice
   modules:
-    - android.frames.timeline
+    - android.input
 
 inputs:
   - name: package
@@ -61,29 +67,17 @@ display:
       type: string
 
 sql: |
-  WITH input_events AS (
+  WITH move_events AS (
     SELECT
-      ied.ts as input_ts,
-      ied.event_type,
-      ied.event_action,
-      ied.window_id,
-      ied.event_seq,
-      p.name as process_name,
-      p.upid
-    FROM android_input_event_dispatch ied
-    LEFT JOIN process p ON p.upid = ied.upid
-    WHERE (p.name GLOB '${package}*' OR '${package}' = '')
-      AND (${start_ts} IS NULL OR ied.ts >= ${start_ts})
-      AND (${end_ts} IS NULL OR ied.ts <= ${end_ts})
-  ),
-  move_events AS (
-    SELECT
-      input_ts,
+      dispatch_ts as input_ts,
       process_name,
       upid,
-      ROW_NUMBER() OVER (PARTITION BY upid ORDER BY input_ts) as move_idx
-    FROM input_events
-    WHERE event_action = 'ACTION_MOVE' OR event_action = '2'
+      ROW_NUMBER() OVER (PARTITION BY upid ORDER BY dispatch_ts) as move_idx
+    FROM android_input_events
+    WHERE (process_name GLOB '${package}*' OR '${package}' = '')
+      AND event_action = 'MOVE'
+      AND (${start_ts} IS NULL OR dispatch_ts >= ${start_ts})
+      AND (${end_ts} IS NULL OR dispatch_ts <= ${end_ts})
   ),
   gesture_starts AS (
     SELECT
@@ -99,9 +93,6 @@ sql: |
       g.gesture_ts,
       g.process_name,
       MIN(f.ts) as frame_ts,
-      (SELECT f2.ts + f2.dur FROM actual_frame_timeline_slice f2
-       WHERE f2.upid = g.upid AND f2.ts >= g.gesture_ts
-       ORDER BY f2.ts LIMIT 1) as frame_end_ts,
       (SELECT f2.dur FROM actual_frame_timeline_slice f2
        WHERE f2.upid = g.upid AND f2.ts >= g.gesture_ts
        ORDER BY f2.ts LIMIT 1) as frame_dur

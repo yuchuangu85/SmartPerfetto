@@ -1,23 +1,31 @@
 # =============================================================================
-# 输入事件列表（原子 Skill）
+# 输入事件列表（原子 Skill）v2.0
 # =============================================================================
-# 提取 trace 中的原始输入事件（触摸、按键等），用于输入延迟分析。
-# 依赖 android_input_event_dispatch 表（部分 trace 可能不包含）。
+# 使用 Perfetto stdlib android_input_events 表提取完整 IPC 周期的输入事件。
+# 基于 slice 解析（sendMessage/receiveMessage），兼容大多数 atrace 配置。
+#
+# v2.0 变更：
+# - 从 android_input_event_dispatch (proto) 迁移到 android_input_events (slice-based)
+# - 新增 5 维延迟分解：dispatch/handling/ack/total/end_to_end
+# - 新增 normalized_event_channel 窗口归一化
+#
+# 注意：android_input_events 仅包含完整走完 dispatch→receive→finish→finish_ack
+# 四阶段的事件。不完整/部分分发的事件不会出现在结果中。
 
 name: input_events_in_range
-version: "1.0"
+version: "2.0"
 type: atomic
 category: input_response
 
 meta:
   display_name: "输入事件列表 (区间)"
-  description: "提取区间内的原始输入事件（触摸、按键），分析分发延迟"
+  description: "提取区间内的输入事件（触摸、按键），包含完整 5 维延迟分解"
   icon: "touch_app"
   tags: [input, events, touch, key, atomic]
 
 prerequisites:
-  required_tables:
-    - slice
+  modules:
+    - android.input
 
 inputs:
   - name: package
@@ -35,11 +43,11 @@ inputs:
   - name: event_type
     type: string
     required: false
-    description: "事件类型过滤（motion/key）"
+    description: "事件类型过滤（MOTION/KEY）"
   - name: event_action
     type: string
     required: false
-    description: "事件动作过滤（down/move/up）"
+    description: "事件动作过滤（DOWN/MOVE/UP）"
 
 display:
   level: detail
@@ -61,8 +69,27 @@ display:
       label: "分发延迟"
       type: duration
       format: duration_ms
+    - name: handling_latency_ms
+      label: "处理延迟"
+      type: duration
+      format: duration_ms
+    - name: ack_latency_ms
+      label: "ACK 延迟"
+      type: duration
+      format: duration_ms
+    - name: total_latency_ms
+      label: "总延迟"
+      type: duration
+      format: duration_ms
+    - name: e2e_latency_ms
+      label: "端到端延迟"
+      type: duration
+      format: duration_ms
     - name: process_name
       label: "目标进程"
+      type: string
+    - name: normalized_channel
+      label: "窗口"
       type: string
     - name: dispatch_status
       label: "状态"
@@ -70,27 +97,29 @@ display:
 
 sql: |
   SELECT
-    printf('%d', ied.ts) as event_ts,
-    ied.event_type,
-    ied.event_action,
-    ROUND(ied.dispatch_latency_ns / 1e6, 2) as dispatch_latency_ms,
-    p.name as process_name,
-    ied.window_id,
-    ied.event_seq,
+    printf('%d', dispatch_ts) as event_ts,
+    event_type,
+    event_action,
+    ROUND(dispatch_latency_dur / 1e6, 2) as dispatch_latency_ms,
+    ROUND(handling_latency_dur / 1e6, 2) as handling_latency_ms,
+    ROUND(ack_latency_dur / 1e6, 2) as ack_latency_ms,
+    ROUND(total_latency_dur / 1e6, 2) as total_latency_ms,
+    ROUND(end_to_end_latency_dur / 1e6, 2) as e2e_latency_ms,
+    process_name,
+    normalized_event_channel as normalized_channel,
     CASE
-      WHEN ied.dispatch_latency_ns / 1e6 > 100 THEN '严重延迟'
-      WHEN ied.dispatch_latency_ns / 1e6 > 50 THEN '延迟偏高'
-      WHEN ied.dispatch_latency_ns / 1e6 > 20 THEN '轻微延迟'
+      WHEN total_latency_dur / 1e6 > 200 THEN '严重延迟'
+      WHEN total_latency_dur / 1e6 > 100 THEN '延迟偏高'
+      WHEN total_latency_dur / 1e6 > 50 THEN '轻微延迟'
       ELSE '正常'
     END as dispatch_status
-  FROM android_input_event_dispatch ied
-  LEFT JOIN process p ON p.upid = ied.upid
-  WHERE (p.name GLOB '${package}*' OR '${package}' = '')
-    AND (${start_ts} IS NULL OR ied.ts >= ${start_ts})
-    AND (${end_ts} IS NULL OR ied.ts <= ${end_ts})
-    AND ('${event_type}' = '' OR ied.event_type = '${event_type}')
-    AND ('${event_action}' = '' OR ied.event_action = '${event_action}')
-  ORDER BY ied.ts ASC
+  FROM android_input_events
+  WHERE (process_name GLOB '${package}*' OR '${package}' = '')
+    AND (${start_ts} IS NULL OR dispatch_ts >= ${start_ts})
+    AND (${end_ts} IS NULL OR dispatch_ts <= ${end_ts})
+    AND ('${event_type}' = '' OR event_type = '${event_type}')
+    AND ('${event_action}' = '' OR event_action = '${event_action}')
+  ORDER BY dispatch_ts ASC
 
 output:
   format: structured

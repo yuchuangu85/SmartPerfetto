@@ -27,6 +27,7 @@ prerequisites:
     - thread_state
     - sched_slice
   modules:
+    - android.input
     - android.binder
     - linux.cpu.frequency
 
@@ -234,6 +235,108 @@ steps:
       LIMIT 20
     optional: true
 
+  # ========== 输入管线完整生命周期（stdlib _android_input_lifecycle_by_slice_id）==========
+  - id: input_pipeline_lifecycle
+    type: atomic
+    name: "输入管线生命周期"
+    optional: true
+    display:
+      level: detail
+      layer: deep
+      title: "输入管线 5 阶段追踪 (Reader→Dispatch→Receive→Consume→Frame)"
+      columns:
+        - name: input_id
+          label: "输入事件 ID"
+          type: string
+        - name: channel
+          label: "事件通道"
+          type: string
+        - name: total_latency_ms
+          label: "总延迟(ms)"
+          type: duration
+          format: duration_ms
+        - name: reader_ts
+          label: "Reader 时间"
+          type: timestamp
+          unit: ns
+          clickAction: navigate_timeline
+        - name: reader_ms
+          label: "Reader(ms)"
+          type: duration
+          format: duration_ms
+        - name: dispatch_ts
+          label: "Dispatch 时间"
+          type: timestamp
+          unit: ns
+          clickAction: navigate_timeline
+        - name: dispatch_ms
+          label: "Dispatch(ms)"
+          type: duration
+          format: duration_ms
+        - name: receive_ts
+          label: "Receive 时间"
+          type: timestamp
+          unit: ns
+          clickAction: navigate_timeline
+        - name: receive_ms
+          label: "Receive(ms)"
+          type: duration
+          format: duration_ms
+        - name: consume_ts
+          label: "Consume 时间"
+          type: timestamp
+          unit: ns
+          clickAction: navigate_timeline
+        - name: consume_ms
+          label: "Consume(ms)"
+          type: duration
+          format: duration_ms
+        - name: frame_ts
+          label: "Frame 时间"
+          type: timestamp
+          unit: ns
+          clickAction: navigate_timeline
+        - name: frame_ms
+          label: "Frame(ms)"
+          type: duration
+          format: duration_ms
+        - name: is_speculative_frame
+          label: "推测帧"
+          type: boolean
+    sql: |
+      -- 从 deliverInputEvent slice 反向追踪完整输入管线
+      -- 注意：时间窗口匹配在事件密集场景下可能绑错事件，click 场景通常事件稀疏
+      WITH deliver_slice AS (
+        SELECT s.id
+        FROM slice s
+        JOIN thread_track tt ON s.track_id = tt.id
+        JOIN thread t ON tt.utid = t.utid
+        JOIN process p ON t.upid = p.upid
+        WHERE s.name GLOB 'deliverInputEvent src=*'
+          AND p.name GLOB '${process_name}*'
+          AND s.ts >= ${event_ts} - 10000000
+          AND s.ts <= ${event_end_ts} + 10000000
+        ORDER BY s.ts
+        LIMIT 1
+      )
+      SELECT
+        input_id,
+        channel,
+        ROUND(total_latency / 1e6, 2) as total_latency_ms,
+        printf('%d', ts_reader) as reader_ts,
+        ROUND(dur_reader / 1e6, 2) as reader_ms,
+        printf('%d', ts_dispatch) as dispatch_ts,
+        ROUND(dur_dispatch / 1e6, 2) as dispatch_ms,
+        printf('%d', ts_receive) as receive_ts,
+        ROUND(dur_receive / 1e6, 2) as receive_ms,
+        printf('%d', ts_consume) as consume_ts,
+        ROUND(dur_consume / 1e6, 2) as consume_ms,
+        printf('%d', ts_frame) as frame_ts,
+        ROUND(dur_frame / 1e6, 2) as frame_ms,
+        is_speculative_frame
+      FROM _android_input_lifecycle_by_slice_id((SELECT id FROM deliver_slice))
+    save_as: input_lifecycle
+
   # ========== 大小核占比分析 ==========
   - id: cpu_core_analysis
     type: atomic
@@ -297,7 +400,7 @@ steps:
           SUM(
             MIN(ss.ts + ss.dur, ${event_end_ts}) - MAX(ss.ts, ${event_ts})
           ) / 1e6 as dur_ms,
-          COALESCE(ct.core_type, 'little') as core_type
+          COALESCE(ct.core_type, 'unknown') as core_type
         FROM sched_slice ss
         JOIN main_thread mt ON ss.utid = mt.utid
         LEFT JOIN _cpu_topology ct ON ss.cpu = ct.cpu_id
@@ -381,7 +484,7 @@ steps:
       thread_states AS (
         SELECT
           ts.state,
-          COALESCE(ct.core_type, 'little') as core_type,
+          COALESCE(ct.core_type, 'unknown') as core_type,
           ts.blocked_function,
           SUM(
             MIN(ts.ts + ts.dur, ${event_end_ts}) - MAX(ts.ts, ${event_ts})

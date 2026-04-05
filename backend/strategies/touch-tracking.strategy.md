@@ -55,9 +55,9 @@ compound_patterns:
 ```
 invoke_skill("input_to_frame_latency", { process_name: "<包名>" })
 ```
-返回：每个 ACTION_MOVE 事件的 input_ts → frame_present_ts 延迟，以及统计指标（均值、P50、P90、P99、抖动）。
+返回：每个 MOVE 事件的 5 维延迟分解（dispatch/handling/ack/e2e）+ 帧内分解（frame_dur/frame_to_present），以及统计指标（均值、P50、P90、P99、抖动）和 is_speculative 帧关联置信度。
 
-如果该 Skill 不可用（trace 缺少 `android_input_event_dispatch` 表），使用 SQL 回退：
+如果该 Skill 不可用（trace 缺少 `sendMessage(*)`/`receiveMessage(*)` slices），使用 SQL 回退：
 ```sql
 -- 查找 MOVE 事件与消费帧的关联
 WITH input_events AS (

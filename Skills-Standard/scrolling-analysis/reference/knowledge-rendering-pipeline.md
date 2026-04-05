@@ -19,7 +19,7 @@ Android uses triple-buffering. When a frame takes too long to render, its buffer
 
 ## Frame Token 体系（actual_frame_timeline_slice）
 
-`actual_frame_timeline_slice` 是 Perfetto 帧分析的核心表，每行代表一个帧事件。关键是理解 **双 token ��构**：
+`actual_frame_timeline_slice` 是 Perfetto 帧分析的核心表，每行代表一个帧事件。关键是理解 **双 token 架构**：
 
 | Token | 含义 | 何时为 NULL |
 |-------|------|------------|
@@ -30,7 +30,7 @@ Android uses triple-buffering. When a frame takes too long to render, its buffer
 
 | 帧类型 | 过滤条件 | 含义 |
 |--------|---------|------|
-| App 帧 | `surface_frame_token IS NOT NULL` | 应用��交的 surface frame |
+| App 帧 | `surface_frame_token IS NOT NULL` | 应用提交的 surface frame |
 | SF 帧 | `surface_frame_token IS NULL` | SurfaceFlinger 的 display frame |
 
 ### JOIN 场景与正确用法
@@ -41,18 +41,18 @@ Android uses triple-buffering. When a frame takes too long to render, its buffer
 | expected ↔ actual 帧匹配 | `ON e.display_frame_token = a.display_frame_token` | — |
 | 用 stdlib frame_id 查帧 | `ON stdlib_frame_id = a.surface_frame_token` | 用 `display_frame_token` |
 | token_gap 缓冲区饥饿检测 | App 帧的 `display_frame_token` 差值 | 用 `surface_frame_token` 差值 |
-| 通用 frame_id 输出 | `display_frame_token as frame_id`��一致性） | — |
+| 通用 frame_id 输出 | `display_frame_token as frame_id`（一致性） | — |
 
 ### ⚠️ 常见陷阱
 
 **`COALESCE(display_frame_token, surface_frame_token)` 的认知误导**：
 由于 `display_frame_token` 始终非 NULL，COALESCE 实际上**始终返回 `display_frame_token`**。
-代码中广泛使用这个模式作为通用 `frame_id`，这会造��一个认��陷阱：看到 `frame_id` 时**不确定它到底是哪个 token**。
+代码中广泛使用这个模式作为通用 `frame_id`，这会造成一个认知陷阱：看到 `frame_id` 时**不确定它到底是哪个 token**。
 
 **关键区分**：
 - SmartPerfetto skill 输出的 `frame_id` = `display_frame_token`（SF VSync ID）
 - Perfetto stdlib `android_input_events.frame_id` = `surface_frame_token`（App VSync ID）
-- 两者语��不同，不能混用做 JOIN key
+- 两者语义不同，不能混用做 JOIN key
 
 ## Key Trace Signatures
 
