@@ -1,0 +1,56 @@
+# Dependencies (rebuilt in container)
+node_modules/
+*/node_modules/
+perfetto/ui/node_modules/
+
+# Build outputs (rebuilt in container)
+dist/
+build/
+*/dist/
+*/build/
+perfetto/out/
+
+# Runtime data
+backend/uploads/*
+backend/data/sessions/*.db
+backend/data/sessions.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+backend/logs/
+*.log
+
+# Test data & outputs
+test-traces/
+backend/test-output/
+coverage/
+
+# Git
+.git/
+.gitmodules
+**/.git/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment (user provides via docker compose)
+.env
+.env.*
+backend/.env
+
+# Claude Code
+.claude/
+
+# Private
+private/
+Feature-Dev/
+
+# Docker itself
+Dockerfile
+docker-compose.yml
+.dockerignore
