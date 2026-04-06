@@ -7,7 +7,7 @@
 Load a Perfetto trace, ask a question in natural language, and get structured, evidence-backed analysis with root cause chains and optimization recommendations.
 
 <!-- TODO: Uncomment after GitHub org is set up
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Build](https://github.com/Gracker/SmartPerfetto/actions/workflows/backend-agent-regression-gate.yml/badge.svg)](https://github.com/Gracker/SmartPerfetto/actions)
 -->
 
@@ -252,6 +252,8 @@ Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
 ## License
 
-[MIT](LICENSE) — SmartPerfetto core.
+[AGPL v3](LICENSE) — SmartPerfetto core.
 
 The `perfetto/` submodule is a fork of [Google's Perfetto](https://github.com/google/perfetto), licensed under [Apache 2.0](perfetto/LICENSE).
+
+For commercial licensing options (use without AGPL obligations), please contact the maintainer.

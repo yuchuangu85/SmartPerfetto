@@ -192,6 +192,8 @@ curl http://localhost:3000/api/agent/v1/logs/{sessionId}
 
 ## 许可证
 
-[MIT](LICENSE) — SmartPerfetto 核心代码。
+[AGPL v3](LICENSE) — SmartPerfetto 核心代码。
 
 `perfetto/` 子模块是 [Google Perfetto](https://github.com/google/perfetto) 的 fork，使用 [Apache 2.0](perfetto/LICENSE) 许可证。
+
+如需商业授权（无需遵守 AGPL 义务），请联系项目维护者。
