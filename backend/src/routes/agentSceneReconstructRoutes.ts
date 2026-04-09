@@ -24,6 +24,7 @@ import { SkillExecutor } from '../services/skillEngine/skillExecutor';
 import { skillRegistry, ensureSkillRegistryInitialized } from '../services/skillEngine/skillLoader';
 import { getSceneDeepDiveRoute } from '../agent/config/domainManifest';
 import { SceneStoryService } from '../agent/scene/sceneStoryService';
+import type { SceneReport } from '../agent/scene/types';
 
 export interface SceneReconstructConversationStep {
   eventId: string;
@@ -42,6 +43,8 @@ export interface SceneReconstructSession extends ManagedAssistantSession {
   query: string;
   logger: SessionLogger;
   result?: AgentRuntimeAnalysisResult;
+  /** Set by SceneStoryService once the pipeline completes (fresh or cached). */
+  sceneStoryReport?: SceneReport;
   hypotheses: Hypothesis[];
   scenes?: any[];
   trackEvents?: any[];
@@ -100,6 +103,98 @@ export function registerSceneReconstructRoutes<TSession extends SceneReconstruct
       });
     }
     next();
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Preview — cheap cache lookup + cost estimate.
+  //
+  // Always returns within ~50ms when there's nothing on disk to hash, and
+  // within seconds even for multi-GB traces (sha256 streaming). Never
+  // starts the heavy pipeline; the response either contains a cached
+  // SceneReport (so the client can short-circuit straight to "show me
+  // this") or just an estimate the client can use to decide whether to
+  // POST /scene-reconstruct.
+  // ────────────────────────────────────────────────────────────────────────
+  router.post('/scene-reconstruct/preview', async (req, res) => {
+    try {
+      const { traceId } = req.body ?? {};
+      if (!traceId || typeof traceId !== 'string') {
+        return res.status(400).json({
+          success: false,
+          error: 'traceId is required',
+        });
+      }
+
+      // 404 fast if the trace isn't known to the backend, mirroring the
+      // primary POST /scene-reconstruct handler so callers see a consistent
+      // error shape.
+      const traceProcessorService = getTraceProcessorService();
+      const trace = await traceProcessorService.getOrLoadTrace(traceId);
+      if (!trace) {
+        return res.status(404).json({
+          success: false,
+          error: 'Trace not found in backend',
+          hint: 'Please upload the trace to the backend first',
+          code: 'TRACE_NOT_UPLOADED',
+        });
+      }
+
+      const preview = await deps.sceneStoryService.previewOnly({ traceId });
+
+      return res.json({
+        success: true,
+        traceDurationSec: preview.traceDurationSec,
+        estimate: preview.estimate,
+        // Only include the cached report's identity here — the full body is
+        // available via GET /report/:id so we don't bloat the preview
+        // response with potentially-large payloads.
+        cached: preview.cached
+          ? {
+              reportId: preview.cached.reportId,
+              createdAt: preview.cached.createdAt,
+              expiresAt: preview.cached.expiresAt,
+              cachePolicy: preview.cached.cachePolicy,
+              partialReport: preview.cached.partialReport,
+              sceneCount: preview.cached.displayedScenes.length,
+              jobCount: preview.cached.jobs.length,
+            }
+          : null,
+      });
+    } catch (error: any) {
+      console.error('[AgentRoutes] Scene reconstruction preview error:', error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message ?? 'Failed to compute scene reconstruction preview',
+      });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // GET a previously persisted SceneReport by reportId.
+  //
+  // Returns the FULL SceneReport so the client can rebuild the entire UI
+  // (lane overlays via cachedDataEnvelopes, scene list, jobs, summary).
+  // 404s when the report has expired or never existed.
+  // ────────────────────────────────────────────────────────────────────────
+  router.get('/scene-reconstruct/report/:reportId', async (req, res) => {
+    try {
+      const { reportId } = req.params;
+      const report = await deps.sceneStoryService.getReport(reportId);
+      if (!report) {
+        return res.status(404).json({
+          success: false,
+          error: 'Report not found or expired',
+          code: 'REPORT_NOT_FOUND',
+        });
+      }
+      return res.json({ success: true, report });
+    } catch (error: any) {
+      console.error('[AgentRoutes] getReport error:', error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message ?? 'Failed to load scene reconstruction report',
+      });
+    }
   });
 
   router.post('/scene-reconstruct', async (req, res) => {
@@ -258,8 +353,18 @@ export function registerSceneReconstructRoutes<TSession extends SceneReconstruct
     deps.assistantAppService.addSseClient(analysisId, res);
     session.logger?.info('SSE', 'Client registered', {});
 
-    if (session.status === 'completed' && session.result) {
-      deps.sendAgentDrivenResult(res, session);
+    // Late-connect terminal handling. Two paths:
+    //  - Legacy agent-driven runs: session.result is set; send the legacy
+    //    payload then close.
+    //  - Scene Story runs (including cache hits): scene_story_report_ready
+    //    is already in sseEventBuffer above, replayed for the late client.
+    //    We just need to close the stream so the connection doesn't hang
+    //    open forever waiting for events that already fired.
+    const sceneStoryReport = session.sceneStoryReport;
+    if (session.status === 'completed' && (session.result || sceneStoryReport)) {
+      if (session.result) {
+        deps.sendAgentDrivenResult(res, session);
+      }
       deps.streamProjector.sendEnd(res);
       res.end();
       return;
@@ -321,17 +426,35 @@ export function registerSceneReconstructRoutes<TSession extends SceneReconstruct
       status: session.status,
     };
 
-    if (session.status === 'completed' && session.result) {
-      const narrative = deps.isSceneReplayOnlyQuery(session.query)
-        ? deps.buildSceneReplayNarrative(session.scenes || [])
-        : deps.normalizeNarrativeForClient(session.result.conclusion);
-      response.result = {
-        narrative,
-        confidence: session.result.confidence,
-        executionTimeMs: session.result.totalDurationMs,
-        scenesCount: session.scenes?.length || 0,
-        tracksCount: session.trackEvents?.length || 0,
-      };
+    // Two completion shapes — legacy agent-driven (session.result) and the
+    // new Scene Story pipeline (session.sceneStoryReport). Surface whichever
+    // is present so polling clients can see "done" for both flows.
+    if (session.status === 'completed') {
+      if (session.result) {
+        const narrative = deps.isSceneReplayOnlyQuery(session.query)
+          ? deps.buildSceneReplayNarrative(session.scenes || [])
+          : deps.normalizeNarrativeForClient(session.result.conclusion);
+        response.result = {
+          narrative,
+          confidence: session.result.confidence,
+          executionTimeMs: session.result.totalDurationMs,
+          scenesCount: session.scenes?.length || 0,
+          tracksCount: session.trackEvents?.length || 0,
+        };
+      } else {
+        const sceneStoryReport = session.sceneStoryReport;
+        if (sceneStoryReport) {
+          response.result = {
+            reportId: sceneStoryReport.reportId,
+            summary: sceneStoryReport.summary,
+            scenesCount: sceneStoryReport.displayedScenes.length,
+            jobCount: sceneStoryReport.jobs.length,
+            partialReport: sceneStoryReport.partialReport,
+            executionTimeMs: sceneStoryReport.totalDurationMs,
+            cachePolicy: sceneStoryReport.cachePolicy,
+          };
+        }
+      }
     }
 
     if (session.status === 'failed') {

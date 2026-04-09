@@ -43,6 +43,11 @@ import { DEEP_REASON_LABEL } from '../utils/analysisNarrative';
 import { sanitizeNarrativeForClient } from './narrativeSanitizer';
 import { registerSceneReconstructRoutes } from './agentSceneReconstructRoutes';
 import { SceneStoryService } from '../agent/scene/sceneStoryService';
+import { FileSystemSceneReportStore } from '../services/sceneReport/sceneReportStore';
+import { SceneReportMemoryCache } from '../services/sceneReport/sceneReportMemoryCache';
+import { computeTraceContentHash } from '../agent/scene/traceHash';
+import { probeTraceDuration } from '../agent/scene/sceneTraceDurationProbe';
+import { sceneStoryConfig } from '../config';
 import { registerAgentLogsRoutes } from './agentLogsRoutes';
 import { registerAgentQuickSceneRoutes } from './agentQuickSceneRoutes';
 import { registerAgentReportRoutes } from './agentReportRoutes';
@@ -1528,12 +1533,22 @@ registerAgentResumeRoutes(router, {
 // Scene Reconstruction Endpoints
 // ============================================================================
 
+// Scene-report cache layer singletons. The disk store backs file-backed
+// traces with a 7-day TTL; the memory LRU is the fallback for external RPC
+// traces (no content hash, so they live for the lifetime of the backend).
+const sceneReportStore = new FileSystemSceneReportStore(sceneStoryConfig.reportDir);
+const sceneReportMemoryCache = new SceneReportMemoryCache(sceneStoryConfig.memoryCacheMaxSize);
+
 // Singleton — sceneStoryService holds per-session JobRunner state for cancel
 // lookup, so it must outlive a single request. SkillExecutor is still created
 // per-request inside the route handler.
 const sceneStoryService = new SceneStoryService({
   broadcast: broadcastToAgentDrivenClients,
   getSession: (id) => assistantAppService.getSession(id) as any,
+  reportStore: sceneReportStore,
+  memoryCache: sceneReportMemoryCache,
+  computeHash: (traceId) => computeTraceContentHash(getTraceProcessorService(), traceId),
+  probeDuration: (traceId) => probeTraceDuration(getTraceProcessorService(), traceId),
 });
 
 registerSceneReconstructRoutes(router, {
@@ -4033,6 +4048,21 @@ const sessionCleanupInterval = setInterval(() => {
       sessionContextManager.remove(sessionId);
     },
   });
+
+  // Piggyback the Scene Story disk cache cleanup on the same 30-min cadence.
+  // It's idempotent and self-contained, so a failed sweep here only delays
+  // expired-report removal by another 30 minutes — never blocks session
+  // cleanup or throws into the interval.
+  void sceneReportStore
+    .cleanupExpired(Date.now())
+    .then((removed) => {
+      if (removed > 0) {
+        console.log(`[AgentRoutes] SceneReportStore expired ${removed} report(s)`);
+      }
+    })
+    .catch((err) => {
+      console.warn('[AgentRoutes] SceneReportStore cleanupExpired failed:', err?.message ?? err);
+    });
 }, 30 * 60 * 1000);
 sessionCleanupInterval.unref?.();
 

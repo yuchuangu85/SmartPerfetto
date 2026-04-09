@@ -519,9 +519,14 @@ export class TraceProcessorService extends EventEmitter {
   }
 
   /**
-   * Get file path for a trace
+   * Get file path for a trace.
+   *
+   * NOTE: public so that scene-reconstruction's traceHash + report-store
+   * code paths can hash the on-disk content. Existence of the file at the
+   * returned path is also the source of truth for "is this trace
+   * file-backed or external RPC".
    */
-  private getTraceFilePath(traceId: string): string {
+  public getTraceFilePath(traceId: string): string {
     return path.join(this.uploadDir, `${traceId}.trace`);
   }
 

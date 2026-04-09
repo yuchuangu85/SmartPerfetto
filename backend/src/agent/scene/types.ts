@@ -2,6 +2,8 @@
 // Copyright (C) 2024-2026 Gracker (Chris)
 // This file is part of SmartPerfetto. See LICENSE for details.
 
+import type { DataEnvelope } from '../../types/dataContract';
+
 /**
  * Scene Story Pipeline — Data Contract Types.
  *
@@ -183,6 +185,13 @@ export interface SceneReport {
 
   /** Full scene list, including scenes not selected for analysis */
   displayedScenes: DisplayedScene[];
+
+  /**
+   * Stage1 DataEnvelopes captured verbatim so cache-hit replays can
+   * recreate the same lane overlays the cold-path emits via `data` SSE
+   * events.
+   */
+  cachedDataEnvelopes: DataEnvelope[];
 
   /** Analysis jobs, one per AnalysisInterval (may include cancelled/failed states) */
   jobs: SceneAnalysisJob[];
