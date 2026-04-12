@@ -30,6 +30,7 @@ import {
   assertTraceAnalysisConfiguredForStartup,
   getTraceAnalysisConfigurationStatus,
 } from './services/traceAnalysisSkill';
+import { isClaudeCodeEnabled } from './agentv3/claudeConfig';
 import {
   getLegacyApiUsageSnapshot,
 } from './services/legacyApiTelemetry';
@@ -62,12 +63,23 @@ app.use(express.urlencoded({ extended: true, limit: serverConfig.bodyLimit }));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
+  const useAgentV3 = isClaudeCodeEnabled();
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     environment: NODE_ENV,
     version: '1.0.0',
     traceAnalysis: getTraceAnalysisConfigurationStatus(),
+    aiEngine: {
+      runtime: useAgentV3 ? 'agentv3' : 'agentv2',
+      model: useAgentV3
+        ? (process.env.CLAUDE_MODEL || 'claude-sonnet-4-6')
+        : (process.env.DEEPSEEK_MODEL || 'deepseek-chat'),
+      configured: useAgentV3
+        ? !!process.env.ANTHROPIC_API_KEY
+        : !!process.env.DEEPSEEK_API_KEY,
+      authRequired: !!process.env.SMARTPERFETTO_API_KEY,
+    },
   });
 });
 
