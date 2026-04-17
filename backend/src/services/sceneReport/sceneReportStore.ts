@@ -46,6 +46,7 @@
 
 import path from 'path';
 import { promises as fsp } from 'fs';
+import { atomicWriteFile } from '../../utils/atomicFileWriter';
 import type { SceneReport } from '../../agent/scene/types';
 
 // ---------------------------------------------------------------------------
@@ -120,23 +121,6 @@ export class FileSystemSceneReportStore implements SceneReportStore {
     await fsp.mkdir(this.reportDir, { recursive: true });
   }
 
-  /**
-   * Atomic JSON write: write to a unique tmp file, then `fs.rename` into
-   * place. POSIX `rename` is atomic on the same FS so the destination is
-   * always either the previous content or the new content, never partial.
-   */
-  private async atomicWrite(target: string, content: string): Promise<void> {
-    const tmp = `${target}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-    await fsp.writeFile(tmp, content, 'utf8');
-    try {
-      await fsp.rename(tmp, target);
-    } catch (err) {
-      // Clean up the tmp file if rename failed (e.g. cross-device, ENOSPC).
-      await fsp.unlink(tmp).catch(() => undefined);
-      throw err;
-    }
-  }
-
   private emptyIndex(): IndexFile {
     return { version: 1, byHash: {}, byReport: {} };
   }
@@ -174,7 +158,7 @@ export class FileSystemSceneReportStore implements SceneReportStore {
   }
 
   private async writeIndex(index: IndexFile): Promise<void> {
-    await this.atomicWrite(this.indexPath, JSON.stringify(index));
+    await atomicWriteFile(this.indexPath, JSON.stringify(index));
   }
 
   /**
@@ -201,7 +185,7 @@ export class FileSystemSceneReportStore implements SceneReportStore {
       const reportFilePath = path.join(this.reportDir, filename);
 
       // 1) Write the report file atomically.
-      await this.atomicWrite(reportFilePath, JSON.stringify(report));
+      await atomicWriteFile(reportFilePath, JSON.stringify(report));
 
       // 2) Update the index in-place.
       const index = await this.readIndex();

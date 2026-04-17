@@ -7,12 +7,13 @@
  * catalog used by `smartperfetto list`. Hand-maintained rather than
  * reconstructed from the filesystem each time so `list` stays O(1).
  *
- * Atomicity strategy: write to `index.json.tmp`, then rename. This
- * survives concurrent CLI invocations as long as callers don't hold
- * a stale in-memory copy across awaits.
+ * Atomicity is delegated to `atomicWriteFileSync` (tmp + rename with
+ * pid/date/random suffix), which keeps concurrent CLI invocations from
+ * colliding on the tmp path.
  */
 
 import * as fs from 'fs';
+import { atomicWriteFileSync } from '../../utils/atomicFileWriter';
 import type { CliPaths } from './paths';
 import type { CliSessionIndexEntry } from '../types';
 
@@ -40,9 +41,7 @@ export function readIndex(paths: CliPaths): CliIndex {
 }
 
 export function writeIndex(paths: CliPaths, index: CliIndex): void {
-  const tmp = `${paths.indexFile}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(index, null, 2), 'utf-8');
-  fs.renameSync(tmp, paths.indexFile);
+  atomicWriteFileSync(paths.indexFile, JSON.stringify(index, null, 2));
 }
 
 /** Upsert a single session entry and atomically persist. */

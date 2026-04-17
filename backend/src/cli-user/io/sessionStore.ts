@@ -12,6 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { atomicWriteFileSync } from '../../utils/atomicFileWriter';
 import type { CliPaths, SessionPaths } from './paths';
 import { ensureSessionLayout, sessionPaths } from './paths';
 import type { CliSessionConfig } from '../types';
@@ -28,9 +29,7 @@ export function readConfig(sp: SessionPaths): CliSessionConfig | null {
 /** Full write. For incremental updates, callers should readConfig → mutate → writeConfig. */
 export function writeConfig(sp: SessionPaths, cfg: CliSessionConfig): void {
   ensureSessionLayout(sp);
-  const tmp = `${sp.config}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
-  fs.renameSync(tmp, sp.config);
+  atomicWriteFileSync(sp.config, JSON.stringify(cfg, null, 2));
 }
 
 export function writeConclusion(sp: SessionPaths, markdown: string): void {
