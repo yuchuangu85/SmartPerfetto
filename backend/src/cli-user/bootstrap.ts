@@ -89,13 +89,19 @@ function loadEnv(explicitFile?: string): void {
 }
 
 function findBackendEnv(): string | null {
+  // From src/cli-user/ or dist/cli-user/, the backend root is 2 levels up.
+  // Cap at 4 to leave headroom for monorepo layouts (packages/backend/...) without
+  // walking into the user's home or root dir on a misconfigured install.
   let dir = __dirname;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 4; i++) {
     const pkgPath = path.join(dir, 'package.json');
     if (fs.existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-        if (pkg.name === 'smart-perfetto-backend') {
+        // Match by both name AND the smartperfetto bin entry — protects against
+        // monorepos that might fork or alias the package name. Works in both
+        // dev (`src/` present) and packaged (`dist/` only) installs.
+        if (pkg.name === 'smart-perfetto-backend' && pkg.bin?.smartperfetto) {
           const envPath = path.join(dir, '.env');
           return fs.existsSync(envPath) ? envPath : null;
         }

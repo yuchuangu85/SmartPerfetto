@@ -252,7 +252,7 @@ function buildPreambleQuery(conclusionFile: string, userQuery: string): string {
   if (!preamble.trim()) return userQuery;
 
   const trimmed = preamble.length > PREAMBLE_MAX_CHARS
-    ? `${preamble.slice(0, PREAMBLE_MAX_CHARS)}…（已截断）`
+    ? `${truncateAtBoundary(preamble, PREAMBLE_MAX_CHARS)}…（已截断）`
     : preamble;
 
   return [
@@ -262,6 +262,33 @@ function buildPreambleQuery(conclusionFile: string, userQuery: string): string {
     '---',
     `用户新问题: ${userQuery}`,
   ].join('\n');
+}
+
+/**
+ * Truncate at a sentence/paragraph boundary at or before `maxChars` so the
+ * preamble doesn't end mid-sentence. Falls back to a hard char cut if no
+ * suitable boundary exists in the trailing 30% of the window.
+ *
+ * Boundaries searched (CJK + Latin): paragraph break > full stop > newline.
+ */
+export function truncateAtBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const window = text.slice(0, maxChars);
+  const minAccept = Math.floor(maxChars * 0.7);
+  const candidates = [
+    window.lastIndexOf('\n\n'),
+    window.lastIndexOf('。'),
+    window.lastIndexOf('. '),
+    window.lastIndexOf('！'),
+    window.lastIndexOf('？'),
+    window.lastIndexOf('\n'),
+  ];
+  const best = Math.max(...candidates);
+  if (best >= minAccept) {
+    // Include the boundary character itself for a clean cut.
+    return window.slice(0, best + 1);
+  }
+  return window;
 }
 
 function formatTurnMarkdown(
