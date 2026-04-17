@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Gracker (Chris)
+// This file is part of SmartPerfetto. See LICENSE for details.
+
+/**
+ * Read/write the per-session folder (`<sessionsRoot>/<sessionId>/*`).
+ *
+ * Everything here is synchronous on purpose — these writes happen once
+ * per turn and blocking is simpler + safer than trying to coordinate
+ * parallel appends with the analyze() loop.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import type { CliPaths, SessionPaths } from './paths';
+import { ensureSessionLayout, sessionPaths } from './paths';
+import type { CliSessionConfig } from '../types';
+
+export function readConfig(sp: SessionPaths): CliSessionConfig | null {
+  if (!fs.existsSync(sp.config)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(sp.config, 'utf-8')) as CliSessionConfig;
+  } catch {
+    return null;
+  }
+}
+
+/** Full write. For incremental updates, callers should readConfig → mutate → writeConfig. */
+export function writeConfig(sp: SessionPaths, cfg: CliSessionConfig): void {
+  ensureSessionLayout(sp);
+  const tmp = `${sp.config}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf-8');
+  fs.renameSync(tmp, sp.config);
+}
+
+export function writeConclusion(sp: SessionPaths, markdown: string): void {
+  ensureSessionLayout(sp);
+  fs.writeFileSync(sp.conclusion, markdown, 'utf-8');
+}
+
+export function writeReportHtml(sp: SessionPaths, html: string): void {
+  ensureSessionLayout(sp);
+  fs.writeFileSync(sp.report, html, 'utf-8');
+}
+
+/** Per-turn markdown snapshot. `turn` is 1-indexed. */
+export function writeTurnMarkdown(sp: SessionPaths, turn: number, markdown: string): void {
+  ensureSessionLayout(sp);
+  const filename = `${String(turn).padStart(3, '0')}.md`;
+  fs.writeFileSync(path.join(sp.turnsDir, filename), markdown, 'utf-8');
+}
+
+/** Convenience: resolve paths + read config in one call. */
+export function loadSession(paths: CliPaths, sessionId: string): {
+  sp: SessionPaths;
+  config: CliSessionConfig | null;
+} {
+  const sp = sessionPaths(paths, sessionId);
+  return { sp, config: readConfig(sp) };
+}

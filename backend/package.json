@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "description": "SmartPerfetto backend API server",
   "main": "dist/index.js",
+  "bin": {
+    "smartperfetto": "./dist/cli-user/bin.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "cli:dev": "tsx src/cli-user/bin.ts",
     "test": "jest",
     "test:core": "jest --runInBand --forceExit src/agent/communication/__tests__/agentMessageBus.test.ts src/agent/core/executors/__tests__/strategyExecutor.test.ts src/agent/core/executors/__tests__/hypothesisExecutor.test.ts src/agent/context/__tests__/enhancedSessionContext.test.ts src/tests/adbTools.test.ts src/services/__tests__/sessionLogger.test.ts src/services/__tests__/traceAnalysisSkillConfig.test.ts src/agent/agents/domain/__tests__/registry.test.ts",
     "test:watch": "jest --watch",
@@ -50,6 +54,7 @@
     "@types/uuid": "^9.0.8",
     "axios": "^1.13.2",
     "better-sqlite3": "^12.5.0",
+    "commander": "^14.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
@@ -71,7 +76,6 @@
     "@types/multer": "^2.0.0",
     "@types/supertest": "^6.0.3",
     "chalk": "^5.6.2",
-    "commander": "^14.0.2",
     "glob": "^13.0.0",
     "jest": "^30.2.0",
     "supertest": "^7.2.2",
