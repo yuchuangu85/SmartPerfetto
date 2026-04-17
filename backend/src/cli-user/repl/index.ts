@@ -56,6 +56,12 @@ export async function runRepl(ctx: ReplContext, initialResumeId?: string): Promi
   });
 
   let currentSession: { sessionId: string; sp: SessionPaths; config: CliSessionConfig } | null = null;
+  // turnInProgress is a plain boolean rather than a state machine because Node's
+  // event loop guarantees the read-set sequence below is atomic in practice:
+  // the rl.on('line') handler sets `turnInProgress = true` synchronously
+  // *before* its first await, so any subsequent `line` event queued by readline
+  // observes true and exits via the early-return guard. Reviewers have flagged
+  // this twice as a possible race — it isn't, given single-threaded JS.
   let turnInProgress = false;
   let lastCtrlC = 0;
   let continuationBuffer = '';

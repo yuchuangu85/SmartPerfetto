@@ -403,7 +403,29 @@ smartperfetto report agent-1776414160887-73z8z38c --open
 
 ---
 
-## 6. 已知限制
+## 6. Crash semantics
+
+CLI 写入跨三个存储位置（`~/.smartperfetto/sessions/<id>/` + `backend/data/sessions/sessions.db`
++ `backend/logs/claude_session_map.json`）。如果进程在写入中途 crash，下一次 `resume`
+能否正常继续取决于失败时机：
+
+| 失败时机 | 后果 | 下次 `resume` 行为 |
+|---|---|---|
+| `analyze()` 进行中 crash | session.db 无 row、map 无 entry、CLI 文件夹只有部分 stream.jsonl | `resume` 报 "no session found"；用户可重跑 `analyze` |
+| `persistAgentTurn` 失败 | snapshot 已 stash 在内存，未落盘到 SQLite；CLI 文件夹后续步骤继续写 | `resume` 报 "no session found"（SQLite 没记录）；conclusion.md 是孤儿 |
+| `persistAgentTurn` 成功，但 `commitTurnOutputs` 中途 crash | SQLite + map 完整；CLI 文件夹可能缺 conclusion.md / report.html / config.json | 取决于 config.json 是否写入：写了就能 resume，没写就要从 SQLite 手动恢复 |
+| 全部成功后 crash | 一致状态 | 正常 resume |
+
+`config.json` 用 atomic write（tmp + rename），所以它要么是新内容要么是上一轮内容，永远不会半写。
+`conclusion.md` / `turns/NNN.md` / `report.html` 不是 atomic 写的（它们是便利副本，权威信息在
+`transcript.jsonl` 和 SQLite 里），crash 窗口内可能是空文件或半写。
+
+**实操建议**：如果一个 session 看起来"卡住"了（list 里能看到但 show 报错），先检查
+`~/.smartperfetto/sessions/<id>/config.json` 是否存在且是合法 JSON；不存在就 `rm <id>` 重来。
+
+---
+
+## 7. 已知限制
 
 - **Windows 未支持**：`--open` 依赖 `open` (macOS) / `xdg-open` (Linux)。
 - **`report --rebuild` 未实现**：从 `stream.jsonl` 重放生成报告需要
@@ -415,7 +437,7 @@ smartperfetto report agent-1776414160887-73z8z38c --open
 
 ---
 
-## 7. 参考
+## 8. 参考
 
 - Plan：[内部 plan 文件](../backend/.context/plans/) 或提交记录里的 feat(cli) 系列
 - E2E 验证过程：见提交 `525f9942` commit message 和 PR 描述

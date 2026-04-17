@@ -71,6 +71,14 @@ export interface RunTurnOutput {
  *   visible to the web UI and vice versa).
  */
 export class CliAnalyzeService {
+  // Independent AssistantApplicationService instance — intentionally separate
+  // from the HTTP route's instance. The 30-min idle cleanup timer is registered
+  // *only* from agentRoutes.ts at server startup, not from this constructor,
+  // so a CLI-owned AppService is never subject to abandonment cleanup. This
+  // matters because CLI sessions have no SSE clients (AppService's signal for
+  // "abandoned"), so a shared instance would prematurely cull them.
+  // ⚠ If a future change moves the cleanup timer into AssistantApplicationService's
+  // constructor, this design breaks silently — pass `enableIdleCleanup: false` then.
   private readonly appService = new AssistantApplicationService<AnalyzeManagedSession>();
   private readonly persistence: SessionPersistenceService;
   private readonly analyzeService: AgentAnalyzeSessionService<AnalyzeManagedSession>;
