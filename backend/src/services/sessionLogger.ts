@@ -66,7 +66,14 @@ export interface SessionLogSummary {
 // Constants
 // =============================================================================
 
-const DEFAULT_LOG_DIR = path.join(process.cwd(), 'logs', 'sessions');
+// Resolved lazily (not at module load) so the CLI's pre-service-instantiation
+// `process.chdir()` in bootstrap.ts can pin the path to `backend/logs/sessions`.
+// A module-level constant would capture whatever cwd was set when the first
+// `import` of this module ran — for CLI that's the user's invocation cwd,
+// well before bootstrap gets a chance to redirect it.
+function resolveDefaultLogDir(): string {
+  return path.join(process.cwd(), 'logs', 'sessions');
+}
 const MAX_LOG_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_LOGS_PER_SESSION = 10000;
 const MAX_LOG_DEPTH = 5;
@@ -140,7 +147,7 @@ export class SessionLogger {
   private metadata: Record<string, any> = {};
   private startTime: Date;
 
-  constructor(sessionId: string, logDir: string = DEFAULT_LOG_DIR) {
+  constructor(sessionId: string, logDir: string = resolveDefaultLogDir()) {
     this.sessionId = sessionId;
     this.logDir = logDir;
     this.startTime = new Date();
@@ -356,7 +363,7 @@ class SessionLoggerManager {
   private logDir: string;
   private loggers: Map<string, SessionLogger> = new Map();
 
-  constructor(logDir: string = DEFAULT_LOG_DIR) {
+  constructor(logDir: string = resolveDefaultLogDir()) {
     this.logDir = logDir;
 
     // Ensure log directory exists

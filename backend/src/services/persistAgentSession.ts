@@ -39,10 +39,15 @@ export interface PersistAgentTurnInput {
     info: (component: string, message: string, data?: unknown) => void;
     warn: (component: string, message: string, data?: unknown) => void;
   };
+  /** Log component name. HTTP route passes 'AgentDrivenAnalysis' to preserve
+   *  existing log-based alerts keyed on that component; CLI defaults to
+   *  logComponent so CLI-only log stream is self-identifying. */
+  logComponent?: string;
 }
 
 export function persistAgentTurn(input: PersistAgentTurnInput): void {
   const { session, sessionId, traceId, query, result, logger } = input;
+  const logComponent = input.logComponent ?? 'AgentPersistence';
   const persistenceService = SessionPersistenceService.getInstance();
 
   try {
@@ -81,7 +86,7 @@ export function persistAgentTurn(input: PersistAgentTurnInput): void {
         { sessionContext, focusStoreSnapshot, traceAgentState },
       );
       if (saved && logger) {
-        logger.info('AgentPersistence', 'Session state snapshot persisted atomically', {
+        logger.info(logComponent, 'Session state snapshot persisted atomically', {
           sessionId,
           steps: snapshot.conversationSteps.length,
           envelopes: snapshot.dataEnvelopes.length,
@@ -143,7 +148,7 @@ export function persistAgentTurn(input: PersistAgentTurnInput): void {
           },
         ]);
       } catch (msgErr) {
-        logger?.warn('AgentPersistence', 'Failed to persist turn messages', {
+        logger?.warn(logComponent, 'Failed to persist turn messages', {
           error: (msgErr as Error).message,
         });
       }
@@ -154,7 +159,7 @@ export function persistAgentTurn(input: PersistAgentTurnInput): void {
     // important than the SQLite write succeeding.
     const message = (err as Error).message;
     if (logger) {
-      logger.warn('AgentPersistence', 'Failed to persist session state', { error: message });
+      logger.warn(logComponent, 'Failed to persist session state', { error: message });
     } else {
       console.warn(`[AgentPersistence] Failed to persist session ${sessionId} to SQLite: ${message}`);
     }

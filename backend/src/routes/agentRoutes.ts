@@ -2280,7 +2280,7 @@ async function runAgentDrivenAnalysis(
     });
 
     // Persist session state via shared helper — see services/persistAgentSession.ts.
-    // CLI's persistTurnToBackend routes through the same function.
+    // CLI's cliAnalyzeService routes through the same function.
     persistAgentTurn({
       session,
       sessionId,
@@ -2288,6 +2288,9 @@ async function runAgentDrivenAnalysis(
       query,
       result: { conclusion: result.conclusion, totalDurationMs: result.totalDurationMs },
       logger,
+      // Preserve the legacy component label so any log filters / alerts keyed
+      // on 'AgentDrivenAnalysis' keep matching persist-related events.
+      logComponent: 'AgentDrivenAnalysis',
     });
 
     // Send final result

@@ -64,8 +64,41 @@ export interface SessionPaths {
   turnsDir: string;
 }
 
+/**
+ * Valid session id pattern: alphanumeric + hyphen only. The real ids we mint
+ * ourselves look like `agent-<timestamp>-<random>` which satisfies this. We
+ * reject anything else up-front so `sessionPaths` can't be coaxed into
+ * traversing outside `sessionsRoot` via `../` or absolute-path inputs, which
+ * would turn `rm` into an arbitrary-delete for any tree that happens to
+ * contain a `config.json`.
+ */
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_\-]{0,127}$/;
+
+export class InvalidSessionIdError extends Error {
+  constructor(sessionId: string) {
+    super(`invalid session id: ${JSON.stringify(sessionId)} (allowed: alphanumeric + "-_", 1-128 chars)`);
+    this.name = 'InvalidSessionIdError';
+  }
+}
+
+/** Throws InvalidSessionIdError on anything that doesn't match the pattern. */
+export function assertValidSessionId(sessionId: string): void {
+  if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) {
+    throw new InvalidSessionIdError(sessionId);
+  }
+}
+
 export function sessionPaths(paths: CliPaths, sessionId: string): SessionPaths {
+  assertValidSessionId(sessionId);
   const dir = path.join(paths.sessionsRoot, sessionId);
+  // Defense-in-depth: even with the pattern guard above, verify the resolved
+  // dir stays under sessionsRoot. Catches symlink games and future pattern
+  // relaxations that might let path segments slip through.
+  const resolvedRoot = path.resolve(paths.sessionsRoot);
+  const resolvedDir = path.resolve(dir);
+  if (resolvedDir !== path.join(resolvedRoot, sessionId) && !resolvedDir.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new InvalidSessionIdError(sessionId);
+  }
   return {
     dir,
     config: path.join(dir, 'config.json'),
