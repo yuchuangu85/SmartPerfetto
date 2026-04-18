@@ -36,6 +36,18 @@ Every task must satisfy these before completion:
 | Build/type error | `npx tsc --noEmit` passes in backend/ |
 | Pre-commit | Run `/simplify` on changed code |
 
+## Health Stack
+
+Tools used by `/health` for the code quality dashboard:
+
+- typecheck: `cd backend && npx tsc --noEmit`
+- test: `cd backend && npm run test:core`
+- lint: _not configured_ (candidates: `biome` or `eslint`)
+- deadcode: _not configured_ (candidate: `knip`)
+- shell: _not configured_ (candidate: `shellcheck scripts/*.sh` — 6 shell scripts)
+
+`/health` composites these into a 0-10 score and appends a snapshot to `~/.gstack/projects/Gracker-SmartPerfetto/health-history.jsonl` for trend tracking.
+
 ## Architecture Overview
 
 ```
