@@ -304,6 +304,21 @@ export class ReviewOutboxHandle {
   }
 
   /**
+   * Voluntarily release a lease without consuming an attempt. Used by the
+   * worker when it leased a job but immediately determined the job has to
+   * wait (cooldown, blocked dependency). The job goes back to pending and
+   * keeps its existing attempts counter.
+   */
+  releaseLease(jobId: string): void {
+    this.db.prepare(`
+      UPDATE review_jobs
+      SET state = 'pending', lease_owner = NULL, lease_until = NULL,
+          attempts = MAX(0, attempts - 1), updated_at = ?
+      WHERE id = ? AND state = 'leased'
+    `).run(Date.now(), jobId);
+  }
+
+  /**
    * Recycle leased jobs whose lease has expired back to pending. Called by
    * the worker poll loop on each tick — cheap because the lease_until index
    * keeps the scan tight.
