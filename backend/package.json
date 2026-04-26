@@ -28,6 +28,8 @@
     "skill:validate": "tsx src/cli/index.ts validate",
     "validate:skills": "tsx src/cli/index.ts validate --contracts --all",
     "validate:strategies": "tsx src/cli/index.ts validate --strategies",
+    "skill-notes:promote": "tsx src/agentv3/selfImprove/promoteSkillNote.ts",
+    "self-improve:migrate-failure-mode-hash": "tsx src/agentv3/selfImprove/migrateFailureModeHash.ts",
     "skill:test": "tsx src/cli/index.ts test",
     "skill:smoke": "tsx src/cli/index.ts smoke",
     "skill:list": "tsx src/cli/index.ts list",

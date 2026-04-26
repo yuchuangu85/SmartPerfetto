@@ -41,7 +41,15 @@ import {
   buildPatternContextSection,
   buildNegativePatternSection,
 } from './analysisPatternMemory';
+import { SkillNotesBudget } from './selfImprove/skillNotesInjector';
 import { verifyConclusion, generateCorrectionPrompt, isConclusionIncomplete } from './claudeVerifier';
+
+function parseQuickBudgetEnv(): number | undefined {
+  const v = process.env.SELF_IMPROVE_QUICK_NOTES_BUDGET;
+  if (!v) return undefined;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
 import { probeTraceCompleteness } from './traceCompletenessProber';
 import {
   captureEntitiesFromResponses,
@@ -1263,6 +1271,14 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
       skillExecutor.setFragmentRegistry(skillRegistry.getFragmentCache());
 
       const watchdogWarning: { current: string | null } = { current: null };
+      // Quick path defaults to no skill-notes injection per §8 of the
+      // self-improving design. Operators can opt-in via the env override.
+      const quickNotesBudget = process.env.SELF_IMPROVE_NOTES_INJECT_ENABLED === '1'
+        ? new SkillNotesBudget({
+            mode: 'quick',
+            quickOverrideTotal: parseQuickBudgetEnv(),
+          })
+        : undefined;
       const { server: mcpServer, allowedTools } = createClaudeMcpServer({
         traceId,
         traceProcessorService: this.traceProcessorService,
@@ -1272,6 +1288,7 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
         watchdogWarning,
         sceneType,
         lightweight: true,
+        skillNotesBudget: quickNotesBudget,
       });
 
       const systemPrompt = buildQuickSystemPrompt({
@@ -1977,6 +1994,9 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
 
     // Phase 8: MCP server with all session-scoped state
     // P2-G1: Destructure to get both server and auto-derived allowedTools
+    const fullNotesBudget = process.env.SELF_IMPROVE_NOTES_INJECT_ENABLED === '1'
+      ? new SkillNotesBudget({ mode: 'full' })
+      : undefined;
     const { server: mcpServer, allowedTools } = createClaudeMcpServer({
       traceId,
       traceProcessorService: this.traceProcessorService,
@@ -2000,6 +2020,7 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
       uncertaintyFlags,
       referenceTraceId,
       comparisonContext,
+      skillNotesBudget: fullNotesBudget,
     });
 
     // Phase 9: (removed — skillCatalog was populated but never used in prompt;

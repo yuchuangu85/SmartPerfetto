@@ -19,6 +19,7 @@ import type { SqlSchemaIndex, AnalysisNote, AnalysisPlanV3, PlanRevision, Hypoth
 import type { SceneType } from './sceneClassifier';
 import { summarizeSqlResult } from './sqlSummarizer';
 import { matchPatterns, matchNegativePatterns, extractTraceFeatures } from './analysisPatternMemory';
+import { loadSkillNotes } from './selfImprove/skillNotesInjector';
 import { getPerfettoStdlibModules } from '../services/perfettoStdlibScanner';
 import { loadPromptTemplate, getPhaseHints } from './strategyLoader';
 import type { ArtifactStore } from './artifactStore';
@@ -254,6 +255,11 @@ export interface ClaudeMcpServerOptions {
    *  Skips planning, hypothesis, knowledge, patterns, notes, artifacts, and comparison tools.
    *  Also disables the plan gate since planning tools are not available. */
   lightweight?: boolean;
+  /** Per-analysis budget for skill-notes injection on invoke_skill responses.
+   *  When omitted (default) no notes are injected. The runtime constructs and
+   *  passes the same instance for every tool call so the running totals are
+   *  shared across the analysis. See skillNotesInjector.ts. */
+  skillNotesBudget?: import('./selfImprove/skillNotesInjector').SkillNotesBudget;
 }
 
 /**
@@ -266,6 +272,7 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
   const recentSqlErrors: SqlErrorFixPair[] = options.recentSqlErrors || [];
   const skillAdapter = getSkillAnalysisAdapter(traceProcessorService);
   const watchdogRef = options.watchdogWarning;
+  const skillNotesBudget = options.skillNotesBudget;
 
   /** Normalize skill params: ensure process_name ↔ package are both set. */
   function normalizeSkillParams(params: Record<string, any> | undefined, defaultPackage?: string): Record<string, any> {
@@ -537,6 +544,22 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
           onSkillResult({ skillId: result.skillId || skillId, displayResults: result.displayResults });
         }
 
+        // Prepend skill notes when the per-analysis budget allows. Notes
+        // only attach on the success path so a failed skill doesn't pollute
+        // the agent's context with unrelated guidance.
+        let skillNotesPrefix = '';
+        if (skillNotesBudget && result.success) {
+          try {
+            const candidates = loadSkillNotes(result.skillId || skillId);
+            if (candidates.length > 0) {
+              const consumed = skillNotesBudget.tryConsume(result.skillId || skillId, candidates);
+              if (consumed) skillNotesPrefix = `${consumed.text}\n\n`;
+            }
+          } catch (err) {
+            console.warn('[invoke_skill] skill notes injection failed:', (err as Error).message);
+          }
+        }
+
         // Vendor override hint: if a vendor is detected and overrides exist for this skill,
         // include a hint in the result so Claude can consider vendor-specific analysis steps.
         let vendorOverrideHint: { vendor: string; displayName?: string; additionalStepIds: string[] } | undefined;
@@ -611,7 +634,7 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
           return {
             content: [{
               type: 'text' as const,
-              text: consumeWatchdogWarning(JSON.stringify({
+              text: skillNotesPrefix + consumeWatchdogWarning(JSON.stringify({
                 success: result.success,
                 skillId: result.skillId,
                 skillName: result.skillName,
@@ -632,7 +655,7 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
         return {
           content: [{
             type: 'text' as const,
-            text: consumeWatchdogWarning(JSON.stringify({
+            text: skillNotesPrefix + consumeWatchdogWarning(JSON.stringify({
               success: result.success,
               skillId: result.skillId,
               skillName: result.skillName,
