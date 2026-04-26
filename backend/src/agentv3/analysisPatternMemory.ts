@@ -29,6 +29,11 @@ import type {
   PatternStatus,
   PatternProvenance,
 } from './types';
+import {
+  openSupersedeStore,
+  injectionWeightForSupersede,
+  type SupersedeStoreHandle,
+} from './selfImprove/supersedeStore';
 
 const PATTERNS_FILE = path.resolve(__dirname, '../../logs/analysis_patterns.json');
 const NEGATIVE_PATTERNS_FILE = path.resolve(__dirname, '../../logs/analysis_negative_patterns.json');
@@ -138,6 +143,32 @@ function autoConfirmIfRipe(
   if (now - p.createdAt < AUTO_CONFIRM_AFTER_MS) return false;
   p.status = 'confirmed';
   return true;
+}
+
+/**
+ * Lazy supersede store handle. `undefined` = never tried, `null` = open
+ * failed (fall back to 1.0 weight). Tests use `setSupersedeStoreForTesting`
+ * to inject a mock without touching disk.
+ */
+let supersedeStore: SupersedeStoreHandle | null | undefined;
+
+function getSupersedeWeight(failureModeHash: string | undefined): number {
+  if (!failureModeHash) return 1.0;
+  if (supersedeStore === undefined) {
+    try {
+      supersedeStore = openSupersedeStore();
+    } catch (err) {
+      console.warn('[PatternMemory] supersede store unavailable:', (err as Error).message);
+      supersedeStore = null;
+    }
+  }
+  if (!supersedeStore) return 1.0;
+  return injectionWeightForSupersede(supersedeStore.findActiveByHash(failureModeHash));
+}
+
+/** Test-only: inject a mock store (or null to disable). */
+export function setSupersedeStoreForTesting(handle: SupersedeStoreHandle | null): void {
+  supersedeStore = handle;
 }
 
 /**
@@ -369,6 +400,11 @@ export async function saveNegativePattern(
   const existingIdx = patterns.findIndex(p => weightedJaccardSimilarity(p.traceFeatures, features) > 0.7);
 
   const now = Date.now();
+  // Recurrence detection: a fresh negative on a hash that's currently being
+  // canary-watched means the alleged fix didn't work. Fire-and-forget.
+  if (extras.failureModeHash) {
+    checkAndRecordRecurrence(extras.failureModeHash);
+  }
   if (existingIdx >= 0) {
     const existing = patterns[existingIdx];
     const existingKeys = new Set(existing.failedApproaches.map(a => `${a.type}:${a.approach}`));
@@ -457,18 +493,43 @@ export function matchNegativePatterns(features: string[]): Array<NegativePattern
     .map(p => {
       const frequencyGain = 1 + Math.log2(1 + p.matchCount) * 0.1;
       const statusWeight = getStatusWeight(p);
+      const supersedeWeight = getSupersedeWeight(p.failureModeHash);
       return {
         ...p,
         score:
           weightedJaccardSimilarity(p.traceFeatures, features) *
           confidenceDecay(p.createdAt) *
           frequencyGain *
-          statusWeight,
+          statusWeight *
+          supersedeWeight,
       };
     })
     .filter(p => p.score >= MIN_MATCH_SCORE)
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_MATCHED_NEGATIVE);
+}
+
+/**
+ * Recurrence detection: when a new negative pattern arrives whose
+ * failureModeHash already has an `active_canary` supersede marker, that's
+ * the signal that the alleged fix didn't work — flip the marker to `failed`
+ * so subsequent injections restore full weight.
+ */
+export function checkAndRecordRecurrence(failureModeHash: string | undefined): void {
+  if (!failureModeHash) return;
+  if (supersedeStore === undefined) {
+    try {
+      supersedeStore = openSupersedeStore();
+    } catch {
+      supersedeStore = null;
+    }
+  }
+  if (!supersedeStore) return;
+  try {
+    supersedeStore.recordRecurrence(failureModeHash);
+  } catch (err) {
+    console.warn('[PatternMemory] recurrence record failed:', (err as Error).message);
+  }
 }
 
 // =============================================================================

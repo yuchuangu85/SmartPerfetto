@@ -92,6 +92,7 @@ import {
   sweepAutoConfirm,
   buildPatternContextSection,
   buildNegativePatternSection,
+  setSupersedeStoreForTesting,
 } from '../analysisPatternMemory';
 
 // ── Setup ────────────────────────────────────────────────────────────────
@@ -100,6 +101,9 @@ beforeEach(() => {
   mockPatterns = [];
   mockNegativePatterns = [];
   mockQuickPatterns = [];
+  // Disable the real SQLite supersede store for fs-mocked tests; PR9b's
+  // own integration tests cover the live store behaviour.
+  setSupersedeStoreForTesting(null);
 });
 
 // ── Feature Extraction ───────────────────────────────────────────────────
