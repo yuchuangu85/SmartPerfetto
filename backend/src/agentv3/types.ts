@@ -268,6 +268,13 @@ export interface AnalysisPatternEntry {
   createdAt: number;
   /** Number of times this pattern was matched */
   matchCount: number;
+  /**
+   * Stable failure-mode hash (PR4 / Self-Improving v3.3) — populated by the
+   * migration for historical entries and by L1 pattern saving for new ones.
+   * Optional so older entries on disk parse cleanly; injection logic should
+   * treat absence as "unknown" and skip cross-artifact deduplication.
+   */
+  failureModeHash?: string;
 }
 
 /** A negative pattern — records what strategies/approaches FAILED for similar traces. */
@@ -285,6 +292,8 @@ export interface NegativePatternEntry {
   createdAt: number;
   /** Number of times this negative pattern was matched */
   matchCount: number;
+  /** Stable failure-mode hash. See AnalysisPatternEntry.failureModeHash. */
+  failureModeHash?: string;
 }
 
 /** A specific approach that failed during analysis. */
@@ -297,6 +306,8 @@ export interface FailedApproach {
   reason: string;
   /** What worked instead (if known) */
   workaround?: string;
+  /** Stable failure-mode hash for this specific approach (optional, see PR4). */
+  failureModeHash?: string;
 }
 
 // =============================================================================
