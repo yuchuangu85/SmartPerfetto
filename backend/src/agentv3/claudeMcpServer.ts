@@ -23,6 +23,7 @@ import { loadSkillNotes } from './selfImprove/skillNotesInjector';
 import { getPerfettoStdlibModules } from '../services/perfettoStdlibScanner';
 import { injectStdlibIncludes } from './sqlIncludeInjector';
 import { loadPromptTemplate, getPhaseHints } from './strategyLoader';
+import { matchPhaseHintForNextPhase } from './phaseHintMatcher';
 import { validatePlanAgainstSceneTemplate, MIN_WAIVER_REASON_CHARS } from './scenePlanTemplates';
 import type { ArtifactStore } from './artifactStore';
 
@@ -1331,43 +1332,30 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
 
       // Restatement injection: leverage tool response's high-attention position
       // to re-state next-phase constraints from strategy frontmatter phase_hints.
+      // Match logic lives in `phaseHintMatcher` so it can be unit tested.
       if (nextPhase && options.sceneType) {
         const hints = getPhaseHints(options.sceneType);
-        if (hints.length > 0) {
-          const phaseText = `${nextPhase.name} ${nextPhase.goal}`.toLowerCase();
+        const matchedHint = matchPhaseHintForNextPhase({
+          hints,
+          nextPhase: { name: nextPhase.name, goal: nextPhase.goal },
+          finishedPhases: plan.phases.map(p => ({
+            name: p.name,
+            goal: p.goal,
+            summary: p.summary,
+            status: p.status,
+          })),
+        });
 
-          // 1. Try keyword matching against next phase name+goal
-          let matchedHint = hints.find(h =>
-            h.keywords.some(kw => phaseText.includes(kw.toLowerCase()))
-          );
-
-          // 2. Unconditional fallback: if no match, inject the next unvisited critical hint.
-          //    Critical phases (e.g., scrolling Phase 1.9, startup Phase 2.6) are too important
-          //    to skip reminders just because the agent used unexpected phase names.
-          if (!matchedHint) {
-            const coveredHintIds = new Set<string>();
-            for (const p of plan.phases.filter(pp => pp.status === 'completed' || pp.status === 'skipped')) {
-              const pText = `${p.name} ${p.summary || ''}`.toLowerCase();
-              for (const h of hints) {
-                if (h.keywords.some(kw => pText.includes(kw.toLowerCase()))) {
-                  coveredHintIds.add(h.id);
-                }
-              }
-            }
-            matchedHint = hints.find(h => h.critical && !coveredHintIds.has(h.id));
-          }
-
-          if (matchedHint) {
-            response.next_phase_reminder = {
-              phaseId: nextPhase.id,
-              name: nextPhase.name,
-              constraints: matchedHint.constraints,
-              criticalTools: matchedHint.criticalTools,
-            };
-            console.log(`[MCP] Phase hint injected: ${matchedHint.id} for ${options.sceneType}`);
-          } else {
-            console.log(`[MCP] Phase hint not found for: "${nextPhase.name}" in ${options.sceneType}`);
-          }
+        if (matchedHint) {
+          response.next_phase_reminder = {
+            phaseId: nextPhase.id,
+            name: nextPhase.name,
+            constraints: matchedHint.constraints,
+            criticalTools: matchedHint.criticalTools,
+          };
+          console.log(`[MCP] Phase hint injected: ${matchedHint.id} for ${options.sceneType}`);
+        } else if (hints.length > 0) {
+          console.log(`[MCP] Phase hint not found for: "${nextPhase.name}" in ${options.sceneType}`);
         }
 
         // Always include basic next phase info for non-hint scenarios
