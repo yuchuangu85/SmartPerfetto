@@ -2,245 +2,248 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+[![License: AGPL-3.0-or-later](https://img.shields.io/github/license/Gracker/SmartPerfetto)](LICENSE)
+[![Backend Regression Gate](https://github.com/Gracker/SmartPerfetto/actions/workflows/backend-agent-regression-gate.yml/badge.svg)](https://github.com/Gracker/SmartPerfetto/actions/workflows/backend-agent-regression-gate.yml)
+[![Node.js >=18](https://img.shields.io/badge/Node.js-%3E%3D18-brightgreen)](package.json)
+[![TypeScript strict](https://img.shields.io/badge/TypeScript-strict-3178c6)](backend/tsconfig.json)
+[![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ed)](docker-compose.yml)
+[![Perfetto UI fork](https://img.shields.io/badge/Perfetto-UI%20fork-4285f4)](https://perfetto.dev/)
+[![Sponsor](https://img.shields.io/badge/Sponsor-WeChat%20553000664-f66f6f)](#赞助)
+
 > 基于 [Perfetto](https://perfetto.dev/) 的 AI 驱动 Android 性能分析平台。
 
-加载 Perfetto trace 文件，用自然语言提问，获得结构化的、有证据支撑的分析结果，包含根因推理链和优化建议。
+SmartPerfetto 在 Perfetto trace 之上增加了一层 AI 分析能力。你可以加载 trace，用自然语言提问，然后得到带 SQL 证据、Skill 结果、根因推理和优化建议的分析结论。
 
-> **项目状态：活跃开发中（预发布）**
->
-> SmartPerfetto 正在积极开发中，已在大规模 Android 性能分析场景中投入生产使用。核心分析引擎、Skill 系统和 UI 集成已稳定。API 在 1.0 正式发布前可能会有变化。欢迎贡献和反馈。
+项目已经开源，当前处于活跃开发阶段。UI、后端运行时和 Skill 系统已经可用，但公开 API 和内部合约仍可能继续调整。
 
-## 核心能力
+## Perfetto 参考资源
 
-- **AI Agent 分析** — Claude Agent SDK 编排 20 个 MCP 工具，查询 trace 数据、执行分析 Skill、推理性能问题。支持通过 API 代理接入[第三方大模型](#接入第三方大模型)（GLM、DeepSeek、Qwen、Kimi、OpenAI、Gemini 等）
-- **146 个分析 Skill** — 基于 YAML 的声明式分析管线（87 原子 + 29 组合 + 28 管线 + 2 深度），四层结果（L1 概览 → L4 深度根因）
-- **12 种场景策略** — 场景专属分析剧本（滑动、启动、ANR、交互、内存、游戏等）
-- **21 种卡顿根因码** — 优先级排序的决策树，双信号检测（present_type + present_ts interval）
-- **多架构支持** — 标准 HWUI、Flutter（TextureView/SurfaceView、Impeller/Skia）、Jetpack Compose、WebView
-- **厂商定制** — 设备级分析覆盖 Pixel、三星、小米、OPPO、vivo、荣耀、高通、联发科
-- **深度根因链** — 阻塞链分析、Binder 追踪、因果推理（Mermaid 图）
-- **实时流式传输** — 基于 SSE 的实时分析，阶段转换和中间推理过程可见
-- **Perfetto UI 集成** — 自定义插件，支持时间线导航、数据表格和图表可视化
+| 资源 | 英文 | 中文 |
+|------|------|------|
+| Android Performance Blog | [androidperformance.com/en](https://www.androidperformance.com/en) | [androidperformance.com](https://www.androidperformance.com/) |
+| Perfetto 官方文档 | [perfetto.dev/docs](https://perfetto.dev/docs/) | [gugu-perf.github.io/perfetto-docs-zh-cn](https://gugu-perf.github.io/perfetto-docs-zh-cn/) |
+
+## 项目做什么
+
+- 分析 Android Perfetto trace 中的滑动卡顿、启动、ANR、交互延迟、内存、游戏和渲染管线问题。
+- 保留 Perfetto 的时间线和 SQL 能力，并在 Perfetto UI 里增加 AI Assistant 面板。
+- 通过 TypeScript 后端编排 Agent 流程、查询 `trace_processor_shell`、调用 YAML Skill，并把结果实时流式传给浏览器。
+- 支持 Anthropic 直连，也支持通过 Anthropic 兼容 API 代理接入其他具备 tool/function calling 能力的大模型。
+- 内置 160+ 个 YAML Skill/配置文件和多场景分析策略，用于 Android 性能排查。
+
+## 技术栈
+
+| 模块 | 技术 |
+|------|------|
+| 前端 | Fork 后的 Perfetto UI，内置 `com.smartperfetto.AIAssistant` 插件 |
+| 后端 | Node.js 18+、TypeScript strict mode、Express |
+| Agent 运行时 | Claude Agent SDK、MCP 工具、场景策略、Verifier、SSE 流式输出 |
+| Trace 引擎 | Perfetto `trace_processor_shell`，通过 HTTP RPC 调用 |
+| 分析逻辑 | `backend/skills/` 下的 YAML Skill，`backend/strategies/` 下的 Markdown 策略 |
+| 存储 | 本地上传文件、Session 日志、报告、运行时学习文件 |
+| 测试 | Jest、Skill 校验、Strategy 校验、6 条 canonical trace 回归 |
+| 部署 | Docker Compose 或本地开发脚本 |
 
 ## 快速开始
 
-### 方式一：Docker（推荐普通用户使��）
+### Docker 运行
 
-最快的启动方式，无需安装编译工具链，只需要 Docker 和 API Key。
+如果只是想把项目跑起来，优先用 Docker，不需要本机配置完整编译工具链。
 
 ```bash
 git clone --recursive https://github.com/Gracker/SmartPerfetto.git
 cd SmartPerfetto
 
 cp backend/.env.example backend/.env
-# 编辑 backend/.env — 设置 ANTHROPIC_API_KEY（或配置第三方大模型，见下文）
+# 编辑 backend/.env，设置 ANTHROPIC_API_KEY；
+# 或者配置 ANTHROPIC_BASE_URL 接入 API 代理。
 
 docker compose up --build
 ```
 
-打开 **http://localhost:10000**，加载 `.pftrace` 文件，开始分析。
+打开 [http://localhost:10000](http://localhost:10000)，加载 `.pftrace` 或 `.perfetto-trace` 文件，然后打开 AI Assistant 面板开始分析。
 
-### 方式二：本地开发（推荐贡献者使用）
+### 本地开发
 
-完整开发环境，支持热更新和调试。
+如果要调试、改代码或提交 PR，用本地开发模式。
 
-**前置条件：**
-- Node.js 18+（`node -v`）
-- Python 3（Perfetto 构建工具依赖）
-- C++ 工具链 — macOS: `xcode-select --install` / Linux: `sudo apt install build-essential python3`
-- 大模型 API Key — [Anthropic](https://console.anthropic.com/)（推荐），或任意[支持的第三方大模型](#接入第三方大模型)
+前置条件：
+
+- Node.js 18+
+- Python 3
+- 支持 submodule 的 Git
+- 开发脚本依赖的基础命令：`curl`、`lsof`、`pkill`
+- C++ 编译工具链：macOS 执行 `xcode-select --install`，Linux 执行 `sudo apt-get install build-essential python3`
+- 一个大模型 API Key，或 Anthropic 兼容 API 代理
 
 ```bash
 git clone --recursive https://github.com/Gracker/SmartPerfetto.git
 cd SmartPerfetto
 
 cp backend/.env.example backend/.env
-# 编辑 backend/.env — 设置 ANTHROPIC_API_KEY（或配置第三方大模型，见下文）
+# 编辑 backend/.env，设置 ANTHROPIC_API_KEY；
+# 或者配置 ANTHROPIC_BASE_URL 接入 API 代理。
 
-# 首次启动（自动编译 trace_processor_shell，约 3-5 分钟）
 ./scripts/start-dev.sh
 ```
 
-打开 **http://localhost:10000**。后端和前端均支持文件保存后自动重新编译 — 修改代码后刷新浏览器即可。
+首次启动会安装依赖并编译 `trace_processor_shell`。启动后访问：
 
-### 使用方法
+- 前端：[http://localhost:10000](http://localhost:10000)
+- 后端：[http://localhost:3000](http://localhost:3000)
 
-1. 在浏览器中打开 http://localhost:10000
-2. 加载 Perfetto trace 文件（`.pftrace` 或 `.perfetto-trace`）
-3. 打开 **AI Assistant** 面板
-4. 提出问题：
-   - "分析滑动卡顿"
-   - "启动为什么慢？"
-   - "CPU 调度有没有问题？"
-   - "帮我看看这个 ANR"
+后端（`tsx watch`）和前端（`build.js --watch`）都会在保存文件后自动重编译。修改 `.ts`、`.yaml`、`.md` 后刷新浏览器即可。只有改 `.env`、执行 `npm install`，或 watcher 卡住时，才需要 `./scripts/restart-backend.sh`。
 
-### Trace 要求
+## 接入大模型
 
-SmartPerfetto 在 **Android 12+** 设备上捕获的 trace 效果最佳：
+直连 Anthropic 的最小配置：
 
-| 场景 | 最低 atrace 分类 | 建议额外添加 |
-|------|-----------------|-------------|
+```bash
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+如果要接入第三方大模型，可以使用一个接受 Anthropic Messages 请求、再转发到目标厂商的 API 代理：
+
+```bash
+ANTHROPIC_BASE_URL=http://localhost:3000
+ANTHROPIC_API_KEY=sk-proxy-xxx
+CLAUDE_MODEL=your-main-model
+CLAUDE_LIGHT_MODEL=your-light-model
+```
+
+常见代理包括 [one-api](https://github.com/songquanpeng/one-api)、[new-api](https://github.com/Calcium-Ion/new-api) 和 [LiteLLM](https://github.com/BerriAI/litellm)。选择的模型需要稳定支持流式输出和 tool/function calling。完整厂商示例和调优参数见 [backend/.env.example](backend/.env.example)。
+
+## 基本用法
+
+1. 打开 [http://localhost:10000](http://localhost:10000)。
+2. 加载 Perfetto trace 文件（`.pftrace` 或 `.perfetto-trace`）。
+3. 打开 AI Assistant 面板。
+4. 输入问题，例如：
+   - `分析滑动卡顿`
+   - `启动为什么慢？`
+   - `CPU 调度有没有问题？`
+   - `帮我看看这个 ANR`
+
+SmartPerfetto 最适合分析包含 FrameTimeline 数据的 Android 12+ trace。建议采集的 atrace category：
+
+| 场景 | 最低 category | 建议额外添加 |
+|------|---------------|--------------|
 | 滑动 | `gfx`, `view`, `input`, `sched` | `binder_driver`, `freq`, `disk` |
 | 启动 | `am`, `dalvik`, `wm`, `sched` | `binder_driver`, `freq`, `disk` |
 | ANR | `am`, `wm`, `sched`, `binder_driver` | `dalvik`, `disk` |
 
-## 接入第三方大模型
+## API 接入
 
-SmartPerfetto 支持**任何具备函数调用（Function Calling）能力的大模型** — 不仅限于 Claude。你可以通过 API 代理接入国内大模型、OpenAI、Google Gemini 或本地模型。
+浏览器 UI 通过 REST 和 SSE 与后端通信。如果你要自建 UI 或自动化流程，可以从这些接口开始：
 
-### 原理
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| `POST` | `/api/agent/v1/analyze` | 启动分析 |
+| `GET` | `/api/agent/v1/:sessionId/stream` | 订阅 SSE 进度和 answer token |
+| `GET` | `/api/agent/v1/:sessionId/status` | 查询分析状态 |
+| `POST` | `/api/agent/v1/:sessionId/respond` | 继续多轮会话 |
+| `POST` | `/api/agent/v1/resume` | 恢复已有 session 的 SDK 上下文 |
+| `POST` | `/api/agent/v1/scene-reconstruct` | 启动场景重建 |
+| `GET` | `/api/agent/v1/:sessionId/report` | 获取生成的分析报告 |
 
-Claude Agent SDK 支持 `ANTHROPIC_BASE_URL` 环境变量。将其指向一个 API 代理，由代理将 Anthropic Messages API 格式转换为目标厂商的 OpenAI 兼容 API：
-
-```
-SmartPerfetto → Claude Agent SDK → ANTHROPIC_BASE_URL → API 代理 → 大模型厂商
-```
-
-### 配置步骤
-
-1. **部署 API 代理**（支持 Anthropic → OpenAI 格式转换）：
-   - [one-api](https://github.com/songquanpeng/one-api) — 最流行，支持 50+ 厂商
-   - [new-api](https://github.com/Calcium-Ion/new-api) — one-api 增强版
-   - [LiteLLM](https://github.com/BerriAI/litellm) — Python，原生 Anthropic 格式支持
-
-2. **在代理中配置**目标厂商的 API Key 和 endpoint
-
-3. **编辑 `backend/.env`** — 取消注释 `.env.example` 中对应厂商的配置块：
-
-```bash
-# 指向你的代理
-ANTHROPIC_BASE_URL=http://localhost:3000
-ANTHROPIC_API_KEY=sk-proxy-xxx
-
-# 设置模型名（需与代理中配置的一致）
-CLAUDE_MODEL=glm-5.1
-CLAUDE_LIGHT_MODEL=glm-4.7-flash
-```
-
-### 厂商配置预设
-
-下面是当前配置示例，不是内置兼容性承诺。SmartPerfetto 需要代理可靠支持 Anthropic Messages 转换、流式输出和 tool-use；复制到代理前，请以厂商控制台或 `models.list` API 返回的模型 ID 为准。最后核对日期：2026-04-28。
-
-| 厂商 | 主力模型 | 轻量模型 | 代理后端 URL | 说明 |
-|------|---------|---------|-------------|------|
-| **智谱 GLM / Z.ai** | `glm-5.1` | `glm-4.7-flash` | `https://open.bigmodel.cn/api/paas/v4` | 当前更适合 Agent/Coding 的模型线。 |
-| **DeepSeek** | `deepseek-v4-pro` | `deepseek-v4-flash` | `https://api.deepseek.com` | 避免继续推荐旧的 `deepseek-chat` / `deepseek-reasoner` 别名。 |
-| **通义千问 Qwen** | `qwen3-max` | `qwen3.5-flash` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 代码场景也可评估 `qwen3-coder-plus`。 |
-| **月之暗面 Kimi** | `kimi-k2.6` | `kimi-k2.5` | `https://api.moonshot.cn/v1` | Agent 任务优先用 K2.6/K2.5，不再把 `moonshot-v1-*` 作为推荐默认。 |
-| **豆包 Doubao** | `ep-xxx` 或 `doubao-seed-2.0-code` | `ep-xxx` 或 `doubao-seed-code` | `https://ark.cn-beijing.volces.com/api/v3` | 方舟生产部署常用接入点 ID。 |
-| **MiniMax** | `MiniMax-M2.7` | `MiniMax-M2.5` | `https://api.minimaxi.com/v1` | 替换旧的 `abab*` 示例。 |
-| **OpenAI** | `gpt-5.5` | `gpt-5.4-mini` | `https://api.openai.com/v1` | GPT-4o 仍可用，但不应继续作为推荐默认。 |
-| **Google Gemini** | `gemini-3-pro-preview` | `gemini-3-flash-preview` | `https://generativelanguage.googleapis.com/v1beta/openai` | 这是 preview 模型；生产稳定 ID 可用 `gemini-2.5-pro` / `gemini-2.5-flash`。 |
-| **Ollama（本地）** | `qwen3:30b` | `qwen3:30b` | `http://localhost:11434/v1` | 用于完整分析前，先本地 smoke-test tool calling。 |
-
-完整配置示例（含各厂商控制台 URL 和特殊说明）见 [`backend/.env.example`](backend/.env.example)。
-
-### 注意事项
-
-- **`CLAUDE_LIGHT_MODEL`** 用于辅助的单轮调用（查询分类、结论验证、场景摘要）。如果代理只映射了一个模型，设为与 `CLAUDE_MODEL` 相同即可。
-- **Sub-agent**（`CLAUDE_ENABLE_SUB_AGENTS`）默认对所有用户关闭（Claude Agent SDK 中仍处于 research preview 阶段）。开启后，SDK 内部会将模型缩写（如 `'sonnet'` → `'claude-sonnet-4-6'`）解析为完整模型名并发起独立 API 调用 — 这些调用同样经过你的代理。能否正常工作取决于代理的 Anthropic 格式转换保真度。如果想尝试，设置 `CLAUDE_ENABLE_SUB_AGENTS=true` 并确保代理正确映射了 Anthropic 模型名。
-- **Extended Thinking**（`CLAUDE_EFFORT`）是 Claude 专有特性，非 Claude 厂商会忽略此参数。
-- **厂商质量差异很大**。工具调用和长上下文 Agent 行为稳定的模型（GLM-5.1/4.7、DeepSeek V4、Qwen3、Kimi K2.6、GPT-5.x、Gemini 3）与 SmartPerfetto 的 20 工具 MCP Server 配合效果最佳。
+如果后端不只在本机使用，建议在 `backend/.env` 设置 `SMARTPERFETTO_API_KEY`。开启后，受保护接口需要带上 `Authorization: Bearer <token>`。
 
 ## 架构
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    前端 (Perfetto UI @ :10000)                   │
-│         插件: com.smartperfetto.AIAssistant                      │
-│         - AI 分析面板（提问、查看结果）                             │
-│         - 时间线集成（点击结果跳转到时间线）                        │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │ SSE / HTTP
-┌───────────────────────────▼─────────────────────────────────────┐
-│                    后端 (Express @ :3000)                        │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  agentv3 运行时                                           │   │
-│  │    ClaudeRuntime → 场景分类 → 动态 System Prompt            │   │
-│  │    → Claude Agent SDK (MCP) → 4 层验证 + 反思重试            │   │
-│  │                                                           │   │
-│  │  MCP Server (20 工具: 9 常驻 + 11 条件)                    │   │
-│  │    execute_sql │ invoke_skill │ detect_architecture       │   │
-│  │    lookup_sql_schema │ lookup_knowledge │ ...             │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  Skill 引擎 (146 个 YAML Skill)                           │   │
-│  │  原子(87) │ 组合(29) │ 管线(28) │ 深度(2) │ 厂商覆盖      │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  trace_processor_shell (HTTP RPC, 端口池 9100-9900)        │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────┘
+```text
+Frontend (Perfetto UI @ :10000)
+  └─ SmartPerfetto AI Assistant plugin
+       └─ SSE / HTTP
+Backend (Express @ :3000)
+  ├─ agentv3 runtime: 场景路由、Prompt、MCP 工具、Verifier
+  ├─ Skill engine: YAML 分析管线
+  ├─ Session/report/log 服务
+  └─ trace_processor_shell 进程池（HTTP RPC, 9100-9900）
 ```
 
-## 开发指南
+目录结构：
 
-### 开发工作流
+```text
+SmartPerfetto/
+├── backend/
+│   ├── src/agentv3/        # 主 AI 运行时
+│   ├── src/services/       # Trace processor、Skill、Report、Session 服务
+│   ├── skills/             # YAML 分析 Skill 和配置
+│   ├── strategies/         # 场景策略和 Prompt 模板
+│   └── tests/              # Skill eval 和回归测试
+├── docs/                   # 架构、MCP、Skill、渲染管线文档
+├── scripts/                # 开发和重启脚本
+└── perfetto/               # Fork 后的 Perfetto UI submodule
+```
 
-首次 `./scripts/start-dev.sh` 后，后端（`tsx watch`）和前端（`build.js --watch`）均在保存时自动重编译：
+## 开发
 
-| 改动类型 | 需要的操作 |
-|---------|-----------|
-| TypeScript / YAML / Markdown | 刷新浏览器 |
-| `.env` 或 `npm install` | `./scripts/restart-backend.sh` |
-| 两个服务都挂了 | `./scripts/start-dev.sh` |
-
-### 测试
-
-每次代码改动都必须通过回归测试：
+常用命令：
 
 ```bash
+./scripts/start-dev.sh
+./scripts/restart-backend.sh
+
 cd backend
-
-# 必须 — 每次改动后运行
+npm run build
 npm run test:scene-trace-regression
-
-# 验证 Skill YAML 合约
 npm run validate:skills
-
-# 验证 Strategy Markdown frontmatter
 npm run validate:strategies
-
-# 完整测试套件（约 8 分钟）
-npm test
+npm run test:core
 ```
 
-### 调试
+必须满足的检查：
 
-Session 日志存储在 `backend/logs/sessions/*.jsonl`：
+- 任何代码改动：`cd backend && npm run test:scene-trace-regression`
+- Skill YAML 改动：`npm run validate:skills` 加场景回归
+- Strategy/template Markdown 改动：`npm run validate:strategies` 加场景回归
+- 构建或类型问题：`cd backend && npx tsc --noEmit`
 
-```bash
-# 通过 API 查看 session 日志
-curl http://localhost:3000/api/agent/v1/logs/{sessionId}
-```
-
-| 问题 | 解决方案 |
-|------|---------|
-| "AI backend not connected" | `./scripts/start-dev.sh` |
-| 分析数据为空 | 确认 trace 包含 FrameTimeline 数据（Android 12+） |
-| 端口冲突 9100-9900 | `pkill -f trace_processor_shell` |
+不要在 TypeScript 里硬编码 Prompt 内容。场景逻辑应放在 `backend/strategies/*.strategy.md`，可复用内容放在 `*.template.md`。
 
 ## 文档
 
-- [技术架构](docs/technical-architecture.md) — 系统设计和扩展指南
-- [MCP 工具参考](docs/mcp-tools-reference.md) — 20 个 MCP 工具的参数和行为
-- [Skill 系统指南](docs/skill-system-guide.md) — YAML Skill DSL 参考
-- [数据合约](backend/docs/DATA_CONTRACT_DESIGN.md) — DataEnvelope v2.0 规范
-- [渲染管线](docs/rendering_pipelines/) — 23 份 Android 渲染管线参考文档
+- [技术架构](docs/technical-architecture.md)
+- [MCP 工具参考](docs/mcp-tools-reference.md)
+- [Skill 系统指南](docs/skill-system-guide.md)
+- [数据合约](backend/docs/DATA_CONTRACT_DESIGN.md)
+- [渲染管线参考](docs/rendering_pipelines/)
+- [安全策略](SECURITY.md)
 
 ## 贡献
 
-欢迎贡献！详见 [CONTRIBUTING.md](CONTRIBUTING.md) 了解开发环境搭建、测试要求和 PR 流程。
+欢迎贡献。比较适合开始的方向：
 
-参与前请阅读 [行为准则](CODE_OF_CONDUCT.md)。
+- 用一条小 trace 复现具体性能问题，并写清楚问题和期望输出
+- 新增或改进 YAML Skill
+- 改进场景策略和输出模板
+- 修复 Perfetto 插件里的 UI 问题
+- 为已知 trace 场景补充回归测试
+
+提交 PR 前：
+
+1. 阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+2. Fork 仓库，并基于 `main` 创建分支。
+3. 保持改动范围清晰，并写明测试计划。
+4. 运行上方对应检查。
+5. 遵守 [行为准则](CODE_OF_CONDUCT.md)。
+
+## 联系
+
+- Bug 和功能建议：[GitHub Issues](https://github.com/Gracker/SmartPerfetto/issues)
+- 安全问题：[GitHub private advisory](https://github.com/Gracker/SmartPerfetto/security/advisories/new) 或 `smartperfetto@gracker.dev`
+- 合作、商业支持、赞助：微信 `553000664`
+
+## 赞助
+
+开源项目常见的赞助方式包括 GitHub Sponsors、OpenCollective、Buy Me a Coffee、爱发电、微信/支付宝收款码，以及企业商业支持或商业授权。
+
+SmartPerfetto 目前还没有公开支付页面。如果你想赞助、捐赠、试用企业支持或咨询商业授权，请通过微信联系维护者：`553000664`。
 
 ## 许可证
 
-[AGPL v3](LICENSE) — SmartPerfetto 核心代码。
+SmartPerfetto 核心代码使用 [AGPL-3.0-or-later](LICENSE)。
 
-`perfetto/` 子模块是 [Google Perfetto](https://github.com/google/perfetto) 的 fork，使用 [Apache 2.0](perfetto/LICENSE) 许可证。
+`perfetto/` submodule 是 [Google Perfetto](https://github.com/google/perfetto) 的 fork，继续使用 [Apache-2.0](perfetto/LICENSE)。
 
-如需商业授权（无需遵守 AGPL 义务），请联系项目维护者。
+如需不受 AGPL 义务约束的商业授权，请通过微信 `553000664` 联系维护者。

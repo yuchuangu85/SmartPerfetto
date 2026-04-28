@@ -1,0 +1,4 @@
+# SmartPerfetto does not publish a payment page yet.
+# Route GitHub's Sponsor button to the README sponsorship instructions.
+custom:
+  - https://github.com/Gracker/SmartPerfetto#sponsor

@@ -2,305 +2,248 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+[![License: AGPL-3.0-or-later](https://img.shields.io/github/license/Gracker/SmartPerfetto)](LICENSE)
+[![Backend Regression Gate](https://github.com/Gracker/SmartPerfetto/actions/workflows/backend-agent-regression-gate.yml/badge.svg)](https://github.com/Gracker/SmartPerfetto/actions/workflows/backend-agent-regression-gate.yml)
+[![Node.js >=18](https://img.shields.io/badge/Node.js-%3E%3D18-brightgreen)](package.json)
+[![TypeScript strict](https://img.shields.io/badge/TypeScript-strict-3178c6)](backend/tsconfig.json)
+[![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ed)](docker-compose.yml)
+[![Perfetto UI fork](https://img.shields.io/badge/Perfetto-UI%20fork-4285f4)](https://perfetto.dev/)
+[![Sponsor](https://img.shields.io/badge/Sponsor-WeChat%20553000664-f66f6f)](#sponsor)
+
 > AI-powered Android performance analysis built on [Perfetto](https://perfetto.dev/).
 
-Load a Perfetto trace, ask a question in natural language, and get structured, evidence-backed analysis with root cause chains and optimization recommendations.
+SmartPerfetto adds an AI analysis layer on top of Perfetto traces. Load a trace, ask a natural-language question, and get an evidence-backed answer with SQL results, skill outputs, root-cause reasoning, and optimization suggestions.
 
-<!-- TODO: Uncomment after GitHub org is set up
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Build](https://github.com/Gracker/SmartPerfetto/actions/workflows/backend-agent-regression-gate.yml/badge.svg)](https://github.com/Gracker/SmartPerfetto/actions)
--->
+The project is open source and in active development. The UI, backend runtime, and skill system are usable today, but public APIs and internal contracts may still change.
 
-> **Project Status: Active Development (Pre-release)**
->
-> SmartPerfetto is under active development and used in production for Android performance analysis at scale. The core analysis engine, skill system, and UI integration are stable. APIs may change before the 1.0 release. Contributions and feedback are welcome.
+## Perfetto Resources
 
-## Features
+| Resource | English | Chinese |
+|----------|---------|---------|
+| Android Performance Blog | [androidperformance.com/en](https://www.androidperformance.com/en) | [androidperformance.com](https://www.androidperformance.com/) |
+| Perfetto official docs | [perfetto.dev/docs](https://perfetto.dev/docs/) | [gugu-perf.github.io/perfetto-docs-zh-cn](https://gugu-perf.github.io/perfetto-docs-zh-cn/) |
 
-- **AI Agent Analysis** — Claude Agent SDK orchestrates 20 MCP tools to query trace data, execute skills, and reason about performance issues. Supports [third-party LLMs](#use-with-other-llm-providers) (GLM, DeepSeek, Qwen, Kimi, OpenAI, Gemini, etc.) via API proxy
-- **146 Analysis Skills** — YAML-based declarative pipelines (87 atomic + 29 composite + 28 pipeline + 2 deep) with layered results (L1 overview → L4 deep root cause)
-- **12 Scene Strategies** — Scene-specific analysis playbooks (scrolling, startup, ANR, interaction, memory, game, and more)
-- **21 Jank Root Cause Codes** — Priority-ordered decision tree with dual-signal detection (present_type + present_ts interval)
-- **Multi-Architecture** — Standard HWUI, Flutter (TextureView/SurfaceView, Impeller/Skia), Jetpack Compose, WebView
-- **Vendor Overrides** — Device-specific analysis for Pixel, Samsung, Xiaomi, OPPO, vivo, Honor, Qualcomm, MediaTek
-- **Deep Root Cause Chains** — Blocking chain analysis, binder tracing, causal reasoning with Mermaid diagrams
-- **Real-time Streaming** — SSE-based live analysis with phase transitions and intermediate reasoning
-- **Perfetto UI Integration** — Custom plugin with timeline navigation, data tables, and chart visualization
+## What It Does
 
-## Getting Started
+- Analyzes Android Perfetto traces for scrolling jank, startup, ANR, interaction latency, memory, game, and rendering-pipeline issues.
+- Keeps Perfetto's timeline and SQL power, then adds an AI assistant panel inside the Perfetto UI.
+- Uses a TypeScript backend to run agent workflows, query `trace_processor_shell`, invoke YAML analysis skills, and stream results to the browser.
+- Supports Anthropic directly and other tool-calling LLMs through an Anthropic-compatible API proxy.
+- Ships with 160+ YAML skill/config files and scene strategies for Android performance investigation.
 
-### Option 1: Docker (Recommended for users)
+## Tech Stack
 
-The fastest way to get SmartPerfetto running. No build tools required — just Docker and an API key.
+| Area | Technology |
+|------|------------|
+| Frontend | Forked Perfetto UI with the `com.smartperfetto.AIAssistant` plugin |
+| Backend | Node.js 18+, TypeScript strict mode, Express |
+| Agent runtime | Claude Agent SDK, MCP tools, scene strategies, verifier, SSE streaming |
+| Trace engine | Perfetto `trace_processor_shell` over HTTP RPC |
+| Analysis logic | YAML skills under `backend/skills/` plus Markdown strategies under `backend/strategies/` |
+| Storage | Local uploads, session logs, reports, and runtime learning files |
+| Testing | Jest, skill validation, strategy validation, 6-trace scene regression gate |
+| Deployment | Docker Compose or local dev scripts |
+
+## Quick Start
+
+### Docker
+
+Use Docker when you want to run SmartPerfetto without setting up local build tools.
 
 ```bash
 git clone --recursive https://github.com/Gracker/SmartPerfetto.git
 cd SmartPerfetto
 
 cp backend/.env.example backend/.env
-# Edit backend/.env — set ANTHROPIC_API_KEY (or configure a third-party LLM, see below)
+# Edit backend/.env and set ANTHROPIC_API_KEY,
+# or configure ANTHROPIC_BASE_URL for an API proxy.
 
 docker compose up --build
 ```
 
-Open **http://localhost:10000**, load a `.pftrace` file, and start analyzing.
+Open [http://localhost:10000](http://localhost:10000), load a `.pftrace` or `.perfetto-trace` file, and open the AI Assistant panel.
 
-### Option 2: Local Setup (Recommended for developers)
+### Local Development
 
-Full development environment with hot reload and debugging.
+Use local development when you want hot reload, debugging, or code contributions.
 
-**Prerequisites:**
-- Node.js 18+ (`node -v`)
-- Python 3 (Perfetto build tools)
-- C++ toolchain — macOS: `xcode-select --install` / Linux: `sudo apt install build-essential python3`
-- LLM API key — [Anthropic](https://console.anthropic.com/) (recommended), or any [supported LLM provider](#use-with-other-llm-providers)
+Prerequisites:
+
+- Node.js 18+
+- Python 3
+- Git with submodule support
+- Shell tools used by the dev scripts: `curl`, `lsof`, `pkill`
+- C++ build tools: `xcode-select --install` on macOS, or `sudo apt-get install build-essential python3` on Linux
+- An LLM API key or an Anthropic-compatible proxy
 
 ```bash
 git clone --recursive https://github.com/Gracker/SmartPerfetto.git
 cd SmartPerfetto
 
 cp backend/.env.example backend/.env
-# Edit backend/.env — set ANTHROPIC_API_KEY (or configure a third-party LLM, see below)
+# Edit backend/.env and set ANTHROPIC_API_KEY,
+# or configure ANTHROPIC_BASE_URL for an API proxy.
 
-# First-time setup (builds trace_processor_shell, ~3-5 min)
 ./scripts/start-dev.sh
 ```
 
-Open **http://localhost:10000**. Both backend and frontend auto-rebuild on file save — just refresh the browser after changes.
+The first run installs dependencies and builds `trace_processor_shell`. After startup:
 
-### Usage
+- Frontend: [http://localhost:10000](http://localhost:10000)
+- Backend: [http://localhost:3000](http://localhost:3000)
 
-1. Open http://localhost:10000 in your browser
-2. Load a Perfetto trace file (`.pftrace` or `.perfetto-trace`)
-3. Open the **AI Assistant** panel
-4. Ask a question:
-   - "分析滑动卡顿" (Analyze scroll jank)
-   - "Why is startup slow?"
-   - "CPU 调度有没有问题？" (Any CPU scheduling issues?)
-   - "Analyze the ANR in this trace"
+Both backend (`tsx watch`) and frontend (`build.js --watch`) rebuild on save. For `.ts`, `.yaml`, and `.md` changes, refresh the browser. Use `./scripts/restart-backend.sh` only after `.env` changes, `npm install`, or a stuck watcher.
 
-### Trace Requirements
+## Configure an LLM
 
-SmartPerfetto works best with traces captured on **Android 12+** with these atrace categories:
+Minimum direct Anthropic setup:
 
-| Scene | Minimum Categories | Recommended Extra |
-|-------|-------------------|-------------------|
+```bash
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+Third-party providers can be used through an API proxy that accepts Anthropic Messages requests and forwards them to a provider backend:
+
+```bash
+ANTHROPIC_BASE_URL=http://localhost:3000
+ANTHROPIC_API_KEY=sk-proxy-xxx
+CLAUDE_MODEL=your-main-model
+CLAUDE_LIGHT_MODEL=your-light-model
+```
+
+Known proxy options include [one-api](https://github.com/songquanpeng/one-api), [new-api](https://github.com/Calcium-Ion/new-api), and [LiteLLM](https://github.com/BerriAI/litellm). The selected model must support streaming and tool/function calling reliably. See [backend/.env.example](backend/.env.example) for provider examples and tuning options.
+
+## Basic Usage
+
+1. Open [http://localhost:10000](http://localhost:10000).
+2. Load a Perfetto trace file (`.pftrace` or `.perfetto-trace`).
+3. Open the AI Assistant panel.
+4. Ask a question, for example:
+   - `分析滑动卡顿`
+   - `Why is startup slow?`
+   - `CPU 调度有没有问题？`
+   - `Analyze the ANR in this trace`
+
+SmartPerfetto works best with Android 12+ traces that include FrameTimeline data. Recommended atrace categories:
+
+| Scene | Minimum categories | Useful extras |
+|-------|--------------------|---------------|
 | Scrolling | `gfx`, `view`, `input`, `sched` | `binder_driver`, `freq`, `disk` |
 | Startup | `am`, `dalvik`, `wm`, `sched` | `binder_driver`, `freq`, `disk` |
 | ANR | `am`, `wm`, `sched`, `binder_driver` | `dalvik`, `disk` |
 
-## Use with Other LLM Providers
+## API Integration
 
-SmartPerfetto works with **any LLM that supports function calling** — not just Claude. Connect to Chinese LLM providers, OpenAI, Google Gemini, or local models via an API proxy.
+The browser UI talks to the backend through REST and SSE. If you want to build your own UI or automation, start with these endpoints:
 
-### How It Works
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/agent/v1/analyze` | Start an analysis |
+| `GET` | `/api/agent/v1/:sessionId/stream` | Subscribe to SSE progress and answer tokens |
+| `GET` | `/api/agent/v1/:sessionId/status` | Poll analysis status |
+| `POST` | `/api/agent/v1/:sessionId/respond` | Continue a multi-turn session |
+| `POST` | `/api/agent/v1/resume` | Resume SDK context for an existing session |
+| `POST` | `/api/agent/v1/scene-reconstruct` | Start scene reconstruction |
+| `GET` | `/api/agent/v1/:sessionId/report` | Fetch the generated report |
 
-The Claude Agent SDK accepts an `ANTHROPIC_BASE_URL` environment variable. Point it at an API proxy that translates Anthropic Messages API format to the provider's OpenAI-compatible API:
-
-```
-SmartPerfetto → Claude Agent SDK → ANTHROPIC_BASE_URL → API Proxy → LLM Provider
-```
-
-### Setup
-
-1. **Deploy an API proxy** that supports Anthropic-to-OpenAI format translation:
-   - [one-api](https://github.com/songquanpeng/one-api) — popular, supports 50+ providers
-   - [new-api](https://github.com/Calcium-Ion/new-api) — one-api fork with more features
-   - [LiteLLM](https://github.com/BerriAI/litellm) — Python-based, Anthropic format support
-
-2. **Configure the proxy** with your provider's API key and endpoint
-
-3. **Edit `backend/.env`** — uncomment the provider block in `.env.example`:
-
-```bash
-# Point at your proxy
-ANTHROPIC_BASE_URL=http://localhost:3000
-ANTHROPIC_API_KEY=sk-proxy-xxx
-
-# Set model names (must match what the proxy expects)
-CLAUDE_MODEL=glm-5.1
-CLAUDE_LIGHT_MODEL=glm-4.7-flash
-```
-
-### Provider Configuration Presets
-
-These are current configuration examples, not a built-in compatibility guarantee. SmartPerfetto requires reliable Anthropic Messages translation, streaming, and tool-use support; verify the exact model IDs in your provider console or `models.list` API before adding them to your proxy. Last checked: 2026-04-28.
-
-| Provider | Main Model | Light Model | Proxy Backend URL | Notes |
-|----------|-----------|-------------|-------------------|-------|
-| **GLM / Z.ai (智谱AI)** | `glm-5.1` | `glm-4.7-flash` | `https://open.bigmodel.cn/api/paas/v4` | Current agent/coding-oriented line. |
-| **DeepSeek** | `deepseek-v4-pro` | `deepseek-v4-flash` | `https://api.deepseek.com` | Avoid old `deepseek-chat` / `deepseek-reasoner` aliases. |
-| **Qwen (通义千问)** | `qwen3-max` | `qwen3.5-flash` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Use `qwen3-coder-plus` for coding-heavy proxy setups. |
-| **Kimi (月之暗面)** | `kimi-k2.6` | `kimi-k2.5` | `https://api.moonshot.cn/v1` | Prefer K2.6/K2.5 over legacy `moonshot-v1-*` for agent tasks. |
-| **Doubao (豆包)** | `ep-xxx` or `doubao-seed-2.0-code` | `ep-xxx` or `doubao-seed-code` | `https://ark.cn-beijing.volces.com/api/v3` | Ark deployments often use endpoint IDs. |
-| **MiniMax** | `MiniMax-M2.7` | `MiniMax-M2.5` | `https://api.minimaxi.com/v1` | Replaces legacy `abab*` examples. |
-| **OpenAI** | `gpt-5.5` | `gpt-5.4-mini` | `https://api.openai.com/v1` | GPT-4o works but is no longer the recommended default. |
-| **Google Gemini** | `gemini-3-pro-preview` | `gemini-3-flash-preview` | `https://generativelanguage.googleapis.com/v1beta/openai` | Preview IDs; use `gemini-2.5-pro` / `gemini-2.5-flash` if you need stable IDs. |
-| **Ollama (local)** | `qwen3:30b` | `qwen3:30b` | `http://localhost:11434/v1` | Smoke-test tool calling locally before using it for full analysis. |
-
-See [`backend/.env.example`](backend/.env.example) for complete configuration examples with console URLs and notes.
-
-### Notes
-
-- **`CLAUDE_LIGHT_MODEL`** is used for auxiliary single-turn calls (query classification, conclusion verification, scene summarization). If your proxy only maps one model, set it to the same value as `CLAUDE_MODEL`.
-- **Sub-agents** (`CLAUDE_ENABLE_SUB_AGENTS`) are disabled by default for all users (research preview in the Claude Agent SDK). When enabled, the SDK internally resolves model shorthands like `'sonnet'` → `'claude-sonnet-4-6'` and makes separate API calls — these go through your proxy. Whether it works depends on your proxy's Anthropic format translation fidelity. If you want to try it, set `CLAUDE_ENABLE_SUB_AGENTS=true` and ensure your proxy maps Anthropic model names correctly.
-- **Extended thinking** (`CLAUDE_EFFORT`) is a Claude-specific feature. Non-Claude providers will ignore it.
-- **Provider quality varies**. Models with reliable tool calling and long-context agent behavior (GLM-5.1/4.7, DeepSeek V4, Qwen3, Kimi K2.6, GPT-5.x, Gemini 3) work best with SmartPerfetto's 20-tool MCP server.
+Set `SMARTPERFETTO_API_KEY` in `backend/.env` if you expose the backend beyond your local machine. Protected APIs then require `Authorization: Bearer <token>`.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Frontend (Perfetto UI @ :10000)               │
-│         Plugin: com.smartperfetto.AIAssistant                    │
-│         - AI Panel (ask questions, view results)                 │
-│         - Timeline integration (click-to-navigate)              │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │ SSE / HTTP
-┌───────────────────────────▼─────────────────────────────────────┐
-│                    Backend (Express @ :3000)                     │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                 agentv3 Runtime                            │   │
-│  │                                                           │   │
-│  │  ClaudeRuntime (orchestrator)                             │   │
-│  │    ├─ Scene Classifier (keyword-based, <1ms)              │   │
-│  │    ├─ System Prompt Builder (dynamic, scene-specific)     │   │
-│  │    ├─ Claude Agent SDK (MCP protocol)                     │   │
-│  │    ├─ SSE Bridge (SDK stream → frontend events)           │   │
-│  │    └─ Verifier (4-layer) + Reflection Retry               │   │
-│  │                                                           │   │
-│  │  MCP Server (20 tools: 9 always-on + 11 conditional)      │   │
-│  │    execute_sql │ invoke_skill │ detect_architecture       │   │
-│  │    lookup_sql_schema │ lookup_knowledge │ submit_plan     │   │
-│  │    submit_hypothesis │ fetch_artifact │ ...               │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │           Skill Engine (146 YAML Skills)                  │   │
-│  │   atomic/ (87) │ composite/ (29) │ pipelines/ (28) │ ... │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │     trace_processor_shell (HTTP RPC, port pool 9100-9900) │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────┘
+```text
+Frontend (Perfetto UI @ :10000)
+  └─ SmartPerfetto AI Assistant plugin
+       └─ SSE / HTTP
+Backend (Express @ :3000)
+  ├─ agentv3 runtime: scene routing, prompts, MCP tools, verifier
+  ├─ Skill engine: YAML analysis pipelines
+  ├─ Session/report/log services
+  └─ trace_processor_shell pool (HTTP RPC, 9100-9900)
 ```
 
-### Key Components
+Repository layout:
 
-| Component | Purpose |
-|-----------|---------|
-| **ClaudeRuntime** | Main orchestrator: scene classification → dynamic system prompt → Claude Agent SDK → verification loop |
-| **MCP Server** | 20 tools bridging Claude to trace data (SQL, Skills, schema lookup, knowledge, planning, hypothesis, comparison) |
-| **Skill Engine** | Executes YAML-defined analysis pipelines with SQL queries, producing layered results (L1-L4) |
-| **Scene Classifier** | Keyword-based routing (<1ms) to scene-specific strategies (scrolling, startup, ANR, ...) |
-| **Verifier** | 4-layer quality check (heuristic + plan + hypothesis + LLM) with up to 2 reflection retries |
-| **Artifact Store** | Caches skill results as compact references (~3000 tokens saved per skill invocation) |
-| **SQL Summarizer** | Compresses SQL results to stats + samples (~85% token savings) |
-
-## Project Structure
-
-```
+```text
 SmartPerfetto/
 ├── backend/
-│   ├── src/agentv3/        # AI runtime (Claude Agent SDK orchestrator)
-│   ├── src/services/       # Core services (trace processor, skill engine)
-│   ├── skills/             # 146 YAML analysis skills
-│   │   ├── atomic/         #   Single-step detection (87)
-│   │   ├── composite/      #   Multi-step analysis (29)
-│   │   ├── pipelines/      #   Render pipeline detection (28)
-│   │   ├── deep/           #   Deep causal analysis (2)
-│   │   ├── modules/        #   Module configs (app/framework/hardware/kernel)
-│   │   └── vendors/        #   Vendor overrides (pixel/samsung/xiaomi/...)
-│   ├── strategies/         # Scene strategies + prompt templates (.md)
-│   └── __tests__/          # Unit tests (1029 tests)
-│
-└── perfetto/               # Forked Perfetto UI (submodule)
-    └── ui/src/plugins/com.smartperfetto.AIAssistant/
+│   ├── src/agentv3/        # Primary AI runtime
+│   ├── src/services/       # Trace processor, skills, reports, sessions
+│   ├── skills/             # YAML analysis skills and configs
+│   ├── strategies/         # Scene strategies and prompt templates
+│   └── tests/              # Skill-eval and regression tests
+├── docs/                   # Architecture, MCP, skills, rendering references
+├── scripts/                # Development and restart scripts
+└── perfetto/               # Forked Perfetto UI submodule
 ```
 
 ## Development
 
-### Dev Workflow
-
-After the initial `./scripts/start-dev.sh`, both backend (`tsx watch`) and frontend (`build.js --watch`) auto-rebuild on save:
-
-| Change Type | Action Needed |
-|-------------|---------------|
-| TypeScript / YAML / Markdown | Refresh browser |
-| `.env` or `npm install` | `./scripts/restart-backend.sh` |
-| Both services crashed | `./scripts/start-dev.sh` |
-
-### Testing
-
-Every code change must pass the regression suite:
+Common commands:
 
 ```bash
+./scripts/start-dev.sh
+./scripts/restart-backend.sh
+
 cd backend
-
-# Mandatory — run after EVERY change
+npm run build
 npm run test:scene-trace-regression
-
-# Validate skill YAML contracts
 npm run validate:skills
-
-# Validate strategy markdown frontmatter
 npm run validate:strategies
-
-# Full test suite (~8 min)
-npm test
+npm run test:core
 ```
 
-### API Overview
+Required checks:
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/agent/v1/analyze` | Start analysis |
-| GET | `/api/agent/v1/:id/stream` | SSE real-time updates |
-| GET | `/api/agent/v1/:id/status` | Get analysis status |
-| POST | `/api/agent/v1/resume` | Resume multi-turn analysis |
-| POST | `/api/agent/v1/scene-reconstruct` | Scene reconstruction |
+- Any code change: `cd backend && npm run test:scene-trace-regression`
+- Skill YAML change: `npm run validate:skills` plus scene regression
+- Strategy/template Markdown change: `npm run validate:strategies` plus scene regression
+- Type/build fix: `cd backend && npx tsc --noEmit`
 
-See [CLAUDE.md](CLAUDE.md) for the full API reference.
-
-### Debugging
-
-Session logs are stored in `backend/logs/sessions/*.jsonl`:
-
-```bash
-# View session logs via API
-curl http://localhost:3000/api/agent/v1/logs/{sessionId}
-```
-
-| Issue | Solution |
-|-------|----------|
-| "AI backend not connected" | `./scripts/start-dev.sh` |
-| Empty analysis data | Verify trace has FrameTimeline data (Android 12+) |
-| Port conflict on 9100-9900 | `pkill -f trace_processor_shell` |
+Do not hardcode prompt content in TypeScript. Put scene logic in `backend/strategies/*.strategy.md` or reusable `*.template.md` files.
 
 ## Documentation
 
-- [Technical Architecture](docs/technical-architecture.md) — System design and extension guide
-- [MCP Tools Reference](docs/mcp-tools-reference.md) — 20 MCP tools with parameters and behavior
-- [Skill System Guide](docs/skill-system-guide.md) — YAML Skill DSL reference
-- [Data Contract](backend/docs/DATA_CONTRACT_DESIGN.md) — DataEnvelope v2.0 specification
-- [Rendering Pipelines](docs/rendering_pipelines/) — 23 Android rendering pipeline reference docs
+- [Technical Architecture](docs/technical-architecture.md)
+- [MCP Tools Reference](docs/mcp-tools-reference.md)
+- [Skill System Guide](docs/skill-system-guide.md)
+- [Data Contract](backend/docs/DATA_CONTRACT_DESIGN.md)
+- [Rendering Pipeline References](docs/rendering_pipelines/)
+- [Security Policy](SECURITY.md)
 
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing requirements, and the PR process.
+Contributions are welcome. Good first contributions include:
 
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+- Reproducing a performance case with a small trace and clear question
+- Adding or improving YAML skills
+- Improving scene strategies and output templates
+- Fixing UI issues in the Perfetto plugin
+- Adding regression coverage for known trace scenarios
+
+Before opening a PR:
+
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md).
+2. Fork the repo and create a branch from `main`.
+3. Keep changes scoped and include a clear test plan.
+4. Run the required checks listed above.
+5. Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Contact
+
+- Bugs and feature requests: [GitHub Issues](https://github.com/Gracker/SmartPerfetto/issues)
+- Security reports: [GitHub private advisory](https://github.com/Gracker/SmartPerfetto/security/advisories/new) or `smartperfetto@gracker.dev`
+- Collaboration, commercial support, and sponsorship: WeChat `553000664`
+
+## Sponsor
+
+Common sponsorship channels for open-source projects include GitHub Sponsors, OpenCollective, Buy Me a Coffee, Afdian, WeChat/Alipay QR codes, and commercial support or licensing.
+
+SmartPerfetto does not publish a public payment page yet. For sponsorship, donation, enterprise trial, or commercial licensing, contact the maintainer on WeChat: `553000664`.
 
 ## License
 
-[AGPL v3](LICENSE) — SmartPerfetto core.
+[AGPL-3.0-or-later](LICENSE) for SmartPerfetto core code.
 
-The `perfetto/` submodule is a fork of [Google's Perfetto](https://github.com/google/perfetto), licensed under [Apache 2.0](perfetto/LICENSE).
+The `perfetto/` submodule is a fork of [Google Perfetto](https://github.com/google/perfetto) and remains under [Apache-2.0](perfetto/LICENSE).
 
-For commercial licensing options (use without AGPL obligations), please contact the maintainer at **smartperfetto@gracker.dev**.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Do not file public issues for security concerns.
+For commercial licensing without AGPL obligations, contact the maintainer on WeChat: `553000664`.
