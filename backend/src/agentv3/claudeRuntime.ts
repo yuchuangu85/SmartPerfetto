@@ -27,7 +27,8 @@ import { classifyScene, type SceneType } from './sceneClassifier';
 import { classifyQueryComplexity } from './queryComplexityClassifier';
 import { buildAgentDefinitions } from './claudeAgentDefinitions';
 import { getExtendedKnowledgeBase } from '../services/sqlKnowledgeBase';
-import type { AnalysisNote, AnalysisPlanV3, ClaudeAnalysisContext, ComplexityClassifierInput, FailedApproach, Hypothesis, QueryComplexity, TraceCompleteness, UncertaintyFlag } from './types';
+import type { AnalysisNote, AnalysisPlanV3, ClaudeAnalysisContext, ComplexityClassifierInput, FailedApproach, Hypothesis, QueryComplexity, TraceCompleteness, ToolCallRecord, UncertaintyFlag } from './types';
+import { phaseMatchesCall } from './types';
 import { ArtifactStore } from './artifactStore';
 import { summarizeToolCallInput } from './toolCallSummary';
 import type { SessionStateSnapshot, SessionFieldsForSnapshot } from './sessionStateSnapshot';
@@ -662,24 +663,24 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
               const lastTool = toolCallHistory[toolCallHistory.length - 1];
               const plan = ctx.analysisPlan.current;
               const shortToolName = lastTool.name.replace(MCP_NAME_PREFIX, '');
-              // Priority: in_progress phase first, then any pending phase with matching expectedTools
+              const callSummary = summarizeToolCallInput(shortToolName, lastTool.input);
+              const candidate: ToolCallRecord = {
+                toolName: lastTool.name,
+                timestamp: Date.now(),
+                ...callSummary,
+              };
+              // Priority: in_progress phase first, then any pending phase whose expectations match
               const activePhase = plan.phases.find(p => p.status === 'in_progress');
               let matchedPhaseId: string | undefined;
-              if (activePhase?.expectedTools.includes(shortToolName)) {
+              if (activePhase && phaseMatchesCall(activePhase, candidate)) {
                 matchedPhaseId = activePhase.id;
               } else {
-                // Search all pending phases for the one expecting this tool
                 const pendingMatch = plan.phases.find(p =>
-                  p.status === 'pending' && p.expectedTools.includes(shortToolName)
+                  p.status === 'pending' && phaseMatchesCall(p, candidate),
                 );
                 matchedPhaseId = pendingMatch?.id;
               }
-              plan.toolCallLog.push({
-                toolName: lastTool.name,
-                timestamp: Date.now(),
-                matchedPhaseId,
-                ...summarizeToolCallInput(shortToolName, lastTool.input),
-              });
+              plan.toolCallLog.push({ ...candidate, matchedPhaseId });
               // P2-8: Cap toolCallLog to prevent unbounded growth within a turn
               if (plan.toolCallLog.length > 100) {
                 plan.toolCallLog.splice(0, plan.toolCallLog.length - 100);

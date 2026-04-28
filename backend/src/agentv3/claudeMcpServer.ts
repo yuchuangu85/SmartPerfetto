@@ -1174,6 +1174,10 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
         name: z.string().describe('Phase name (e.g. "Overview Collection")'),
         goal: z.string().describe('What this phase aims to achieve'),
         expectedTools: z.array(z.string()).describe('Tool names this phase will use (e.g. ["invoke_skill", "execute_sql"])'),
+        expectedCalls: z.array(z.object({
+          tool: z.string().describe('Short tool name without prefix (e.g. "invoke_skill")'),
+          skillId: z.string().optional().describe('For invoke_skill, the required skillId'),
+        })).optional().describe('Optional structured matchers — preferred over expectedTools when set. Use to require a specific skillId, e.g. [{tool:"invoke_skill", skillId:"startup_slow_reasons"}].'),
       })).min(1).describe('Ordered list of analysis phases (at least 1 phase required)'),
       successCriteria: z.string().describe('What constitutes a successful analysis (e.g. "Identify root cause of jank frames with evidence")'),
     },
@@ -1376,6 +1380,10 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
         name: z.string().describe('Phase name'),
         goal: z.string().describe('What this phase aims to achieve'),
         expectedTools: z.array(z.string()).describe('Tool names this phase will use'),
+        expectedCalls: z.array(z.object({
+          tool: z.string(),
+          skillId: z.string().optional(),
+        })).optional().describe('Optional structured matchers — see submit_plan for semantics.'),
         status: z.enum(['pending', 'in_progress', 'completed', 'skipped']).optional()
           .describe('Phase status. Omit for new/pending phases. Completed/skipped phases from original plan are preserved.'),
       })).describe('The revised phase list. Must include all completed/in-progress phases from original plan.'),
@@ -1430,6 +1438,7 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
           name: up.name,
           goal: up.goal,
           expectedTools: up.expectedTools,
+          expectedCalls: up.expectedCalls,
           status: (up.status || 'pending') as any,
         };
       });

@@ -21,6 +21,7 @@ import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkEnv } from './claudeConfig';
 import type { Finding, StreamingUpdate } from '../agent/types';
 import type { VerificationResult, VerificationIssue, AnalysisPlanV3, Hypothesis } from './types';
+import { expectedToolNames } from './types';
 import type { SceneType } from './sceneClassifier';
 
 /** Hardcoded known misdiagnosis patterns — common false positives in performance analysis. */
@@ -362,16 +363,20 @@ export function verifyPlanAdherence(plan: AnalysisPlanV3 | null): VerificationIs
   }
 
   // Check tool-to-phase matching: completed phases should have at least one matched tool call.
-  // If a phase has expectedTools but zero actual tool calls, it means the Agent skipped
-  // substantive work. This is ERROR severity to trigger correction retry.
+  // Phases that declare any expectations (legacy `expectedTools` or structured
+  // `expectedCalls`) but have zero matched calls indicate the Agent skipped
+  // substantive work. ERROR severity triggers a correction retry.
   const completedPhases = plan.phases.filter(p => p.status === 'completed');
   for (const phase of completedPhases) {
     const matchedCalls = plan.toolCallLog.filter(t => t.matchedPhaseId === phase.id);
-    if (matchedCalls.length === 0 && phase.expectedTools.length > 0) {
+    const hasExpectations =
+      (phase.expectedCalls?.length ?? 0) > 0 || phase.expectedTools.length > 0;
+    if (matchedCalls.length === 0 && hasExpectations) {
+      const expected = expectedToolNames(phase).join(', ');
       issues.push({
         type: 'plan_deviation',
         severity: 'error',
-        message: `阶段 "${phase.name}" (${phase.id}) 标记为完成但无匹配的工具调用 (预期: ${phase.expectedTools.join(', ')})。必须执行该阶段的工具调用或将其标记为 skipped。`,
+        message: `阶段 "${phase.name}" (${phase.id}) 标记为完成但无匹配的工具调用 (预期: ${expected})。必须执行该阶段的工具调用或将其标记为 skipped。`,
       });
     }
   }

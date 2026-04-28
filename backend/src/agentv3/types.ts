@@ -205,6 +205,19 @@ export interface AnalysisNote {
 // Planning Types (P0-1: Explicit planning capability)
 // =============================================================================
 
+/**
+ * A more precise alternative to a bare tool-name match. When present on a
+ * phase, the plan adherence matcher requires both the tool short-name AND
+ * (when set) the matching `skillId`, so two `invoke_skill` calls targeting
+ * different skills are no longer interchangeable.
+ */
+export interface ExpectedCall {
+  /** Short tool name without the MCP prefix (e.g. `invoke_skill`, `execute_sql`). */
+  tool: string;
+  /** For `invoke_skill`, the required skillId. Other tools should leave this unset. */
+  skillId?: string;
+}
+
 /** A phase in Claude's analysis plan, submitted via submit_plan tool. */
 export interface PlanPhase {
   id: string;
@@ -212,6 +225,14 @@ export interface PlanPhase {
   goal: string;
   /** Expected tool names this phase will use (for adherence tracking) */
   expectedTools: string[];
+  /**
+   * Optional structured matchers — preferred over `expectedTools` when set.
+   * Lets a phase require a specific skillId for `invoke_skill` rather than
+   * accepting any invocation. Phase 0.6 of the v2.1 refactor introduces
+   * this; existing strategies continue to use `expectedTools` until they
+   * opt in.
+   */
+  expectedCalls?: ExpectedCall[];
   status: 'pending' | 'in_progress' | 'completed' | 'skipped';
   completedAt?: number;
   /** Reasoning summary provided when completing/skipping this phase (P2-1) */
@@ -237,6 +258,35 @@ export interface PlanRevision {
   reason: string;
   /** Snapshot of phases before revision */
   previousPhases: PlanPhase[];
+}
+
+/**
+ * Predicate testing whether a logged tool call satisfies a phase's
+ * expectations. `expectedCalls` (when set) trumps `expectedTools`; otherwise
+ * the legacy "any call with the right tool name" semantics apply. Tool
+ * names are normalised by stripping the MCP prefix on both sides.
+ */
+export function phaseMatchesCall(phase: PlanPhase, record: ToolCallRecord): boolean {
+  const MCP_PREFIX = 'mcp__smartperfetto__';
+  const shortTool = record.toolName.startsWith(MCP_PREFIX)
+    ? record.toolName.slice(MCP_PREFIX.length)
+    : record.toolName;
+  if (phase.expectedCalls && phase.expectedCalls.length > 0) {
+    return phase.expectedCalls.some(call => {
+      if (call.tool !== shortTool) return false;
+      if (call.skillId && call.skillId !== record.skillId) return false;
+      return true;
+    });
+  }
+  return phase.expectedTools.includes(shortTool);
+}
+
+/** Flatten a phase's expectations to plain tool names for log/UI rendering. */
+export function expectedToolNames(phase: PlanPhase): string[] {
+  if (phase.expectedCalls && phase.expectedCalls.length > 0) {
+    return phase.expectedCalls.map(c => c.skillId ? `${c.tool}(${c.skillId})` : c.tool);
+  }
+  return phase.expectedTools;
 }
 
 /** Record of a tool call for plan adherence tracking. */
