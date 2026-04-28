@@ -357,6 +357,61 @@ is_frontend_bundle_ready() {
   return 0
 }
 
+# Ensure Perfetto's C++ build toolchain (gn, ninja, clang, sysroot) is on disk.
+# tools/gn and tools/ninja are Python wrappers around hermetic prebuilts that
+# tools/install-build-deps fetches from storage.googleapis.com/perfetto/ into
+# either third_party/<tool>/<tool> or buildtools/<os>/<tool>. The submodule
+# itself does NOT carry the binaries, so first-run users hit FileNotFoundError
+# from os.execl() inside run_buildtools_binary.py if we skip this step.
+ensure_cpp_toolchain() (
+  # Subshell: cd here does not leak to caller's cwd.
+  cd "$PERFETTO_DIR"
+
+  sys_dir=""
+  case "$(uname -s)" in
+    Darwin) sys_dir="mac" ;;
+    Linux)  sys_dir="linux64" ;;
+    *)
+      echo "WARNING: Unsupported OS '$(uname -s)' for trace_processor_shell build"
+      sys_dir="unknown"
+      ;;
+  esac
+
+  gn_ok=false
+  ninja_ok=false
+  if [ -x "third_party/gn/gn" ] || [ -x "buildtools/${sys_dir}/gn" ]; then
+    gn_ok=true
+  fi
+  if [ -x "third_party/ninja/ninja" ] || [ -x "buildtools/${sys_dir}/ninja" ]; then
+    ninja_ok=true
+  fi
+
+  if [ "$gn_ok" = true ] && [ "$ninja_ok" = true ]; then
+    return 0
+  fi
+
+  echo "C++ build toolchain not found (gn_ok=$gn_ok, ninja_ok=$ninja_ok)."
+  echo "Running tools/install-build-deps to fetch gn / ninja / clang / sysroot..."
+  if ! tools/install-build-deps 2>&1 | tee -a "$BACKEND_LOG"; then
+    echo "=============================================="
+    echo "ERROR: tools/install-build-deps failed."
+    echo ""
+    echo "Possible causes:"
+    echo "  - Network blocked from storage.googleapis.com (try a proxy / VPN)"
+    echo "  - Disk full (toolchain + sysroot needs ~1 GB free)"
+    echo "  - python3 missing"
+    echo ""
+    echo "If you don't need to rebuild Perfetto C++ code, you can drop in a"
+    echo "prebuilt trace_processor instead:"
+    echo "  curl -LOk https://get.perfetto.dev/trace_processor"
+    echo "  chmod +x trace_processor"
+    echo "  mkdir -p $PERFETTO_DIR/out/ui"
+    echo "  mv trace_processor $PERFETTO_DIR/out/ui/trace_processor_shell"
+    echo "=============================================="
+    return 1
+  fi
+)
+
 # Install UI node_modules using Perfetto's bundled pnpm
 install_ui_deps() {
   echo "Installing UI dependencies with Perfetto's bundled pnpm..."
@@ -415,6 +470,13 @@ if [ ! -f "$TRACE_PROCESSOR" ]; then
   echo "=============================================="
   echo "trace_processor_shell not found. Building..."
   echo "=============================================="
+
+  # Ensure gn/ninja/clang are present BEFORE invoking tools/gn — otherwise
+  # tools/gn (a Python wrapper) raises FileNotFoundError when execl can't find
+  # the prebuilt binary at third_party/gn/gn or buildtools/<os>/gn.
+  if ! ensure_cpp_toolchain; then
+    exit 1
+  fi
 
   cd "$PERFETTO_DIR"
 
