@@ -325,4 +325,75 @@ describe('buildSystemPrompt', () => {
       expect(prompt).toContain('历史踩坑记录');
     });
   });
+
+  /**
+   * Phase 1.4 of v2.1 — protect the implicit prompt cache.
+   *
+   * The Claude Agent SDK does not expose `cache_control` (see
+   * `docs/sdk-capability-spike-2026-04-28.md`), so the only lever we have
+   * over caching is making sure the prompt bytes themselves are stable
+   * across turns. These tests catch silent regressions where a timestamp,
+   * Date.now() call, or non-determinism quietly leaks into the prompt.
+   */
+  describe('cache stability', () => {
+    it('produces byte-identical output for the same context (deterministic)', () => {
+      const ctx = makeContext({
+        sceneType: 'scrolling',
+        architecture: { type: 'Standard', confidence: 0.9 } as any,
+        packageName: 'com.example',
+      });
+      const a = buildSystemPrompt(ctx);
+      const b = buildSystemPrompt(ctx);
+      expect(a).toBe(b);
+    });
+
+    it('keeps the leading section byte-stable when only the volatile (selection) context changes', () => {
+      const base = makeContext({
+        sceneType: 'scrolling',
+        architecture: { type: 'Standard', confidence: 0.9 } as any,
+        packageName: 'com.example',
+      });
+      const withoutSelection = buildSystemPrompt(base);
+      const withSelection = buildSystemPrompt({
+        ...base,
+        selectionContext: { kind: 'area', startNs: 100, endNs: 200 } as any,
+      });
+      // Find a stable anchor in the leading sections (architecture description
+      // is in Tier 2 and must precede any user selection block in Tier 4).
+      const anchor = '## 当前 Trace 架构';
+      const idxA = withoutSelection.indexOf(anchor);
+      const idxB = withSelection.indexOf(anchor);
+      expect(idxA).toBeGreaterThan(-1);
+      expect(idxB).toBe(idxA);
+      // The shared prefix up to and including the architecture section header
+      // is byte-equal — selection context is appended later, not interleaved.
+      expect(withSelection.startsWith(withoutSelection.slice(0, idxA + anchor.length))).toBe(true);
+    });
+
+    it('changing only previousFindings does not perturb the leading sections', () => {
+      const base = makeContext({ sceneType: 'scrolling' });
+      const withoutFindings = buildSystemPrompt(base);
+      const withFindings = buildSystemPrompt({
+        ...base,
+        previousFindings: [
+          { severity: 'critical', title: 't', description: 'd' } as any,
+        ],
+      });
+      // Both prompts share their byte-identical Tier 1-3 prefix; the
+      // conversation context block lives strictly later.
+      const anchor = '## 分析方法论';
+      const idx = withoutFindings.indexOf(anchor);
+      expect(idx).toBeGreaterThan(-1);
+      expect(withFindings.startsWith(withoutFindings.slice(0, idx + anchor.length))).toBe(true);
+    });
+
+    it('does not leak `Date.now()` style timestamps into the prompt', () => {
+      const prompt = buildSystemPrompt(makeContext({ sceneType: 'scrolling' }));
+      // Catch obvious epoch-millis leakage: any 13-digit run of digits is suspicious.
+      // Section markers + tokens never carry such patterns; if any do, the test
+      // fails and the offender must justify itself or move the value into a
+      // volatile context object.
+      expect(prompt).not.toMatch(/\b1[6-9]\d{11}\b/);
+    });
+  });
 });
