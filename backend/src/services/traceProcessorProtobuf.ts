@@ -13,10 +13,14 @@
  * Encode a varint (variable-length integer)
  */
 export function encodeVarint(value: number): Buffer {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid varint value: ${value}`);
+  }
+
   const result: number[] = [];
   while (value > 127) {
-    result.push((value & 0x7f) | 0x80);
-    value = value >>> 7;
+    result.push((value % 128) | 0x80);
+    value = Math.floor(value / 128);
   }
   result.push(value);
   return Buffer.from(result);
@@ -27,19 +31,42 @@ export function encodeVarint(value: number): Buffer {
  * Returns [value, bytesRead]
  */
 export function decodeVarint(buf: Buffer, offset: number): [number, number] {
-  let value = 0;
-  let shift = 0;
+  const [value, bytesRead] = decodeUnsignedVarintBigInt(buf, offset);
+
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Varint exceeds JavaScript safe integer range');
+  }
+
+  return [Number(value), bytesRead];
+}
+
+function decodeUnsignedVarintBigInt(buf: Buffer, offset: number): [bigint, number] {
+  let value = 0n;
+  let shift = 0n;
   let bytesRead = 0;
 
   while (offset + bytesRead < buf.length) {
     const b = buf[offset + bytesRead];
     bytesRead++;
-    value |= (b & 0x7f) << shift;
-    if ((b & 0x80) === 0) break;
-    shift += 7;
+    value |= BigInt(b & 0x7f) << shift;
+
+    if ((b & 0x80) === 0) {
+      return [value, bytesRead];
+    }
+
+    shift += 7n;
+    if (bytesRead >= 10) {
+      throw new Error('Varint too long');
+    }
   }
 
-  return [value, bytesRead];
+  throw new Error('Truncated varint');
+}
+
+function decodeInt64Varint(buf: Buffer, offset: number): [number, number] {
+  const [raw, bytesRead] = decodeUnsignedVarintBigInt(buf, offset);
+  const signed = raw >= (1n << 63n) ? raw - (1n << 64n) : raw;
+  return [Number(signed), bytesRead];
 }
 
 /**
@@ -91,12 +118,20 @@ export interface ParsedQueryResult {
 /**
  * Parse a packed varint array
  */
-function parsePackedVarints(buf: Buffer, offset: number, length: number): number[] {
+function parsePackedVarints(
+  buf: Buffer,
+  offset: number,
+  length: number,
+  decoder: (buf: Buffer, offset: number) => [number, number] = decodeVarint,
+): number[] {
   const result: number[] = [];
   const end = offset + length;
+  if (length < 0 || end > buf.length) {
+    throw new Error('Invalid packed varint length');
+  }
 
   while (offset < end) {
-    const [value, bytesRead] = decodeVarint(buf, offset);
+    const [value, bytesRead] = decoder(buf, offset);
     result.push(value);
     offset += bytesRead;
   }
@@ -110,17 +145,45 @@ function parsePackedVarints(buf: Buffer, offset: number, length: number): number
 function parsePackedDoubles(buf: Buffer, offset: number, length: number): number[] {
   const result: number[] = [];
   const end = offset + length;
+  if (length < 0 || end > buf.length || length % 8 !== 0) {
+    throw new Error('Invalid packed double length');
+  }
 
   while (offset < end) {
-    if (offset + 8 <= end) {
-      result.push(buf.readDoubleLE(offset));
-      offset += 8;
-    } else {
-      break;
-    }
+    result.push(buf.readDoubleLE(offset));
+    offset += 8;
   }
 
   return result;
+}
+
+function assertLengthDelimitedRange(buf: Buffer, offset: number, length: number): void {
+  if (!Number.isSafeInteger(length) || length < 0 || offset + length > buf.length) {
+    throw new Error('Invalid length-delimited field length');
+  }
+}
+
+function skipUnknownField(buf: Buffer, offset: number, wireType: number): number {
+  switch (wireType) {
+    case 0: {
+      const [, bytesRead] = decodeVarint(buf, offset);
+      return offset + bytesRead;
+    }
+    case 1:
+      if (offset + 8 > buf.length) throw new Error('Truncated fixed64 field');
+      return offset + 8;
+    case 2: {
+      const [len, bytesRead] = decodeVarint(buf, offset);
+      offset += bytesRead;
+      assertLengthDelimitedRange(buf, offset, len);
+      return offset + len;
+    }
+    case 5:
+      if (offset + 4 > buf.length) throw new Error('Truncated fixed32 field');
+      return offset + 4;
+    default:
+      throw new Error(`Unsupported protobuf wire type: ${wireType}`);
+  }
 }
 
 /**
@@ -150,11 +213,12 @@ function parseCellsBatch(buf: Buffer, offset: number, length: number): {
     if (wireType === 2) { // length-delimited
       const [len, bytesRead] = decodeVarint(buf, offset);
       offset += bytesRead;
+      assertLengthDelimitedRange(buf, offset, len);
 
       if (fieldNum === 1) { // cells (packed)
         cells = parsePackedVarints(buf, offset, len).map(v => v as CellType);
       } else if (fieldNum === 2) { // varint_cells (packed)
-        varintCells = parsePackedVarints(buf, offset, len);
+        varintCells = parsePackedVarints(buf, offset, len, decodeInt64Varint);
       } else if (fieldNum === 3) { // float64_cells (packed)
         float64Cells = parsePackedDoubles(buf, offset, len);
       } else if (fieldNum === 4) { // blob_cells
@@ -171,6 +235,8 @@ function parseCellsBatch(buf: Buffer, offset: number, length: number): {
       if (fieldNum === 6) { // is_last_batch
         isLastBatch = value === 1;
       }
+    } else {
+      offset = skipUnknownField(buf, offset, wireType);
     }
   }
 
@@ -205,6 +271,7 @@ export function decodeQueryResult(buf: Buffer): ParsedQueryResult {
     if (wireType === 2) { // length-delimited
       const [len, bytesRead] = decodeVarint(buf, offset);
       offset += bytesRead;
+      assertLengthDelimitedRange(buf, offset, len);
 
       if (fieldNum === 1) { // column_names (repeated string)
         columnNames.push(buf.slice(offset, offset + len).toString('utf8'));
@@ -225,6 +292,8 @@ export function decodeQueryResult(buf: Buffer): ParsedQueryResult {
       if (fieldNum === 4) { // statement_count
         statementCount = value;
       }
+    } else {
+      offset = skipUnknownField(buf, offset, wireType);
     }
   }
 
