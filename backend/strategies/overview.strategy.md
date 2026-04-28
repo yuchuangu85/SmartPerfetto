@@ -31,6 +31,12 @@ compound_patterns:
   - "分析.*整体"
   - "trace.*中.*什么"
   - "what.*in.*trace"
+
+plan_template:
+  mandatory_aspects:
+    - id: scene_detection_and_drill
+      match_keywords: ['scene', 'overview', '场景', '概览', 'detect', '检测', 'timeline']
+      suggestion: '概览场景建议包含场景检测和问题场景深钻阶段'
 ---
 
 #### 概览 / 场景还原分析（用户提到 发生了什么、概览、overview、场景还原）

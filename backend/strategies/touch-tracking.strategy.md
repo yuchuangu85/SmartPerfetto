@@ -38,6 +38,12 @@ compound_patterns:
   - "持续.*延迟"
   - "每帧.*延迟"
   - "per.*frame.*latency"
+
+plan_template:
+  mandatory_aspects:
+    - id: per_frame_latency_measurement
+      match_keywords: ['input', 'touch', '跟手', '延迟', 'latency', 'per_frame', 'tracking']
+      suggestion: '跟手度场景建议包含逐帧 Input-to-Display 延迟测量阶段'
 ---
 
 #### 跟手度分析（用户提到 跟手度、跟手延迟、follow finger、touch tracking）

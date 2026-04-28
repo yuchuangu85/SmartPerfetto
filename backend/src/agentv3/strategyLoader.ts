@@ -32,6 +32,24 @@ export interface PhaseHint {
   critical: boolean;
 }
 
+/**
+ * A single mandatory aspect a plan must touch — sourced from a scene's
+ * `plan_template.mandatory_aspects` frontmatter. The submit_plan /
+ * revise_plan hard-gate fails when no plan phase mentions any of the
+ * `matchKeywords`.
+ */
+export interface PlanMandatoryAspect {
+  /** Stable identifier for diff-friendly tracking (e.g. `frame_jank_analysis`). */
+  id: string;
+  matchKeywords: string[];
+  suggestion: string;
+}
+
+/** Plan template loaded from a strategy's `plan_template:` frontmatter. */
+export interface PlanTemplate {
+  mandatoryAspects: PlanMandatoryAspect[];
+}
+
 export interface StrategyDefinition {
   scene: string;
   priority: number;
@@ -44,6 +62,12 @@ export interface StrategyDefinition {
   optionalCapabilities: string[];
   /** Phase-level hints for mid-analysis restatement injection. */
   phaseHints: PhaseHint[];
+  /**
+   * Plan template — mandatory aspects every submitted plan must cover for
+   * this scene. `null` (vs. an empty mandatoryAspects array) means the
+   * scene has deliberately opted out of plan-template validation.
+   */
+  planTemplate: PlanTemplate | null;
   content: string;
   /**
    * Absolute path to the source `*.strategy.md` file. Required because the
@@ -83,6 +107,19 @@ function parseStrategyFile(filePath: string): StrategyDefinition | null {
     critical: (h.critical as boolean) ?? false,
   }));
 
+  const rawPlanTemplate = frontmatter.plan_template as Record<string, unknown> | undefined;
+  let planTemplate: PlanTemplate | null = null;
+  if (rawPlanTemplate) {
+    const aspects = (rawPlanTemplate.mandatory_aspects as Array<Record<string, unknown>> | undefined) || [];
+    planTemplate = {
+      mandatoryAspects: aspects.map(a => ({
+        id: (a.id as string) || '',
+        matchKeywords: (a.match_keywords as string[]) || [],
+        suggestion: (a.suggestion as string) || '',
+      })),
+    };
+  }
+
   return {
     scene: frontmatter.scene as string,
     priority: (frontmatter.priority as number) ?? 99,
@@ -92,6 +129,7 @@ function parseStrategyFile(filePath: string): StrategyDefinition | null {
     requiredCapabilities: (frontmatter.required_capabilities as string[]) || [],
     optionalCapabilities: (frontmatter.optional_capabilities as string[]) || [],
     phaseHints,
+    planTemplate,
     content,
     sourcePath: filePath,
   };
@@ -125,6 +163,20 @@ export function getRegisteredScenes(): StrategyDefinition[] {
 /** Get phase-level restatement hints for a scene. Returns [] if scene has no hints. */
 export function getPhaseHints(scene: string): PhaseHint[] {
   return loadStrategies().get(scene)?.phaseHints || [];
+}
+
+/**
+ * Get the plan template for a scene loaded from `plan_template:`
+ * frontmatter. Returns `null` for unknown scenes and for scenes that
+ * deliberately opted out (no `plan_template` block in their frontmatter).
+ *
+ * Phase 2.1 of v2.1 — strategies migrated to frontmatter take priority
+ * over the legacy hardcoded `SCENE_PLAN_TEMPLATES` map; the legacy map
+ * remains as a fallback in `scenePlanTemplates.ts` until every strategy
+ * has migrated.
+ */
+export function getPlanTemplate(scene: string): PlanTemplate | null {
+  return loadStrategies().get(scene)?.planTemplate ?? null;
 }
 
 /**

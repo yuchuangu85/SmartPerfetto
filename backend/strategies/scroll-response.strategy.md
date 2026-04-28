@@ -33,6 +33,15 @@ compound_patterns:
   - "首帧.*延迟"
   - "首帧.*响应"
   - "滑动.*首帧"
+
+plan_template:
+  mandatory_aspects:
+    - id: input_event_detection
+      match_keywords: ['input', 'gesture', 'motion', 'action_move', '输入', '手势', '触摸', 'input_events']
+      suggestion: '滑动响应场景建议包含输入事件定位阶段 (input event detection)'
+    - id: latency_breakdown
+      match_keywords: ['latency', 'response', 'delay', '延迟', '响应', '分解', 'breakdown', '首帧']
+      suggestion: '滑动响应场景建议包含端到端延迟分解阶段 (latency breakdown)'
 ---
 
 #### 滑动响应速度分析（用户提到 滑动响应、滑动延迟、首帧延迟、scroll response、scroll latency）

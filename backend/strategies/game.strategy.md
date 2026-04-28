@@ -29,6 +29,12 @@ compound_patterns:
   - "游戏.*帧"
   - "game.*jank"
   - "game.*fps"
+
+plan_template:
+  mandatory_aspects:
+    - id: fps_and_gpu
+      match_keywords: ['game', 'fps', '游戏', 'gpu', 'frame', '帧率']
+      suggestion: '游戏场景建议包含帧率分析和 GPU 状态检查阶段'
 ---
 
 #### 游戏性能分析（用户提到 游戏、game、帧率、游戏卡顿）

@@ -30,6 +30,12 @@ compound_patterns:
   - "内存.*不足"
   - "memory.*leak"
   - "memory.*pressure"
+
+plan_template:
+  mandatory_aspects:
+    - id: memory_trend_and_gc
+      match_keywords: ['memory', 'oom', 'gc', '内存', 'heap', 'lmk', 'memory_analysis']
+      suggestion: '内存场景建议包含内存使用趋势和 GC 分析阶段 (memory_analysis)'
 ---
 
 #### 内存分析（用户提到 内存、memory、OOM、泄漏、LMK）

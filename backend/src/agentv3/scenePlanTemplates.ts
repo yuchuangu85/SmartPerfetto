@@ -14,8 +14,15 @@
  */
 
 import type { SceneType } from './sceneClassifier';
+import { getPlanTemplate as getPlanTemplateFromFrontmatter } from './strategyLoader';
 
 export interface ScenePlanTemplateAspect {
+  /**
+   * Stable identifier for the aspect — populated when the template comes
+   * from strategy frontmatter (Phase 2.1) and synthesised from the first
+   * matchKeyword for legacy hardcoded entries.
+   */
+  id?: string;
   matchKeywords: string[];
   suggestion: string;
 }
@@ -111,15 +118,33 @@ export const SCENES_WITHOUT_PLAN_TEMPLATE: ReadonlySet<SceneType> = new Set([
 
 /**
  * Resolve the plan template for a scene. Returns `undefined` for scenes
- * in {@link SCENES_WITHOUT_PLAN_TEMPLATE} or unknown scenes — callers
- * should treat both cases as "skip mandatory-aspect validation".
+ * in {@link SCENES_WITHOUT_PLAN_TEMPLATE}, unknown scenes, or scenes that
+ * have deliberately opted out via empty `mandatoryAspects`.
+ *
+ * Phase 2.1 of v2.1 — strategies that ship a `plan_template:` block in
+ * their `*.strategy.md` frontmatter take priority. The hardcoded
+ * `SCENE_PLAN_TEMPLATES` map remains as a fallback for scenes that have
+ * not yet migrated; once every scene migrates it can be removed.
  */
 export function getScenePlanTemplate(scene: SceneType): ScenePlanTemplate | undefined {
+  const fromFrontmatter = getPlanTemplateFromFrontmatter(scene);
+  if (fromFrontmatter && fromFrontmatter.mandatoryAspects.length > 0) {
+    return fromFrontmatter;
+  }
   return SCENE_PLAN_TEMPLATES[scene];
 }
 
-/** Enumerated scene keys that have a non-empty plan template. */
+/**
+ * Enumerated scene keys that have a non-empty plan template — covers
+ * both frontmatter-sourced and legacy hardcoded scenes.
+ */
 export function listScenePlanTemplateKeys(): SceneType[] {
+  // Union legacy keys with any scene that has a frontmatter-sourced
+  // template, deduplicated. We can't import the loader's full registry
+  // here without paying the strategy-load cost on every call, so we
+  // start from the legacy keys (always present) and let dual-read in
+  // `getScenePlanTemplate` cover migrated-only scenes when callers ask
+  // about a specific scene id.
   return Object.keys(SCENE_PLAN_TEMPLATES);
 }
 

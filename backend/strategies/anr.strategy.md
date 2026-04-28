@@ -33,6 +33,12 @@ phase_hints:
     constraints: 'freeze_verdict 是第一优先级门控。system freeze → 系统原因排查；app_specific → 进入 App 根因决策树（5 步子流程）。禁止在未确认 freeze_verdict 前直接分析 App 代码。'
     critical_tools: ['anr_analysis']
     critical: true
+
+plan_template:
+  mandatory_aspects:
+    - id: anr_root_cause
+      match_keywords: ['anr', 'deadlock', 'block', '死锁', '阻塞', 'not_responding', 'anr_analysis']
+      suggestion: 'ANR 场景建议包含 ANR 原因定位阶段 (anr_analysis)'
 ---
 
 #### ANR 分析（用户提到 ANR、无响应、not responding、死锁、冻屏）

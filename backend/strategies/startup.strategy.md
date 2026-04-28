@@ -55,6 +55,18 @@ phase_hints:
     constraints: '输出必须包含：启动类型判定(cold/warm/hot) + TTID/TTFD 数值 + 阶段耗时分解 + 根因编号引用(A1-A18/B1-B12) + 双受众格式([App層]+[系統/平台層])。'
     critical_tools: []
     critical: false
+
+plan_template:
+  mandatory_aspects:
+    - id: startup_timing
+      match_keywords: ['startup', 'ttid', 'ttfd', 'launch', '启动', 'startup_analysis']
+      suggestion: '启动场景建议包含启动耗时测量阶段 (startup_analysis)'
+    - id: phase_breakdown
+      match_keywords: ['phase', 'breakdown', 'block', '阶段', '分解', '阻塞', 'startup_detail']
+      suggestion: '启动场景建议包含启动阶段分解和阻塞因素分析'
+    - id: launch_type_verdict
+      match_keywords: ['type', 'cold', 'warm', 'hot', 'bindApplication', '类型', '冷启动', '温启动', '热启动', '判定']
+      suggestion: '启动场景建议验证启动类型 (cold/warm/hot)：bindApplication 存在→冷启动，仅 performCreate→温启动'
 ---
 
 #### 启动分析（用户提到 启动、冷启动、热启动、launch、startup）

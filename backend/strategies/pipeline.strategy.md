@@ -30,6 +30,15 @@ compound_patterns:
   - "检测.*管线"
   - "渲染.*路径"
   - "pipeline.*type"
+
+plan_template:
+  mandatory_aspects:
+    - id: architecture_detection
+      match_keywords: ['detect_architecture', 'architecture', '架构', '检测', 'detection']
+      suggestion: '管线识别场景建议包含架构自动检测阶段 (detect_architecture)'
+    - id: pipeline_skill_invocation
+      match_keywords: ['pipeline', '管线', 'mermaid', 'thread', '线程', 'teaching', '教学', 'invoke_skill']
+      suggestion: '管线识别场景建议包含管线教学内容展示阶段 (pipeline skill invocation)'
 ---
 
 #### 渲染管线识别与教学分析（用户提到 管线识别、pipeline 检测、渲染路径、渲染架构检测）

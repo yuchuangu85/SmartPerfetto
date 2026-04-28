@@ -33,6 +33,15 @@ compound_patterns:
   - "what.*does.*this"
   - ".*管线.*是"
   - ".*pipeline.*is"
+
+plan_template:
+  mandatory_aspects:
+    - id: architecture_detection
+      match_keywords: ['detect_architecture', 'architecture', '架构', 'pipeline', '管线', '教学']
+      suggestion: '教学场景建议包含架构检测阶段 (detect_architecture)'
+    - id: pipeline_teaching
+      match_keywords: ['teach', 'explain', '说明', '解释', 'thread', '线程', 'slice', 'mermaid', 'invoke_skill']
+      suggestion: '教学场景建议包含管线教学内容获取阶段 (invoke_skill with pipeline skill)'
 ---
 
 #### 教学/概念解释分析（用户提到 是什么、什么意思、怎么工作、explain、what is、pipeline、thread role）

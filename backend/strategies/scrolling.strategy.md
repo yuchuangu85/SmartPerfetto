@@ -59,6 +59,15 @@ phase_hints:
     constraints: '输出必须包含：全帧根因分布表（按 reason_code 聚合）+ 代表帧分析（含四象限+频率+根因推理链）+ 按优先级排序的优化建议。每个 CRITICAL/HIGH 必须有量化证据+因果链。'
     critical_tools: []
     critical: false
+
+plan_template:
+  mandatory_aspects:
+    - id: frame_jank_analysis
+      match_keywords: ['frame', 'jank', 'scroll', '帧', '卡顿', '滑动', 'scrolling_analysis', 'consumer_jank']
+      suggestion: '滑动场景建议包含帧渲染/卡顿分析阶段 (scrolling_analysis, consumer_jank_detection)'
+    - id: root_cause_diagnosis
+      match_keywords: ['root', 'cause', 'diagnos', '根因', '诊断', '深入', 'deep', 'jank_frame_detail']
+      suggestion: '滑动场景建议包含卡顿帧根因分析阶段 (jank_frame_detail)'
 ---
 
 **Android 版本注意**：
