@@ -381,6 +381,18 @@ export function verifyPlanAdherence(plan: AnalysisPlanV3 | null): VerificationIs
     }
   }
 
+  // Phase 2.3 of v2.1: surface scene-template aspects the hard-gate gave up
+  // enforcing (force-accepted after the attempt cap). Without this check the
+  // agent could keep submitting incomplete plans until the cap and have the
+  // gap silently swept under the rug.
+  if (plan.unresolvedAspects && plan.unresolvedAspects.length > 0) {
+    issues.push({
+      type: 'plan_deviation',
+      severity: 'error',
+      message: `Plan 未覆盖场景必要 aspect（已达硬拦截尝试上限被强制接受）: ${plan.unresolvedAspects.join(', ')}。在结论中说明这些 aspect 为何无法分析，或下次重新规划时补足。`,
+    });
+  }
+
   // P2-1: Check reasoning quality — completed phases should have meaningful summaries
   const finishedPhases = plan.phases.filter(p => p.status === 'completed' || p.status === 'skipped');
   const phasesWithoutSummary = finishedPhases.filter(p => !p.summary || p.summary.length < 15);

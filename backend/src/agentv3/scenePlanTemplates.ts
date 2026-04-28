@@ -159,10 +159,17 @@ export interface PlanValidationResult {
   missingAspectIds: string[];
 }
 
+/** Minimum justification length for a waiver to be accepted. */
+export const MIN_WAIVER_REASON_CHARS = 50;
+
 /**
  * Detect mandatory aspects of a scene's plan template that a submitted
  * `phases` array fails to mention. Returns empty arrays for scenes without
  * a template or when all aspects are covered.
+ *
+ * `waivers` is an optional set of agent-declared opt-outs; an aspect with
+ * a matching `aspectId` and a `reason` of at least
+ * {@link MIN_WAIVER_REASON_CHARS} characters is treated as covered.
  *
  * Pure function — both `submit_plan` and `revise_plan` delegate here so
  * the hard-gate cannot be bypassed by silently re-issuing a plan via the
@@ -171,6 +178,7 @@ export interface PlanValidationResult {
 export function validatePlanAgainstSceneTemplate(
   phases: ReadonlyArray<{ name: string; goal: string; expectedTools: string[] }>,
   scene: SceneType | undefined,
+  waivers?: ReadonlyArray<{ aspectId: string; reason: string }>,
 ): PlanValidationResult {
   const template = scene ? getScenePlanTemplate(scene) : undefined;
   if (!template) return { warnings: [], missingAspectIds: [] };
@@ -180,13 +188,21 @@ export function validatePlanAgainstSceneTemplate(
     .join(' ')
     .toLowerCase();
 
+  const acceptedWaiverIds = new Set(
+    (waivers ?? [])
+      .filter(w => typeof w.reason === 'string' && w.reason.trim().length >= MIN_WAIVER_REASON_CHARS)
+      .map(w => w.aspectId),
+  );
+
   const warnings: string[] = [];
   const missingAspectIds: string[] = [];
   for (const aspect of template.mandatoryAspects) {
+    const aspectId = aspect.id || aspect.matchKeywords[0];
+    if (acceptedWaiverIds.has(aspectId)) continue;
     const covered = aspect.matchKeywords.some(kw => planText.includes(kw.toLowerCase()));
     if (!covered) {
       warnings.push(aspect.suggestion);
-      missingAspectIds.push(aspect.matchKeywords[0]);
+      missingAspectIds.push(aspectId);
     }
   }
   return { warnings, missingAspectIds };

@@ -292,6 +292,23 @@ describe('verifyPlanAdherence', () => {
       i.type === 'missing_reasoning' && i.message.includes('推理摘要'),
     )).toBe(true);
   });
+
+  it('should error when plan carries unresolvedAspects (Phase 2.3 force-accepted gap)', () => {
+    const plan = makePlan({
+      phases: [
+        { id: 'p1', name: 'Phase 1', goal: 'G', expectedTools: [], status: 'completed', summary: 'Done.' },
+      ],
+      toolCallLog: [],
+      unresolvedAspects: ['startup_timing', 'launch_type_verdict'],
+    });
+    const issues = verifyPlanAdherence(plan);
+    const unresolvedIssue = issues.find(
+      i => i.severity === 'error' && i.message.includes('未覆盖场景必要 aspect'),
+    );
+    expect(unresolvedIssue).toBeDefined();
+    expect(unresolvedIssue!.message).toContain('startup_timing');
+    expect(unresolvedIssue!.message).toContain('launch_type_verdict');
+  });
 });
 
 describe('verifyHypotheses', () => {

@@ -23,7 +23,7 @@ import { loadSkillNotes } from './selfImprove/skillNotesInjector';
 import { getPerfettoStdlibModules } from '../services/perfettoStdlibScanner';
 import { injectStdlibIncludes } from './sqlIncludeInjector';
 import { loadPromptTemplate, getPhaseHints } from './strategyLoader';
-import { validatePlanAgainstSceneTemplate } from './scenePlanTemplates';
+import { validatePlanAgainstSceneTemplate, MIN_WAIVER_REASON_CHARS } from './scenePlanTemplates';
 import type { ArtifactStore } from './artifactStore';
 
 /** MCP tool name prefix — derived from the server name 'smartperfetto'.
@@ -1180,8 +1180,53 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
         })).optional().describe('Optional structured matchers — preferred over expectedTools when set. Use to require a specific skillId, e.g. [{tool:"invoke_skill", skillId:"startup_slow_reasons"}].'),
       })).min(1).describe('Ordered list of analysis phases (at least 1 phase required)'),
       successCriteria: z.string().describe('What constitutes a successful analysis (e.g. "Identify root cause of jank frames with evidence")'),
+      waivers: z.array(z.object({
+        aspectId: z.string().describe('Mandatory aspect id to opt out of (matches a `missingAspectIds` entry from a prior reject).'),
+        reason: z.string().describe(`Justification for why this aspect cannot be covered. MUST be at least ${MIN_WAIVER_REASON_CHARS} characters.`),
+      })).optional().describe('Optional opt-outs for scene-template aspects when the trace genuinely cannot support them.'),
     },
-    async ({ phases, successCriteria }) => {
+    async ({ phases, successCriteria, waivers }) => {
+      // P1-G11: Validate against the scene template, honouring agent waivers.
+      const validation = validatePlanAgainstSceneTemplate(phases, options.sceneType, waivers);
+      const { warnings: planWarnings, missingAspectIds } = validation;
+
+      // Track only waivers whose reason met the minimum threshold; the rest
+      // are reported back so the agent knows they didn't count.
+      const acceptedWaivers = (waivers ?? []).filter(
+        w => typeof w.reason === 'string' && w.reason.trim().length >= MIN_WAIVER_REASON_CHARS,
+      );
+      const tooShortWaivers = (waivers ?? []).filter(
+        w => !acceptedWaivers.some(a => a.aspectId === w.aspectId),
+      );
+
+      planSubmitAttempts++;
+
+      // Phase 2.3: 真硬拦截 — keep rejecting until plan covers all aspects
+      // or supplies a substantial waiver. After MAX_PLAN_ATTEMPTS the gate
+      // gives up and force-accepts, but missing aspects are persisted to
+      // `unresolvedAspects` so `verifyPlanAdherence` still flags the gap.
+      const MAX_PLAN_ATTEMPTS = 5;
+      if (planWarnings.length > 0 && planSubmitAttempts < MAX_PLAN_ATTEMPTS) {
+        console.log(`[MCP] Plan rejected (attempt ${planSubmitAttempts}/${MAX_PLAN_ATTEMPTS}): missing ${missingAspectIds.length} aspects for ${options.sceneType ?? 'unknown scene'}`);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: false,
+              error: `计划缺少 ${options.sceneType ?? '当前'} 场景的必要分析阶段`,
+              missingAspectIds,
+              missingAspectSuggestions: planWarnings,
+              attempt: planSubmitAttempts,
+              maxAttempts: MAX_PLAN_ATTEMPTS,
+              tooShortWaivers: tooShortWaivers.length > 0 ? tooShortWaivers : undefined,
+              hint: `修复 plan 添加缺失阶段并重新调用 submit_plan，或在 waivers 中给出 ≥${MIN_WAIVER_REASON_CHARS} 字符的理由说明为什么无法覆盖。`,
+            }),
+          }],
+          isError: true,
+        };
+      }
+
+      const forcedAccept = planWarnings.length > 0; // hit the attempt cap
       const plan: AnalysisPlanV3 = {
         phases: phases.map(p => ({
           ...p,
@@ -1190,33 +1235,14 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
         successCriteria,
         submittedAt: Date.now(),
         toolCallLog: [],
+        ...(acceptedWaivers.length > 0 ? { waivers: acceptedWaivers } : {}),
+        ...(forcedAccept ? { unresolvedAspects: missingAspectIds } : {}),
       };
-
-      // P1-G11: Validate plan against scene template (shared with revise_plan)
-      const { warnings: planWarnings } = validatePlanAgainstSceneTemplate(phases, options.sceneType);
-
-      planSubmitAttempts++;
-
-      // Hard-gate: first attempt with missing mandatory aspects → reject (don't write plan).
-      // Second attempt → accept regardless (prevents infinite rejection loop).
-      if (planWarnings.length > 0 && planSubmitAttempts === 1) {
-        console.log(`[MCP] Plan rejected (attempt ${planSubmitAttempts}): missing ${planWarnings.length} aspects for ${options.sceneType}`);
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({
-              success: false,
-              error: `计划缺少 ${options.sceneType} 场景的必要分析阶段`,
-              missingAspects: planWarnings,
-              hint: '请补充缺失的分析阶段后重新调用 submit_plan。',
-            }),
-          }],
-          isError: true,
-        };
-      }
-
-      // Accept plan (first attempt with no warnings, or second+ attempt)
       analysisPlanRef.current = plan;
+
+      if (forcedAccept) {
+        console.warn(`[MCP] Plan force-accepted at attempt ${planSubmitAttempts} with ${missingAspectIds.length} unresolved aspects: ${missingAspectIds.join(', ')}`);
+      }
 
       emitUpdate?.({
         type: 'plan_submitted',
@@ -1227,11 +1253,17 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
         timestamp: Date.now(),
       });
 
-      // Compact return: only include scene warnings when present
       const response: Record<string, any> = { success: true };
-      if (planWarnings.length > 0) {
-        response.sceneWarnings = planWarnings;
-        response.hint = `检测到 ${options.sceneType} 场景，建议补充以下分析阶段。可使用 revise_plan 调整计划。`;
+      if (acceptedWaivers.length > 0) {
+        response.acceptedWaivers = acceptedWaivers.map(w => w.aspectId);
+      }
+      if (tooShortWaivers.length > 0) {
+        response.tooShortWaivers = tooShortWaivers;
+        response.waiverHint = `已忽略 ${tooShortWaivers.length} 条理由不足 ${MIN_WAIVER_REASON_CHARS} 字符的 waiver。`;
+      }
+      if (forcedAccept) {
+        response.unresolvedAspects = missingAspectIds;
+        response.warning = `已强制接受 plan（达到第 ${MAX_PLAN_ATTEMPTS} 次尝试上限），但未覆盖的 aspect 会在最终 verifier 中报错。`;
       }
       return {
         content: [{

@@ -239,6 +239,17 @@ export interface PlanPhase {
   summary?: string;
 }
 
+/**
+ * Agent-declared waiver for a scene-template mandatory aspect. The agent
+ * uses this to opt out of an aspect (e.g. "trace lacks input timeline so
+ * input event detection is impossible") with an explicit justification.
+ * The hard-gate accepts the plan only when `reason` is substantial.
+ */
+export interface PlanAspectWaiver {
+  aspectId: string;
+  reason: string;
+}
+
 /** Structured analysis plan submitted by Claude before starting analysis. */
 export interface AnalysisPlanV3 {
   phases: PlanPhase[];
@@ -248,6 +259,15 @@ export interface AnalysisPlanV3 {
   toolCallLog: ToolCallRecord[];
   /** History of plan revisions (P1-3: Dynamic replan) */
   revisionHistory?: PlanRevision[];
+  /** Agent-declared waivers for mandatory plan-template aspects. */
+  waivers?: PlanAspectWaiver[];
+  /**
+   * Mandatory aspects the agent failed to cover *and* did not waive after
+   * the hard-gate gave up enforcing (max attempts reached). Surfaced by
+   * `verifyPlanAdherence` as an error so the final verifier still flags
+   * the gap rather than letting it disappear silently.
+   */
+  unresolvedAspects?: string[];
 }
 
 /** Record of a plan revision for audit trail. */
