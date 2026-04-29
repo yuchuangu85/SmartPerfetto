@@ -172,9 +172,16 @@ CLAUDE_MODEL=claude-sonnet-4-6            # Optional, default (or provider model
 ## Quick Start
 
 ```bash
-./scripts/start-dev.sh  # Auto-builds trace_processor_shell
+./scripts/start-dev.sh                       # Default: download prebuilt trace_processor_shell (~5s)
+./scripts/start-dev.sh --build-from-source   # Force source build (use after modifying perfetto C++)
 # Backend @ :3000, Frontend @ :10000
 ```
+
+`trace_processor_shell` is acquired by `scripts/start-dev.sh` in this order: cached binary at
+`perfetto/out/ui/trace_processor_shell` → version-pinned LUCI prebuilt (SHA256-verified) → source
+build fallback. Pin source of truth: `scripts/trace-processor-pin.env` (shared with `Dockerfile`
+and the CI workflow). When upgrading the perfetto submodule (e.g. v54 → v55), update
+`PERFETTO_VERSION` and recompute the 4 per-platform SHA256s in that file (instructions inline).
 
 ## Common Issues
 

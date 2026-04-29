@@ -30,6 +30,11 @@ RUN tools/node ui/build.js
 # ============================
 # Stage 3: Download trace_processor_shell
 # ============================
+# Pinned to PERFETTO_VERSION + per-platform SHA256 from
+# scripts/trace-processor-pin.env (single source of truth across
+# start-dev.sh, this Dockerfile, and the CI workflow). LUCI artifacts URL
+# is version-locked; do NOT switch back to get.perfetto.dev/trace_processor
+# (latest, unpinned — drifts from the perfetto submodule's SQL stdlib).
 FROM debian:bookworm-slim AS tp-downloader
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -37,17 +42,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Download pre-built trace_processor for the target platform
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-      TP_URL="https://get.perfetto.dev/trace_processor"; \
-    elif [ "$ARCH" = "aarch64" ]; then \
-      TP_URL="https://get.perfetto.dev/trace_processor"; \
-    else \
-      echo "Unsupported architecture: $ARCH" && exit 1; \
-    fi && \
-    curl -Lo /tmp/trace_processor_shell "$TP_URL" && \
-    chmod +x /tmp/trace_processor_shell
+COPY scripts/trace-processor-pin.env /tmp/pin.env
+
+RUN . /tmp/pin.env && \
+    ARCH=$(uname -m) && \
+    case "$ARCH" in \
+      x86_64)  PLAT=linux-amd64; SHA="$PERFETTO_SHELL_SHA256_LINUX_AMD64" ;; \
+      aarch64) PLAT=linux-arm64; SHA="$PERFETTO_SHELL_SHA256_LINUX_ARM64" ;; \
+      *) echo "Unsupported architecture: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fL --max-time 120 -o /tmp/trace_processor_shell \
+      "${PERFETTO_LUCI_URL_BASE}/${PERFETTO_VERSION}/${PLAT}/trace_processor_shell" && \
+    echo "${SHA}  /tmp/trace_processor_shell" | sha256sum -c - && \
+    chmod +x /tmp/trace_processor_shell && \
+    /tmp/trace_processor_shell --version | head -n 1
 
 # ============================
 # Stage 4: Runtime

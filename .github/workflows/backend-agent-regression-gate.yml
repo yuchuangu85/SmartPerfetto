@@ -18,12 +18,11 @@ on:
 permissions:
   contents: read
 
-# Pin to the Perfetto upstream release matching the submodule version.
-# Update both fields together when perfetto/ submodule is upgraded.
-# sha256 is computed against the linux-amd64 trace_processor_shell binary.
-env:
-  PERFETTO_VERSION: "v54.0"
-  PERFETTO_SHELL_SHA256: "a7aa1f738bbe2926a70f0829d00837f5720be8cafe26de78f962094fa24a3da4"
+# Perfetto version + per-platform SHA256 are pinned in
+# scripts/trace-processor-pin.env (single source of truth shared with
+# scripts/start-dev.sh and Dockerfile). The "Load trace_processor pin"
+# step below loads that file into $GITHUB_ENV so subsequent steps can
+# reference $PERFETTO_VERSION / $PERFETTO_LUCI_URL_BASE / $PERFETTO_SHELL_SHA256_LINUX_AMD64.
 
 jobs:
   gate:
@@ -83,13 +82,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Load trace_processor pin
+        working-directory: .
+        # Filter to KEY=VALUE lines only — $GITHUB_ENV rejects shell-style
+        # comments (#) and tolerates blank lines but treating both uniformly
+        # is safer than relying on undefined parser behavior.
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' scripts/trace-processor-pin.env >> "$GITHUB_ENV"
+
       - name: Download + verify trace_processor_shell
         working-directory: .
         run: |
           set -euo pipefail
           curl -fL -o trace_processor_shell \
-            "https://commondatastorage.googleapis.com/perfetto-luci-artifacts/${PERFETTO_VERSION}/linux-amd64/trace_processor_shell"
-          echo "${PERFETTO_SHELL_SHA256}  trace_processor_shell" | sha256sum -c -
+            "${PERFETTO_LUCI_URL_BASE}/${PERFETTO_VERSION}/linux-amd64/trace_processor_shell"
+          echo "${PERFETTO_SHELL_SHA256_LINUX_AMD64}  trace_processor_shell" | sha256sum -c -
           chmod +x trace_processor_shell
           echo "trace_processor_shell downloaded + verified ($(du -h trace_processor_shell | cut -f1))"
           ./trace_processor_shell --version

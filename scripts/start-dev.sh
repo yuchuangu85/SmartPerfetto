@@ -18,6 +18,8 @@ LOGS_DIR="$PROJECT_ROOT/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SKIP_BUILD=false
 CLEAN_LOGS=false
+BUILD_FROM_SOURCE=false
+PREBUILT_ONLY=false
 BACKEND_PID=""
 FRONTEND_PID=""
 
@@ -116,13 +118,22 @@ while [ $# -gt 0 ]; do
     --clean|-c)
       CLEAN_LOGS=true
       ;;
+    --build-from-source|--no-prebuilt)
+      BUILD_FROM_SOURCE=true
+      ;;
+    --prebuilt-only)
+      PREBUILT_ONLY=true
+      ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --quick, -q    Skip build, just start services"
-      echo "  --clean, -c    Clean old logs (keep last 10) before starting"
-      echo "  --help, -h     Show this help message"
+      echo "  --quick, -q             Skip build, just start services"
+      echo "  --clean, -c             Clean old logs (keep last 10) before starting"
+      echo "  --build-from-source     Skip prebuilt trace_processor_shell, build from source"
+      echo "                          (alias: --no-prebuilt; env: TRACE_PROCESSOR_PREBUILT=0)"
+      echo "  --prebuilt-only         Refuse to fall back to source build if prebuilt fails"
+      echo "  --help, -h              Show this help message"
       exit 0
       ;;
     *)
@@ -133,6 +144,11 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if [ "$BUILD_FROM_SOURCE" = true ] && [ "$PREBUILT_ONLY" = true ]; then
+  echo "ERROR: --build-from-source and --prebuilt-only are mutually exclusive."
+  exit 1
+fi
 
 # Create logs directory
 mkdir -p "$LOGS_DIR"
@@ -405,16 +421,160 @@ ensure_cpp_toolchain() (
     echo "  - Disk full (toolchain + sysroot needs ~1 GB free)"
     echo "  - python3 missing"
     echo ""
-    echo "If you don't need to rebuild Perfetto C++ code, you can drop in a"
-    echo "prebuilt trace_processor instead:"
-    echo "  curl -LOk https://get.perfetto.dev/trace_processor"
-    echo "  chmod +x trace_processor"
-    echo "  mkdir -p $PERFETTO_DIR/out/ui"
-    echo "  mv trace_processor $PERFETTO_DIR/out/ui/trace_processor_shell"
+    echo "Tip: re-run without --build-from-source to use the version-pinned"
+    echo "     LUCI prebuilt (scripts/trace-processor-pin.env)."
     echo "=============================================="
     return 1
   fi
 )
+
+# Try to download a prebuilt trace_processor_shell from Perfetto's LUCI artifacts
+# (version-pinned via scripts/trace-processor-pin.env, SHA256-verified).
+# Returns 0 on success, non-zero on any failure (caller falls back to source build).
+download_trace_processor_prebuilt() {
+  local dest="$1"
+  local os arch platform expected_sha url tmp actual_sha rc
+
+  case "$(uname -s)" in
+    Darwin) os=mac ;;
+    Linux)  os=linux ;;
+    *) echo "Prebuilt: unsupported OS '$(uname -s)'"; return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64)  arch=amd64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    *) echo "Prebuilt: unsupported arch '$(uname -m)'"; return 1 ;;
+  esac
+  platform="${os}-${arch}"
+
+  local pin_file="$PROJECT_ROOT/scripts/trace-processor-pin.env"
+  if [ ! -f "$pin_file" ]; then
+    echo "Prebuilt: pin file not found at $pin_file"
+    return 1
+  fi
+  # shellcheck disable=SC1090
+  . "$pin_file"
+
+  case "$platform" in
+    linux-amd64) expected_sha="${PERFETTO_SHELL_SHA256_LINUX_AMD64:-}" ;;
+    linux-arm64) expected_sha="${PERFETTO_SHELL_SHA256_LINUX_ARM64:-}" ;;
+    mac-amd64)   expected_sha="${PERFETTO_SHELL_SHA256_MAC_AMD64:-}" ;;
+    mac-arm64)   expected_sha="${PERFETTO_SHELL_SHA256_MAC_ARM64:-}" ;;
+  esac
+  if [ -z "$expected_sha" ]; then
+    echo "Prebuilt: pin file missing SHA256 for $platform"
+    return 1
+  fi
+
+  url="${PERFETTO_LUCI_URL_BASE}/${PERFETTO_VERSION}/${platform}/trace_processor_shell"
+  tmp=$(mktemp -t trace_processor_shell.XXXXXX) || return 1
+
+  echo "Prebuilt: downloading ${platform} ${PERFETTO_VERSION}..."
+  rc=0
+  curl -fL --max-time 60 -o "$tmp" "$url" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "Prebuilt: download failed (curl exit $rc)."
+    rm -f "$tmp"
+    return 1
+  fi
+
+  actual_sha=$(hash_sha256 "$tmp")
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    echo "Prebuilt: SHA256 MISMATCH (security warning)"
+    echo "  expected: $expected_sha"
+    echo "  actual:   $actual_sha"
+    rm -f "$tmp"
+    return 1
+  fi
+
+  chmod +x "$tmp"
+  if ! "$tmp" --version >/dev/null 2>&1; then
+    echo "Prebuilt: --version smoke test failed (binary may be incompatible with this host)"
+    rm -f "$tmp"
+    return 1
+  fi
+
+  if ! mkdir -p "$(dirname "$dest")"; then
+    echo "Prebuilt: mkdir -p $(dirname "$dest") failed."
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv "$tmp" "$dest"; then
+    echo "Prebuilt: mv to $dest failed (permissions / disk full?)"
+    rm -f "$tmp"
+    return 1
+  fi
+  echo "Prebuilt: ✅ verified ${platform} ${PERFETTO_VERSION} → $dest"
+  return 0
+}
+
+# Build trace_processor_shell from source. Wrapper around the existing
+# install-build-deps + tools/gn gen + tools/ninja flow.
+build_trace_processor_from_source() {
+  if ! ensure_cpp_toolchain; then
+    return 1
+  fi
+
+  cd "$PERFETTO_DIR"
+
+  if [ ! -f "out/ui/build.ninja" ]; then
+    echo "Generating build configuration..."
+    tools/gn gen out/ui --args='is_debug=false'
+  fi
+
+  echo "Compiling trace_processor_shell from source (this may take a few minutes)..."
+  if ! tools/ninja -C out/ui trace_processor_shell; then
+    echo "=============================================="
+    echo "ERROR: Failed to build trace_processor_shell from source"
+    echo ""
+    echo "You can try building manually:"
+    echo "  cd $PERFETTO_DIR"
+    echo "  tools/ninja -C out/ui trace_processor_shell"
+    echo "=============================================="
+    cd "$PROJECT_ROOT"
+    return 1
+  fi
+
+  echo "trace_processor_shell: built from source"
+  cd "$PROJECT_ROOT"
+  return 0
+}
+
+# Acquire trace_processor_shell at $dest. Order:
+#   1. If $dest already exists → reuse (pinned-local-artifact).
+#   2. Try prebuilt download (unless opted out).
+#   3. Fall back to source build (unless --prebuilt-only).
+fetch_or_build_trace_processor() {
+  local dest="$1"
+
+  if [ -f "$dest" ]; then
+    echo "trace_processor_shell found: $dest"
+    return 0
+  fi
+
+  echo "=============================================="
+  echo "trace_processor_shell not found. Acquiring..."
+  echo "=============================================="
+
+  local skip_prebuilt=false
+  if [ "$BUILD_FROM_SOURCE" = true ] || [ "${TRACE_PROCESSOR_PREBUILT:-1}" = "0" ]; then
+    skip_prebuilt=true
+    echo "Prebuilt: skipped (--build-from-source or TRACE_PROCESSOR_PREBUILT=0)"
+  fi
+
+  if [ "$skip_prebuilt" = false ]; then
+    if download_trace_processor_prebuilt "$dest"; then
+      return 0
+    fi
+    if [ "$PREBUILT_ONLY" = true ]; then
+      echo "ERROR: --prebuilt-only set; refusing to fall back to source build."
+      return 1
+    fi
+    echo "Falling back to source build..."
+  fi
+
+  build_trace_processor_from_source
+}
 
 # Install UI node_modules using Perfetto's bundled pnpm
 install_ui_deps() {
@@ -469,52 +629,16 @@ echo "Cleaning up orphan trace_processor_shell processes..."
 pkill -f "trace_processor_shell.*httpd" 2>/dev/null || true
 sleep 1
 
-# Check and build trace_processor_shell if needed.
-# This binary is treated as a pinned local build artifact: if it exists, reuse it
-# across dev-server starts. Rebuild it manually after Perfetto major upgrades
-# (for example v54 -> v55) or delete it to let this script build from source.
+# Acquire trace_processor_shell. Default = download version-pinned prebuilt
+# from Perfetto's LUCI artifacts (SHA256-verified, ~5s); fall back to source
+# build if download / verification / smoke test fails. Pin source of truth:
+# scripts/trace-processor-pin.env. Use --build-from-source or
+# TRACE_PROCESSOR_PREBUILT=0 to skip prebuilt; --prebuilt-only to disable
+# the fallback. The binary is then treated as a pinned local artifact —
+# delete it to re-acquire after a perfetto submodule upgrade.
 TRACE_PROCESSOR="$PERFETTO_DIR/out/ui/trace_processor_shell"
-if [ ! -f "$TRACE_PROCESSOR" ]; then
-  echo "=============================================="
-  echo "trace_processor_shell not found. Building..."
-  echo "=============================================="
-
-  # Ensure gn/ninja/clang are present BEFORE invoking tools/gn — otherwise
-  # tools/gn (a Python wrapper) raises FileNotFoundError when execl can't find
-  # the prebuilt binary at third_party/gn/gn or buildtools/<os>/gn.
-  if ! ensure_cpp_toolchain; then
-    exit 1
-  fi
-
-  cd "$PERFETTO_DIR"
-
-  # Generate build config if needed
-  if [ ! -f "out/ui/build.ninja" ]; then
-    echo "Generating build configuration..."
-    tools/gn gen out/ui --args='is_debug=false'
-  fi
-
-  # Build trace_processor_shell
-  echo "Compiling trace_processor_shell (this may take a few minutes)..."
-  if ! tools/ninja -C out/ui trace_processor_shell; then
-    echo "=============================================="
-    echo "ERROR: Failed to build trace_processor_shell"
-    echo ""
-    echo "You can try building manually:"
-    echo "  cd $PERFETTO_DIR"
-    echo "  tools/ninja -C out/ui trace_processor_shell"
-    echo ""
-    echo "Or download a pre-built binary:"
-    echo "  curl -LOk https://get.perfetto.dev/trace_processor"
-    echo "  chmod +x trace_processor"
-    echo "  mv trace_processor $TRACE_PROCESSOR"
-    echo "=============================================="
-    exit 1
-  fi
-
-  echo "trace_processor_shell built successfully!"
-else
-  echo "trace_processor_shell found: $TRACE_PROCESSOR"
+if ! fetch_or_build_trace_processor "$TRACE_PROCESSOR"; then
+  exit 1
 fi
 
 "$TRACE_PROCESSOR" --version | head -n 1 || true
