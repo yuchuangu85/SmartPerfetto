@@ -23,7 +23,7 @@ fi
 # Start backend
 echo "Starting backend on port ${PORT:-3000}..."
 cd /app/backend
-node dist/server.js &
+node dist/index.js &
 BACKEND_PID=$!
 
 # Wait for backend health
@@ -38,8 +38,8 @@ done
 
 # Start frontend (Perfetto UI dev server)
 echo "Starting frontend on port 10000..."
-cd /app/perfetto/ui
-./run-dev-server &
+cd /app/perfetto/out/ui/ui
+npx --yes http-server -p 10000 -c-1 &
 FRONTEND_PID=$!
 
 echo ""
