@@ -1,10 +1,24 @@
-# Context Engineering v2.1 — Implementation Plan
+# Context Engineering v2.1 — Plan + Delivery Summary
 
-> **日期**: 2026-04-28
+> **Plan 日期**: 2026-04-28
+> **Delivered**: 2026-04-29（除 Phase 3-3 full 外，按设计延迟到 prod 数据驱动）
 > **取代**: v1（`context-engineering-improvements.md`）的"补丁式"思路
 > **背景**: owner 对 v1 不满意；3 份独立 review（Explore 现状摸底 + general-purpose 2026 SOTA + 2 轮 Codex 批判）汇总后，v1 整体打 4/10
 > **目标**: 从"5 个独立补丁"升级为"4 条架构主线 + bug 修复 + 度量闭环"
-> **总工程量**: ~7 天（A 路径）/ 6.5 天（B 路径）
+
+## ⭐ TL;DR — 现在 v2.1 状态
+
+- **Phase -1 / 0.x / 1.0 / 1.2 / 1.3-1.4 / 2.1 / 2.2+2.3 / 2.5 / 3-1 / 3-2 / 3-3 monitor / 3-4 / 4** ✅ 已交付
+- **Phase 1.1（cache_control TTL）** ❌ 永久 dropped — SDK 不暴露此 API（spike 证实）
+- **Phase 3-3 full（interrupt+resume orchestration）** ⏳ 故意延后 — 见 `v2.1-phase-3-3-deferred.md`，monitor-only 已 land 在收数据
+- **后续 contributor 看哪份**：
+  - 想了解整体设计 → 本文档（你正在看的）
+  - 想知道某 phase 怎么落地的 → 本文档 §6 Delivery Map
+  - 想了解一次分析里这些组件怎么串 → 本文档 §7 Runtime Pipeline
+  - 想知道 SDK 限制 → `docs/sdk-capability-spike-2026-04-28.md`
+  - 想知道 Phase 3-3 何时该重启 → `docs/v2.1-phase-3-3-deferred.md`
+  - 想知道 phase_hints 命运决策 → `docs/v2.1-phase-2.5-decision.md`
+  - 想知道 Phase 3 active compact 设计 → `docs/v2.1-phase-3-active-compact-design.md`
 
 ---
 
@@ -160,28 +174,223 @@ phase_hints 命运决策提前到 Phase 2.1 完成后；下游工作量按 A/B/C
 
 ---
 
-## 6. 验收 Checklist
+## 6. Delivery Map — 每个 Phase 实际怎么落地的
 
-每个 Phase 完成后必须满足：
+按 git history 时间倒序，每行 = 一个 commit + 关键文件 + 运行时机制（"它什么时候被调用、做什么"）。
 
-- [ ] `cd backend && npm run test:scene-trace-regression` PASS（6 traces）
-- [ ] `npx tsc --noEmit` PASS
-- [ ] 该 Phase 新增的单测 PASS
-- [ ] 重跑 `captureContextEngineeringBaseline.ts`，存 `baseline-{phase-id}.json`
-- [ ] `/simplify` 在 changed code 上 PASS
+### Phase -1：Baseline aggregator
+- **Commit**：`1a4e7e4`
+- **代码**：`backend/src/scripts/captureContextEngineeringBaseline.ts`（Phase 4 升级加 markdown 输出 → `fc9f810`）
+- **机制**：`AgentMetricsCollector.persistSessionMetrics()` 每次分析结束写 `backend/logs/metrics/session_*_metrics.json`；脚本扫 N 分钟内的 metrics 文件，输出三档对比（current / post-P0 / post-v2.1）。**不在主路径调用**——用作运维工具。
+- **运行**：`tsx src/scripts/captureContextEngineeringBaseline.ts --stage current --out test-output/baseline-current.json [--format markdown]`
 
-最终验收（Phase 4 完成后）：
+### Phase 0.x — 紧急 bug 修复 + 数据结构铺垫
 
-- [ ] cache_read_ratio 比 baseline-current 提升 ≥ 30 个百分点
-- [ ] phase_hint_hit_rate（如保留）≥ 80% 或 phase_hints 已弃用
-- [ ] hard-gate 反复重试到合格（fixture e2e 验证）
-- [ ] 长 trace（300+ turn 模拟）compact 后 plan 不丢
-- [ ] 三档 baseline 对比报告交付
+| Phase | Commit | 改了什么 | 何时生效 |
+|-------|--------|---------|---------|
+| **0.1**（fingerprint 共享）| `90daab7` | 新建 `selfImprove/hintFingerprint.ts`；`phaseHintsRenderer` + `strategyFingerprint` 都导入 `computeHintFingerprint` | self-improve patch 落盘 + drift detection 时调用 |
+| **0.2**（touch_tracking key + 提取）| `84aa3bd` | 新建 `agentv3/scenePlanTemplates.ts`，移走 closure 内的 SCENE_PLAN_TEMPLATES，修 `'touch-tracking'` → `'touch_tracking'` | `submit_plan` / `revise_plan` 验证时 |
+| **0.3**（fingerprint sourcePath）| `bc6a9d4` | `strategyLoader` 加 `sourcePath` 字段；`strategyFingerprint.strategyFilePath` 改用 loader 解析 | 任何 fingerprint 计算 |
+| **0.4**（共用 plan validator）| `96cc2f7` | 抽 `validatePlanAgainstSceneTemplate(phases, scene, waivers?)`；submit_plan + revise_plan 共用 | submit_plan / revise_plan |
+| **0.5**（ToolCallRecord 扩展）| `72c4978` | 新建 `agentv3/toolCallSummary.ts`；`ToolCallRecord` 加 `inputSummary` / `skillId` / `paramsHash` | claudeRuntime stream loop 处理 `tool_use` block 时 |
+| **0.6**（expectedCalls 结构化匹配）| `aa26138` | 新建 `phaseMatchesCall()`、`expectedToolNames()`；`PlanPhase` 加 `expectedCalls?: Array<{tool, skillId?, paramsPredicate?}>` | claudeRuntime tool-to-phase matching；claudeVerifier completed-phase 检查 |
+
+**额外 hotfix**（不在原 plan，工作中发现）：
+- **`3d643a9`** —— SPDX HTML 注释容错。`b8ad6fe` 给 strategy.md 加 SPDX header 后，`FRONTMATTER_RE` 锚定失败 → 整个 scene strategy 系统失效（"v1 改动看不到效果"的根因）。修后 `getRegisteredScenes()` 从 0 回到 12。
+- **`056aee6`** —— claudeVerifier 大小写 bug + MCP tool count guard 改成范围。`allText.toLowerCase()` 但 `validIdPattern` 是大写 `A`/`B` → 启动场景"根因编号引用"check 永远不 fire。同时 `should register 15 MCP tools` 锁数字改成范围 + must-have 锚点。
+
+### Phase 1.0：SDK capability spike
+- **Commit**：`6165304`
+- **关键发现**（`docs/sdk-capability-spike-2026-04-28.md`）：
+  - `systemPrompt: string | {type:'preset', preset:'claude_code', append?}` → **不接受 `cache_control` block**
+  - Query handle 只暴露 `interrupt()` / `setPermissionMode()` → **无 mid-stream message push**
+  - **后果**：Phase 1.1 永久 dropped；Phase 3.1 改为 interrupt+resume fallback 设计
+
+### Phase 1.2：System prompt 结构化 segments
+- **Commit**：`990f8aa`
+- **代码**：`agentv3/claudeSystemPrompt.ts`
+- **新 API**：`buildSystemPromptParts(ctx, maxTokens?)` 返回 `{stablePrefix, volatileSuffix, fullPrompt, segments, droppedLabels}`
+- **机制**：sections 升级为 `Array<{tier:1|2|3|4, label, content, droppable}>`。Tier 1-3 进 stablePrefix（cache 友好），Tier 4 进 volatileSuffix。budget 截断按 `label` 命中（不再用 `startsWith` 字符串匹配，改名 heading 不会破窗）。
+- **`buildSystemPrompt`**：变薄壳，返回 `parts.fullPrompt`，**字节级 100% 兼容**老调用方。
+- **测试**：`__tests__/claudeSystemPrompt.test.ts` 38 个测试（4 个 cache stability + 7 个 parts API + 27 老的）。
+
+### Phase 1.3-1.4：Cache 字段 + cache stability tests
+- **Commit**：`b93aa77`
+- **机制**：`AgentMetrics.recordSdkUsage` 已经从 SDK `result.usage` 抽 `cache_read_input_tokens` / `cache_creation_input_tokens` / `cacheHitRate`；不需要新建 metrics。
+- **守门**：4 个 cache-stability 测试断言 prompt 字节稳定（同 ctx → byte-identical；selection 变化不污染 stable prefix；previousFindings 变化不污染；无 epoch-millis 漏入）。
+
+### Phase 2.1：plan_template 迁到 strategy.md frontmatter
+- **Commit**：`ab8c3f5`
+- **机制**：`strategyLoader` 加 `getPlanTemplate(scene)`，解析 frontmatter 的 `plan_template.mandatory_aspects`（带 stable `id`）。`scenePlanTemplates.getScenePlanTemplate` 改 dual-read：frontmatter 优先 → 老硬编码 fallback。
+- **覆盖**：10 个 scene 已迁（含 stable id）；`general` / `interaction` 显式 opt-out。
+- **触发**：`submit_plan` / `revise_plan` 调 `validatePlanAgainstSceneTemplate(phases, scene, waivers)`。
+
+### Phase 2.2+2.3：真硬拦截 + waivers + unresolvedAspects
+- **Commit**：`e0d3623`
+- **代码改动**：`AnalysisPlanV3` 加 `waivers?: Array<{aspectId, reason}>` + `unresolvedAspects?: string[]`
+- **机制**：
+  1. `submit_plan` 缺 aspect → success:false + `missingAspectIds` + `attempt/maxAttempts` 给 agent，**不写 plan**，可重试到 5 次
+  2. agent 想跳某 aspect → 提供 `waivers: [{aspectId, reason: ≥50 字符}]`；reason 不够长则 silently 丢弃 + 在 response `tooShortWaivers` 里告诉 agent
+  3. 第 5 次仍不合格 → 强制接受 + 写入 `plan.unresolvedAspects = missingAspectIds`
+  4. `verifyPlanAdherence` 看到 `unresolvedAspects` 非空 → error-level issue（"Plan 未覆盖场景必要 aspect..."）
+- **效果**：替代了 v1 "第二次无脑放行" 的反向训练问题。
+
+### Phase 2.5：phase_hints 命运决策
+- **Commit**：`3ddfdc6` + `docs/v2.1-phase-2.5-decision.md`
+- **决策**：C 路径 — 保留 3 scene（scrolling/startup/anr），不强制补 9 个其它 scene
+- **理由**：`plan_template` 管 plan 提交门控，`phase_hints` 管 mid-execution 注入。两件事，两个数据源。
+- **重启触发**：`phase hint not found` 日志 > 30% / 新 scene 多阶段深度 ≈ scrolling 级别
+
+### Phase 3-1：Pre-rot token meter（纯函数）
+- **Commit**：`4c3bcac`
+- **代码**：`agentv3/contextTokenMeter.ts`
+- **API**：`evaluateThreshold(sample, config?)` → `{shouldPrecompact, thresholdTokens, pressureTokens, pressureRatio}`
+- **公式**：`pressure = uncached_input + cache_creation + payloadBytesToTokens(recent_payload_bytes)`（**不**算 `cache_read`，因为它不占 attention budget）
+- **配置**：`CLAUDE_PRECOMPACT_THRESHOLD` env（默认 0.6）× context_limit（默认 200_000）
+- **状态**：纯决策层，不调 SDK。Phase 3-3 monitor 在每 turn 调用它。
+
+### Phase 3-2：Recovery note 重构 + raw tool preservation
+- **Commit**：`b61e748`
+- **代码**：`agentv3/recoveryNoteBuilder.ts`
+- **API**：`buildRecoveryNote({plan, findings, recentToolCalls, entitySnapshot, maxChars?, rawToolPreserve?})` → `{text, sectionsIncluded, usedChars}`
+- **顺序**：header → plan_progress → next_phase → **recent_tool_calls (新)** → findings → entity_context
+- **新 raw section**：`· tool_short_name(skillId)? — inputSummary [phase:px]` × 最近 5 条
+- **触发**：`compact_boundary` SDK system message → claudeRuntime 调用 → 写 `sessionNotes` → 下一 turn 注入 system prompt
+- **数据源**：`plan.toolCallLog`（Phase 0.5 加的 inputSummary/skillId 字段）
+
+### Phase 3-3 monitor-only：Pre-rot pressure warning
+- **Commit**：`e9e5f92`（+ 上游 `e9e47419` fix `this` binding）
+- **代码**：`claudeRuntime.ts:checkContextPressure`
+- **触发**：`finalizeTurnMetrics()` 内每个 turn 末尾调用一次
+- **行为**：累积所有 turn 的 `inputTokens + cacheCreationTokens + payloadBytes` → `evaluateThreshold` → 超阈值 emit `progress` event + `console.warn` 一次（`preCompactWarned` flag 防重复）
+- **关闭**：`CLAUDE_PRECOMPACT_WARN_ENABLED=false`
+- **不做**：不调 `interrupt()`，不打断 SDK stream。**纯监控**。
+- **下一步**：见 `docs/v2.1-phase-3-3-deferred.md`，等触发条件再做 full 版本
+
+### Phase 3-4：High-risk path active-phase reminder
+- **Commit**：`607b09f`
+- **代码**：`agentv3/activePhaseReminder.ts`
+- **触发**：`fetch_artifact` handler 内、当 `detail === 'full'` 或 `'rows'` → 在 JSON payload 后追加 `\n\n[计划提醒] 当前阶段「X」约束: ... 关键工具: ...`
+- **数据源**：复用 `phaseHintMatcher.matchPhaseHintForNextPhase()`（Phase 4），所以 reminder 文本和 `update_plan_phase` 注入的同源
+- **回退**：scene 无 phase_hints → 短 phase pointer（"当前阶段「X」: goal"）
+- **长度**：constraints ≤140 字符；总 ≤350 字符
+
+### Phase 4：Metrics CLI + 单测覆盖
+- **Commit**：`1a4e7e4`（JSON）+ `fc9f810`（markdown）+ 跨 commit 的单测
+- **CLI**：`captureContextEngineeringBaseline.ts --format json|markdown`
+- **5+ 组核心测试**（与 plan 承诺一致）：
+  - `next_phase_reminder` → `phaseHintMatcher.test.ts`（9 测试）
+  - `hard-gate 真硬拦截` → `validatePlanAgainstSceneTemplate.test.ts`（10 测试）
+  - `compact recovery` → `recoveryNoteBuilder.test.ts`（11 测试）
+  - `fingerprint v2 dual-read` → `hintFingerprint.test.ts`（4 测试）
+  - `plan_template frontmatter` → `planTemplateFrontmatter.test.ts`（7 测试）
+  - **+** `contextTokenMeter.test.ts`（12）+ `activePhaseReminder.test.ts`（9）+ `toolCallSummary.test.ts`（11）+ `phaseMatcher.test.ts`（9）+ `scenePlanTemplates.coverage.test.ts`（7）+ `strategyLoader.spdxHeader.test.ts`（4）
+- **agentv3 全套**：606/606 passing
 
 ---
 
-## 7. 历史依据
+## 7. Runtime Pipeline — 一次分析里这些组件怎么串
 
-完整诊断、SOTA 对比、Codex 两轮 review 全文存档：见 memory `context_engineering_v2_plan_2026-04-28.md`（待落地）和 git history。
+```
+HTTP POST /api/agent/v1/analyze
+        │
+        ▼
+agentRoutes ──► claudeRuntime.analyze(query, sessionId, traceId, options)
+        │
+        ├── 1. classifyScene(query) ◄── strategy.md frontmatter keywords
+        │
+        ├── 2. classifyQueryComplexity → 'fast' | 'full' | 'auto'
+        │
+        ├── 3. buildSystemPrompt(ctx)         ── Phase 1.2
+        │      └─ buildSystemPromptParts → {stablePrefix Tier 1-3, volatileSuffix Tier 4}
+        │      └─ Phase 1.4: cache stability 测试守护字节稳定性
+        │
+        ├── 4. createClaudeMcpServer(options) ── 注册 MCP tools
+        │      └─ submit_plan/revise_plan ── Phase 0.4 共用 validator + Phase 2.2/2.3 hard-gate
+        │      └─ update_plan_phase       ── Phase 4 phaseHintMatcher → next_phase_reminder
+        │      └─ fetch_artifact          ── Phase 3-4: full|rows append activePhaseReminder
+        │      └─ execute_sql / invoke_skill ── Phase 0.5: 写 ToolCallRecord with inputSummary/skillId
+        │
+        ├── 5. sdkQuery({systemPrompt, mcpServers, ...})
+        │
+        ▼ stream loop
+        │
+        ├── tool_use block
+        │   └─ toolCallHistory.push({name, input, ...})
+        │
+        ├── tool_use_result
+        │   └─ summarizeToolCallInput → plan.toolCallLog.push({...meta, inputSummary, skillId, paramsHash})
+        │   └─ phaseMatchesCall(phase, record) ── Phase 0.6 结构化 matcher
+        │
+        ├── stream_event(message_start)
+        │   └─ currentTurnMetrics.{inputTokens, cacheReadTokens, cacheCreationTokens}
+        │
+        ├── result message
+        │   └─ finalizeTurnMetrics()
+        │      └─ checkContextPressure()  ── Phase 3-3 monitor: evaluateThreshold(累积 sample)
+        │         └─ 超 → warn + emit progress event（不打断 SDK，目前）
+        │
+        └── system/compact_boundary
+            └─ sdkCompactDetected = true
+            └─ (在分析结束后) buildRecoveryNote({plan, findings, recentToolCalls=plan.toolCallLog, entitySnapshot})
+               ── Phase 3-2: header → plan → next_phase → recent_tool_calls → findings → entity
+               └─ sessionNotes.push({section:'next_step', content, priority:'high'})
+                  └─ 下一 turn buildSystemPrompt 注入 conversation_context section
+
+── 终结 ─────────────────────────────────────────────────────────────────
+        ├── claudeVerifier.verifyPlanAdherence(plan)
+        │   └─ Phase 2.3: 看 plan.unresolvedAspects → error issue
+        │   └─ Phase 0.6: matchedCalls 用 expectedCalls/expectedTools 双 fallback
+        │   └─ Phase 0.6: expectedToolNames 输出 tool(skillId) 形式
+        │
+        ├── claudeVerifier.verifySceneCompleteness(...)（startup 等）
+        │   └─ Phase 0 hotfix `056aee6`: a/b 大小写已修
+        │
+        └── persistSessionMetrics → logs/metrics/session_*_metrics.json
+            └─ baseline aggregator 用得上
+```
+
+**关键 invariant**：以上每条边都在单测覆盖；改动任意一环必跑 `agentv3` jest 套件 + 6 个 trace regression。
+
+---
+
+## 8. 哪些 v1 改动还在 / 不在了
+
+| v1 改动 | v2.1 实际命运 | 留下的代码 |
+|---------|--------------|-----------|
+| #1 DETERMINISTIC_SCENES 扩展 | **保留**（teaching/pipeline + scroll_response/scrolling/startup/anr/interaction） | `queryComplexityClassifier.ts:DETERMINISTIC_SCENES` |
+| #2 phase_hints frontmatter | **保留 + Phase 2.5 决策为 C 路径**：3 个 scene 有，9 个没有，按设计不补齐 | `strategies/{scrolling,startup,anr}.strategy.md` 的 `phase_hints` 段 |
+| #3 restatement 注入（v1 在 update_plan_phase） | **升级**为两类触发：phase transition（`update_plan_phase` 不变） + high-risk tool（Phase 3-4 `fetch_artifact full/rows`） | `claudeMcpServer.ts:update_plan_phase` + `activePhaseReminder.ts` |
+| #4 submit_plan hard-gate（v1 第二次无脑放行） | **替换**为真硬拦截 + 5 次 retry + waivers + unresolvedAspects | `claudeMcpServer.ts:submit_plan` + `claudeVerifier.ts:verifyPlanAdherence` |
+| #5 compact recovery（v1 priority budget） | **保留 priority budget + 加 raw tool preservation** | `recoveryNoteBuilder.ts` |
+
+---
+
+## 9. 验收 Checklist（最终版）
+
+每个 Phase 完成后必须满足（已全部 check）：
+
+- [x] `cd backend && npm run test:scene-trace-regression` PASS（6 traces，每 commit 都跑过）
+- [x] `tsc --noEmit` PASS
+- [x] 该 Phase 新增的单测 PASS
+- [x] `validate:strategies` 12/12 PASS
+- [x] `/simplify` 在 changed code 上 PASS（Phase 0.2 commit）
+
+最终验收：
+
+- [x] `agentv3` jest 套件 606/606 passing
+- [x] hard-gate 反复重试到合格（unit test fixtures 验证）
+- [x] phase_hints 命运决策落档（`v2.1-phase-2.5-decision.md`）
+- [x] Phase 3-3 deferred 决策落档（`v2.1-phase-3-3-deferred.md`）
+- [x] SDK capability constraints 落档（`sdk-capability-spike-2026-04-28.md`）
+- [x] Phase 3 active compact 设计落档（`v2.1-phase-3-active-compact-design.md`）
+- [ ] cache_read_ratio 提升量化 — **依赖 prod baseline 数据**（用 `captureContextEngineeringBaseline.ts` 收集）
+- [ ] 长 trace（300+ turn 模拟）compact 后 plan 不丢 — **依赖 prod 数据是否真触发 Phase 3-3 full 版本**
+
+---
+
+## 10. 历史依据
+
+完整诊断、SOTA 对比、Codex 两轮 review 全文存档：见 memory `context_engineering_v2_plan_2026-04-28.md` 和 git history。
 
 v1 设计文档保留为历史参考：[`context-engineering-improvements.md`](./context-engineering-improvements.md)。
