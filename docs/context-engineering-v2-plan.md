@@ -100,7 +100,7 @@
 - **2.2** `AnalysisPlanV3` phase 加 `phase_hint_id?`, `mandatoryAspects`, `unresolvedAspects`, `waivers: Array<{aspect_id, reason}>`
 - **2.3 真硬拦截**：缺 aspect → `success:false` + missingAspects 列表，**不写入** `analysisPlanRef.current`，可无限次重试；唯一放行：`waiver.reason` 长度 ≥ 50 字符
 - **2.4** 删 LivingPlan 新 class 设想（O.1 砍）；扩 `sessionPlans` + `sessionStateSnapshot` 现有结构
-- **2.5 决策点提前**：跑 baseline-postPhase2.1 → A=补 12 scene phase_hints / B=弃用 phase_hints 只保 plan_template / C=保留 3 高风险 scene
+- **2.5 ✅ 已决策 C 路径**（见 `docs/v2.1-phase-2.5-decision.md`）：保留 3 个 scene 的 `phase_hints`（scrolling/startup/anr）+ 明确 `plan_template` vs `phase_hints` 的角色分工：前者门控 plan 提交，后者在 mid-execution（`update_plan_phase` / `fetch_artifact(full|rows)`）注入约束。9 个无 phase_hints 的 scene 不强制补，避免 plan_template 与 phase_hints 重复。
 
 ### Phase 3: SDK-aware compact + bounded recovery（拆 4 个 PR）
 
