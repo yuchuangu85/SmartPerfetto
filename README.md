@@ -46,69 +46,47 @@ The project is open source and in active development. The UI, backend runtime, a
 
 ## Quick Start
 
-### Clone with Submodules
-
-SmartPerfetto vendors the Perfetto UI fork as the `perfetto/` Git submodule.
-You do not need to clone the Perfetto repository separately, but the submodule
-must be initialized.
-
-For a new checkout:
+Prerequisites: **Node.js 18+**, `curl`, `lsof`, `pkill`, and an LLM API key.
 
 ```bash
-git clone --recurse-submodules https://github.com/Gracker/SmartPerfetto.git
+git clone https://github.com/Gracker/SmartPerfetto.git
 cd SmartPerfetto
-```
-
-If you already cloned the repository without submodules:
-
-```bash
-git submodule update --init --recursive
-```
-
-Do not use GitHub's "Download ZIP" for development or local runs. ZIP archives
-do not include the `perfetto/` submodule content.
-
-### Docker
-
-Use Docker when you want to run SmartPerfetto without setting up local build tools.
-
-```bash
 cp backend/.env.example backend/.env
-# Edit backend/.env and set ANTHROPIC_API_KEY,
-# or configure ANTHROPIC_BASE_URL for an API proxy.
-
-docker compose up --build
-```
-
-Open [http://localhost:10000](http://localhost:10000), load a `.pftrace` or `.perfetto-trace` file, and open the AI Assistant panel.
-
-### Local Development
-
-Use local development when you want hot reload, debugging, or code contributions.
-
-Prerequisites:
-
-- Node.js 18+
-- Python 3
-- Git with submodule support
-- Shell tools used by the dev scripts: `curl`, `lsof`, `pkill`
-- An LLM API key or an Anthropic-compatible proxy
-- _Optional_ — C++ build tools (`xcode-select --install` on macOS, `sudo apt-get install build-essential python3` on Linux): only required for the `--build-from-source` fallback path; the default flow downloads a prebuilt `trace_processor_shell`.
-
-```bash
-cp backend/.env.example backend/.env
-# Edit backend/.env and set ANTHROPIC_API_KEY,
-# or configure ANTHROPIC_BASE_URL for an API proxy.
+# Edit backend/.env — set ANTHROPIC_API_KEY (direct) or
+# ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY (API proxy)
 
 ./scripts/start-dev.sh
 ```
 
-The first run installs dependencies and downloads a version-pinned `trace_processor_shell` prebuilt (~5s, SHA256-verified against `scripts/trace-processor-pin.env`). Pass `--build-from-source` (or set `TRACE_PROCESSOR_PREBUILT=0`) if you need to compile from source — for example after modifying Perfetto C++ code. After startup:
-
 - Frontend: [http://localhost:10000](http://localhost:10000)
 - Backend: [http://localhost:3000](http://localhost:3000)
 
-Both backend (`tsx watch`) and frontend (`build.js --watch`) rebuild on save. For `.ts`, `.yaml`, and `.md` changes, refresh the browser. Use `./scripts/restart-backend.sh` only after `.env` changes, `npm install`, or a stuck watcher.
+The repo ships with a pre-built Perfetto UI in `frontend/` — no submodule init, no C++ toolchain, no 30-minute compile. Load a `.pftrace` file, open the **AI Assistant** panel, and start analyzing.
+
+### Docker
+
+```bash
+cp backend/.env.example backend/.env
+docker compose up --build
+```
+
+### Frontend Development (modifying AI plugin code)
+
+The pre-built frontend in `frontend/` is compiled from `perfetto/ui/src/plugins/com.smartperfetto.AIAssistant/`. To rebuild after editing the plugin:
+
+```bash
+# Initialize the perfetto submodule (one-time)
+git submodule update --init --recursive
+
+./scripts/start-dev.sh   # builds frontend from source + starts with hot reload
+```
+
+After making changes and verifying them, update the pre-built frontend:
+
+```bash
+cp -r perfetto/out/ui/ui/dist/* frontend/
+# commit the updated frontend/ directory
+```
 
 ## Configure an LLM
 
