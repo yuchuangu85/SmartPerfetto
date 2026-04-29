@@ -38,8 +38,8 @@ done
 
 # Start frontend (Perfetto UI dev server)
 echo "Starting frontend on port 10000..."
-cd /app/perfetto/ui
-./run-dev-server &
+cd /app/perfetto/out/ui/ui
+npx --yes http-server -p 10000 -c-1 &
 FRONTEND_PID=$!
 
 echo ""
