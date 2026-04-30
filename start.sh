@@ -17,6 +17,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+NODE_ENV_HELPERS="$PROJECT_ROOT/scripts/node-env.sh"
+# shellcheck source=scripts/node-env.sh
+. "$NODE_ENV_HELPERS"
 LOGS_DIR="$PROJECT_ROOT/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 CLEAN_LOGS=false
@@ -100,6 +103,8 @@ for arg in "$@"; do
 done
 
 # ── Pre-flight checks ─────────────────────────────────────────────────────────
+
+smartperfetto_ensure_node "$PROJECT_ROOT"
 
 require_command node
 require_command npm
@@ -219,10 +224,7 @@ fi
 
 # ── Install backend deps if needed ────────────────────────────────────────────
 
-if [ ! -d "$PROJECT_ROOT/backend/node_modules" ]; then
-  echo "Installing backend dependencies..."
-  cd "$PROJECT_ROOT/backend" && npm install
-fi
+smartperfetto_ensure_backend_deps "$PROJECT_ROOT"
 
 # ── Start backend ─────────────────────────────────────────────────────────────
 

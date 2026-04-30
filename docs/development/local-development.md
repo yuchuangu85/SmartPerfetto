@@ -9,6 +9,8 @@
 - 可用的 Claude Code 本地配置、Anthropic API key，或 Anthropic 兼容代理
 - 可选 C++ 工具链：只有 `--build-from-source` 编译 trace processor 时需要
 
+仓库包含 `.nvmrc` 和 `.node-version`，并通过 `.npmrc` 开启 `engine-strict=true`。本地脚本会优先使用 nvm 或 fnm 切到 Node 24；如果检测到 `backend/node_modules` 是在其他 Node ABI 下安装的，会先自动重装后端依赖，再启动服务。
+
 ## 启动开发服务
 
 ```bash

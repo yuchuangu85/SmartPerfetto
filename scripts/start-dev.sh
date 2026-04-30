@@ -17,6 +17,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+NODE_ENV_HELPERS="$PROJECT_ROOT/scripts/node-env.sh"
+# shellcheck source=scripts/node-env.sh
+. "$NODE_ENV_HELPERS"
 LOGS_DIR="$PROJECT_ROOT/logs"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 SKIP_BUILD=false
@@ -152,6 +155,8 @@ if [ "$BUILD_FROM_SOURCE" = true ] && [ "$PREBUILT_ONLY" = true ]; then
   echo "ERROR: --build-from-source and --prebuilt-only are mutually exclusive."
   exit 1
 fi
+
+smartperfetto_ensure_node "$PROJECT_ROOT"
 
 # Create logs directory
 mkdir -p "$LOGS_DIR"
@@ -607,12 +612,6 @@ install_ui_deps() {
   fi
 }
 
-# 【S2 Fix】Check and install dependencies if needed
-if [ ! -d "$PROJECT_ROOT/backend/node_modules" ]; then
-  echo "Backend dependencies not found. Installing..."
-  cd "$PROJECT_ROOT/backend" && npm install
-fi
-
 # 【S3 Fix】Check for .env file
 if [ ! -f "$PROJECT_ROOT/backend/.env" ]; then
   echo "=============================================="
@@ -642,6 +641,11 @@ pkill -f "node.*perfetto/ui/build.js" 2>/dev/null || true
 echo "Cleaning up orphan trace_processor_shell processes..."
 pkill -f "trace_processor_shell.*httpd" 2>/dev/null || true
 sleep 1
+
+# Check/install backend dependencies after old watchers have been stopped.
+# Native modules are tied to Node's ABI, so this also repairs node_modules
+# after switching between Node 20/24/25.
+smartperfetto_ensure_backend_deps "$PROJECT_ROOT"
 
 # Acquire trace_processor_shell. Default = download version-pinned prebuilt
 # from Perfetto's LUCI artifacts (SHA256-verified, ~5s); fall back to source

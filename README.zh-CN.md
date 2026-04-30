@@ -110,6 +110,8 @@ docker compose -f docker-compose.hub.yml down
 
 如果你希望直接从源码 checkout 启动，使用这个方式。前置条件：**Node.js 24 LTS**、`curl`、`lsof`、`pkill`，以及 Claude Code 登录态或大模型凭证。Windows 源码开发请使用 [WSL2](https://learn.microsoft.com/zh-cn/windows/wsl/install)，不要使用原生 Windows shell。
 
+仓库已经带上 `.nvmrc` 和 `.node-version`，npm 也开启了 `engine-strict=true`。`./start.sh`、`./scripts/start-dev.sh` 和 `./scripts/restart-backend.sh` 会优先通过 nvm 或 fnm 自动切到 Node 24。如果后端依赖曾经用其他 Node ABI 安装过，脚本会在启动前自动重装 `backend/node_modules`，避免 `better-sqlite3` 这类 native module 在 Node 20/24/25 之间混用。
+
 ```bash
 git clone https://github.com/Gracker/SmartPerfetto.git
 cd SmartPerfetto

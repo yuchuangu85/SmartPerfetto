@@ -16,7 +16,7 @@
     "verify:pr": "npm run quality && npm --prefix backend run verify:pr"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0 <25.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.13",

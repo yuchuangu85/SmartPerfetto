@@ -12,6 +12,11 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+NODE_ENV_HELPERS="$PROJECT_ROOT/scripts/node-env.sh"
+# shellcheck source=scripts/node-env.sh
+. "$NODE_ENV_HELPERS"
+
+smartperfetto_ensure_node "$PROJECT_ROOT"
 
 # Kill only the backend process
 echo "Stopping backend..."
@@ -32,6 +37,8 @@ if [ -n "$PORT_PIDS" ]; then
   echo "$PORT_PIDS" | xargs kill 2>/dev/null || true
 fi
 sleep 1
+
+smartperfetto_ensure_backend_deps "$PROJECT_ROOT"
 
 # Start backend with tsx watch (hot-reload enabled)
 echo "Starting backend (tsx watch — auto-reloads on file changes)..."

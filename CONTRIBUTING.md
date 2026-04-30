@@ -5,6 +5,8 @@ Thanks for your interest in contributing! This guide covers development setup, t
 ## Prerequisites
 
 - **Node.js** 24 LTS (`node -v`)
+  - The repo includes `.nvmrc` / `.node-version`; `./start.sh`, `./scripts/start-dev.sh`, and `./scripts/restart-backend.sh` auto-activate Node 24 when nvm or fnm is available.
+  - npm uses `engine-strict=true`; Node 20 and Node 25 are rejected for local installs.
 - **Python 3** (required by Perfetto's build tools)
 - **C++ toolchain** (for `better-sqlite3` native module)
   - macOS: `xcode-select --install`
@@ -18,6 +20,10 @@ Thanks for your interest in contributing! This guide covers development setup, t
 # 1. Clone with submodules
 git clone --recursive https://github.com/Gracker/SmartPerfetto.git
 cd SmartPerfetto
+
+# Optional but recommended if you use nvm/fnm.
+nvm install
+nvm use
 
 # 2. Configure environment
 cp backend/.env.example backend/.env
