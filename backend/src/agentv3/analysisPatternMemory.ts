@@ -560,7 +560,7 @@ async function saveQuickPatterns(patterns: AnalysisPatternEntry[]): Promise<void
 
 /**
  * Save a pattern derived from a quick-path analysis. Quick-path conclusions
- * are weaker (5-turn budget, no verifier) so they go into a separate bucket
+ * are weaker (10-turn budget, no verifier) so they go into a separate bucket
  * with a 7-day TTL and only surface as fallbacks (×0.3 weight) when no
  * full-path pattern matches the same features.
  */

@@ -43,9 +43,10 @@ export interface ClaudeAgentConfig {
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_LIGHT_MODEL = 'claude-haiku-4-5';
 // Scrolling pipeline: 1 time-range + 1 scrolling_analysis + 2-3 deep-drill (blocking_chain/binder_root_cause)
-// + 1-2 jank_frame_detail + hypothesis submit/resolve + conclusion = ~20-25 turns
-const DEFAULT_MAX_TURNS = 30;
-const DEFAULT_QUICK_MAX_TURNS = 5;
+// + 1-2 jank_frame_detail + hypothesis submit/resolve + conclusion = ~20-25 turns.
+// Default keeps extra headroom for slower third-party models and larger traces.
+const DEFAULT_MAX_TURNS = 60;
+const DEFAULT_QUICK_MAX_TURNS = 10;
 const DEFAULT_EFFORT: EffortLevel = 'high';
 
 function parsePositiveIntEnv(name: string, fallback: number): number {

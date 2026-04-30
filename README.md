@@ -208,8 +208,8 @@ Restart the backend after changing provider settings. `GET /health` returns `aiE
 SmartPerfetto has separate turn budgets for fast and full analysis:
 
 ```bash
-CLAUDE_QUICK_MAX_TURNS=5   # fast mode default
-CLAUDE_MAX_TURNS=30        # full mode default
+CLAUDE_QUICK_MAX_TURNS=10  # fast mode default
+CLAUDE_MAX_TURNS=60        # full mode default
 ```
 
 Raise these values for slower models or traces that need more tool iterations. The total safety timeout scales with the turn budget: full mode uses `CLAUDE_FULL_PER_TURN_MS` per turn, and fast mode uses `CLAUDE_QUICK_PER_TURN_MS` per turn. Restart the backend after changing `.env`.

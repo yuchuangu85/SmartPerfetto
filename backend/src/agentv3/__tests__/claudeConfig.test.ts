@@ -53,25 +53,25 @@ afterEach(() => {
 describe('createQuickConfig', () => {
   it('keeps the existing quick max-turn default', () => {
     delete process.env.CLAUDE_QUICK_MAX_TURNS;
-    const config = createQuickConfig(loadClaudeConfig({ maxTurns: 30 }));
+    const config = createQuickConfig(loadClaudeConfig({ maxTurns: 60 }));
 
-    expect(config.maxTurns).toBe(5);
+    expect(config.maxTurns).toBe(10);
     expect(config.enableVerification).toBe(false);
     expect(config.enableSubAgents).toBe(false);
   });
 
   it('allows quick max-turn override via env', () => {
     process.env.CLAUDE_QUICK_MAX_TURNS = '8';
-    const config = createQuickConfig(loadClaudeConfig({ maxTurns: 30 }));
+    const config = createQuickConfig(loadClaudeConfig({ maxTurns: 60 }));
 
     expect(config.maxTurns).toBe(8);
   });
 
   it('ignores invalid quick max-turn env values', () => {
     process.env.CLAUDE_QUICK_MAX_TURNS = '0';
-    const config = createQuickConfig(loadClaudeConfig({ maxTurns: 30 }));
+    const config = createQuickConfig(loadClaudeConfig({ maxTurns: 60 }));
 
-    expect(config.maxTurns).toBe(5);
+    expect(config.maxTurns).toBe(10);
   });
 });
 

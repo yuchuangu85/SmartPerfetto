@@ -18,10 +18,10 @@ describe('analysisTermination', () => {
   });
 
   it('builds mode-specific max-turn messages', () => {
-    expect(buildMaxTurnsTerminationMessage({ mode: 'fast', turns: 5, maxTurns: 5 }))
-      .toContain('快速模式达到轮次上限（5/5 turns）');
-    expect(buildMaxTurnsTerminationMessage({ mode: 'full', turns: 30, maxTurns: 30 }))
-      .toContain('完整模式达到轮次上限（30/30 turns）');
+    expect(buildMaxTurnsTerminationMessage({ mode: 'fast', turns: 10, maxTurns: 10 }))
+      .toContain('快速模式达到轮次上限（10/10 turns）');
+    expect(buildMaxTurnsTerminationMessage({ mode: 'full', turns: 60, maxTurns: 60 }))
+      .toContain('完整模式达到轮次上限（60/60 turns）');
   });
 
   it('prepends a partial notice only once', () => {

@@ -41,7 +41,7 @@ Activated only when `AI_SERVICE=deepseek`. Do not invest in agentv2 code unless 
 - Explicit `fast` / `full` bypasses `classifyQueryComplexity` entirely (no Haiku latency, overrides deterministic hard rules).
 - `auto` runs `applyKeywordRules` → `applyHardRules` → Haiku fallback.
 - Metrics: `SessionMetrics.analysisMode` + `classifierSource` (`'user_explicit' | 'hard_rule' | 'ai'`).
-- Fast path: `analyzeQuick()` — 5 turns, 3 lightweight MCP tools, no verifier/sub-agents. Full path: 30 turns, 20 tools, verifier + optional sub-agents.
+- Fast path: `analyzeQuick()` — 10 turns, 3 lightweight MCP tools, no verifier/sub-agents. Full path: 60 turns, 20 tools, verifier + optional sub-agents.
 
 Per-turn timeouts are env-configurable — raise for slower non-Anthropic LLMs:
 - `CLAUDE_FULL_PER_TURN_MS` (default 60000)

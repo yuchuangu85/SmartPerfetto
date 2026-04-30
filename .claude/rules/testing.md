@@ -80,7 +80,7 @@ This is separate from the basic regression test — regression tests verify skil
 
 `verifyAgentSseScrolling.ts` accepts `--mode fast|full|auto` to override `options.analysisMode` and asserts the backend honored it via `fastModeHonored` / `fullModeHonored` checks.
 
-**Fast mode (5-turn lightweight, ~$0.05-0.25/query):**
+**Fast mode (10-turn lightweight, ~$0.05-0.25/query):**
 ```bash
 cd backend && npx tsx src/scripts/verifyAgentSseScrolling.ts \
   --mode fast \
@@ -106,7 +106,7 @@ cd backend && npx jest src/agentv3/__tests__/queryComplexityClassifier.followup.
 # 27 cases covering DRILL_DOWN_KEYWORDS / CONFIRM_KEYWORDS + each hard rule branch
 ```
 
-**Known fast-mode limitation**: Heavy queries like `分析启动性能` / `分析滑动性能` can exhaust the 5-turn budget when Claude calls `invoke_skill` and spends turns parsing ~200 KB skill JSON. Steer heavy queries to `--mode full`, or use targeted factual queries (包名 / 启动类型 / 帧率数值) with `--mode fast`.
+**Known fast-mode limitation**: Heavy queries like `分析启动性能` / `分析滑动性能` can exhaust the 10-turn budget when Claude calls `invoke_skill` and spends turns parsing ~200 KB skill JSON. Steer heavy queries to `--mode full`, or use targeted factual queries (包名 / 启动类型 / 帧率数值) with `--mode fast`.
 
 ## Other test commands
 

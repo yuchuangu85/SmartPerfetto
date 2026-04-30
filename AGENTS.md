@@ -122,15 +122,15 @@ Note: agentv3 sends `conclusion` first (user sees result immediately), then `ana
 
 | Mode | Turns | MCP tools | Verifier / sub-agents | Typical cost |
 |------|:-----:|:---------:|:---:|---:|
-| `fast` | 5 | 3 lightweight (`execute_sql`, `invoke_skill`, `lookup_sql_schema`) | skipped | $0.05–0.25 |
-| `full` | 30 | 20 (full toolkit) | enabled | $0.3–1.0 |
+| `fast` | 10 | 3 lightweight (`execute_sql`, `invoke_skill`, `lookup_sql_schema`) | skipped | $0.05–0.25 |
+| `full` | 60 | 20 (full toolkit) | enabled | $0.3–1.0 |
 | `auto` (default) | routed | per chosen path | per chosen path | varies |
 
 `auto` routing order: `applyKeywordRules` (drill-down keyword → full / short confirm keyword → quick) → `applyHardRules` (selection / comparison / findings / prior-full / 7 deterministic scenes) → Haiku fallback.
 
-**Frontend** (`ai_panel.ts`): chip selector persisted in `localStorage['ai-analysis-mode']`. Switching mode mid-session clears `agentSessionId` so the backend opens a fresh SDK session (avoids 5-turn quick / 30-turn full context mix).
+**Frontend** (`ai_panel.ts`): chip selector persisted in `localStorage['ai-analysis-mode']`. Switching mode mid-session clears `agentSessionId` so the backend opens a fresh SDK session (avoids 10-turn quick / 60-turn full context mix).
 
-**Known limitation**: fast mode + heavy query (e.g. `分析启动性能`) can exhaust the 5-turn budget when Codex calls `invoke_skill` and spends turns parsing large (~200 KB) skill JSON. Prefer `execute_sql` for simple factual queries in fast mode, or steer heavy queries to full mode.
+**Known limitation**: fast mode + heavy query (e.g. `分析启动性能`) can exhaust the 10-turn budget when Codex calls `invoke_skill` and spends turns parsing large (~200 KB) skill JSON. Prefer `execute_sql` for simple factual queries in fast mode, or steer heavy queries to full mode.
 
 ## Session Management
 
@@ -148,7 +148,8 @@ ANTHROPIC_API_KEY=sk-ant-xxx              # Anthropic direct, or proxy auth toke
 # ANTHROPIC_BASE_URL=http://localhost:3000 # Third-party LLM via API proxy (one-api/new-api/LiteLLM)
 CLAUDE_MODEL=Codex-sonnet-4-6            # Optional, default (or provider model name via proxy)
 # CLAUDE_LIGHT_MODEL=Codex-haiku-4-5     # Optional, for verifier/classifier/summarizer
-# CLAUDE_MAX_TURNS=15                     # Optional
+# CLAUDE_MAX_TURNS=60                     # Optional, full-mode turn budget
+# CLAUDE_QUICK_MAX_TURNS=10               # Optional, fast-mode turn budget
 # CLAUDE_MAX_BUDGET_USD=5                 # Optional, per-analysis budget cap (Anthropic only)
 # CLAUDE_EFFORT=high                      # Optional, SDK effort level (Anthropic only)
 # CLAUDE_SUB_AGENT_MODEL=sonnet           # Optional, sub-agent model (haiku/sonnet/opus/inherit)

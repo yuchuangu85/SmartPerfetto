@@ -42,7 +42,7 @@ Subdirectories:
 `[⚡ 快速] [🔍 完整] [🤖 智能]`
 
 - `AIPanelState.analysisMode` is sticky via `localStorage['ai-analysis-mode']` (default `'auto'`).
-- `onAnalysisModeChange()` clears `agentSessionId` on mid-session mode switch so the backend opens a fresh SDK session (avoids 5-turn quick vs 30-turn full context mix) and appends a system message toast.
+- `onAnalysisModeChange()` clears `agentSessionId` on mid-session mode switch so the backend opens a fresh SDK session (avoids 10-turn quick vs 60-turn full context mix) and appends a system message toast.
 - Fast chip is **disabled** under comparison mode (`state.referenceTraceId` set): `buildQuickSystemPrompt` does not accept `selectionContext` and the lightweight MCP registration skips comparison tools.
 - Request body: `options.analysisMode` is sent with every `POST /api/agent/v1/analyze`.
 

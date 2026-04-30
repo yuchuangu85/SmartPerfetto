@@ -208,8 +208,8 @@ CLAUDE_LIGHT_MODEL=your-provider-light-model
 SmartPerfetto 区分 fast 和 full 两套轮次预算：
 
 ```bash
-CLAUDE_QUICK_MAX_TURNS=5   # fast 模式默认值
-CLAUDE_MAX_TURNS=30        # full 模式默认值
+CLAUDE_QUICK_MAX_TURNS=10  # fast 模式默认值
+CLAUDE_MAX_TURNS=60        # full 模式默认值
 ```
 
 如果使用较慢模型，或某些 trace 需要更多工具调用轮次，可以调高这些值。总 safety timeout 会随轮次预算放大：full 模式每轮使用 `CLAUDE_FULL_PER_TURN_MS`，fast 模式每轮使用 `CLAUDE_QUICK_PER_TURN_MS`。修改 `.env` 后需要重启 backend。

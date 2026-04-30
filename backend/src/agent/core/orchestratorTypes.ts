@@ -293,8 +293,8 @@ export interface AnalysisOptions {
 
   /**
    * Analysis mode override from UI/CLI.
-   * - 'fast': force quick path (5 turns, lightweight MCP, skip verifier/sub-agents)
-   * - 'full': force full pipeline (30 turns, verifier, optional sub-agents)
+   * - 'fast': force quick path (10 turns, lightweight MCP, skip verifier/sub-agents)
+   * - 'full': force full pipeline (60 turns, verifier, optional sub-agents)
    * - 'auto' or undefined: defer to queryComplexityClassifier
    */
   analysisMode?: 'fast' | 'full' | 'auto';

@@ -1600,7 +1600,7 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
       console.log(`[ClaudeRuntime] Quick analysis completed: ${quickRounds} rounds, ${Date.now() - startTime}ms, ${conclusionText.length} chars`);
 
       // Quick path writes to a separate 7-day bucket — see Self-Improving v3.3 §6.
-      // Insights are weaker (no verifier, 5-turn budget), so they only surface
+      // Insights are weaker (no verifier, 10-turn budget), so they only surface
       // as fallbacks at injection time. A future full-path run on similar
       // features may promote the bucket entry to long-term memory.
       if (!isPartialResult && mergedFindings.length > 0) {
