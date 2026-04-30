@@ -10,14 +10,13 @@ export { ProviderService } from './providerService';
 export { ProviderStore } from './providerStore';
 export { officialTemplates } from './templates';
 
-const dataDir = process.env.PROVIDER_DATA_DIR_OVERRIDE || path.resolve(process.cwd(), 'data');
-const PROVIDERS_FILE = path.join(dataDir, 'providers.json');
-
 let instance: ProviderService | null = null;
 
 export function getProviderService(): ProviderService {
   if (!instance) {
-    instance = new ProviderService(PROVIDERS_FILE);
+    const dir = process.env.PROVIDER_DATA_DIR_OVERRIDE || path.resolve(process.cwd(), 'data');
+    const file = path.join(dir, 'providers.json');
+    instance = new ProviderService(file);
     const active = instance.list().find(p => p.isActive);
     if (active) {
       console.log(`[ProviderManager] Active: "${active.name}" (${active.type}, ${active.models.primary})`);
@@ -26,4 +25,9 @@ export function getProviderService(): ProviderService {
     }
   }
   return instance;
+}
+
+/** Reset the singleton — for tests only. */
+export function resetProviderService(): void {
+  instance = null;
 }
