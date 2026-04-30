@@ -37,6 +37,7 @@ import {
   hasClaudeCredentials,
   isClaudeCodeEnabled,
 } from './agentv3/claudeConfig';
+import { getProviderService } from './services/providerManager';
 import {
   getLegacyApiUsageSnapshot,
 } from './services/legacyApiTelemetry';
@@ -71,6 +72,12 @@ app.use(express.urlencoded({ extended: true, limit: serverConfig.bodyLimit }));
 app.get('/health', (req, res) => {
   const useAgentV3 = isClaudeCodeEnabled();
   const claudeDiagnostics = getClaudeRuntimeDiagnostics();
+  const providerSvc = getProviderService();
+  const activeProvider = providerSvc.list().find(p => p.isActive);
+  const aiEngineConfigured = useAgentV3
+    ? (activeProvider != null || hasClaudeCredentials())
+    : !!process.env.DEEPSEEK_API_KEY;
+
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -80,12 +87,18 @@ app.get('/health', (req, res) => {
     aiEngine: {
       runtime: useAgentV3 ? 'agentv3' : 'agentv2',
       model: useAgentV3
-        ? (process.env.CLAUDE_MODEL || 'claude-sonnet-4-6')
+        ? (activeProvider?.models.primary || process.env.CLAUDE_MODEL || 'claude-sonnet-4-6')
         : (process.env.DEEPSEEK_MODEL || 'deepseek-chat'),
       providerMode: useAgentV3 ? claudeDiagnostics.providerMode : 'deepseek_legacy',
-      configured: useAgentV3
-        ? hasClaudeCredentials()
-        : !!process.env.DEEPSEEK_API_KEY,
+      configured: aiEngineConfigured,
+      source: activeProvider ? 'provider-manager' : 'env-fallback',
+      ...(activeProvider ? {
+        activeProvider: {
+          id: activeProvider.id,
+          name: activeProvider.name,
+          type: activeProvider.type,
+        },
+      } : {}),
       authRequired: !!process.env.SMARTPERFETTO_API_KEY,
       diagnostics: useAgentV3
         ? claudeDiagnostics
