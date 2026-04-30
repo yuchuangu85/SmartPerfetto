@@ -463,7 +463,7 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
         effectivePrompt = `${traceSection}\n\n${effectivePrompt}`;
       }
 
-      const sdkEnv = createSdkEnv();
+      const sdkEnv = createSdkEnv(options.providerId);
 
       const { stream, close: closeSdk } = sdkQueryWithRetry({
         prompt: effectivePrompt,
@@ -1441,7 +1441,7 @@ export class ClaudeRuntime extends EventEmitter implements IOrchestrator {
         && (Date.now() - (sessionMapEntry.updatedAt || 0) < SDK_SESSION_FRESHNESS_MS)
         ? sessionMapEntry.sdkSessionId
         : undefined;
-      const sdkEnv = createSdkEnv();
+      const sdkEnv = createSdkEnv(options.providerId);
 
       // Prepend pre-queried trace data so the AI skips basic SQL turns in fast mode
       let quickPrompt = query;

@@ -254,11 +254,23 @@ export function createQuickConfig(baseConfig: ClaudeAgentConfig): ClaudeAgentCon
 
 /**
  * Create a sanitized copy of process.env for SDK subprocess spawning.
- * Strips Claude Code nesting-detection env vars so the SDK subprocess
- * doesn't refuse to start when the backend runs inside a Claude Code session.
+ * When a providerId is given, overlays that provider's env vars.
+ * When no providerId is given, uses the active provider from providerManager.
+ * Falls back to raw process.env when no provider is configured.
  */
-export function createSdkEnv(): Record<string, string | undefined> {
+export function createSdkEnv(sessionOverrideProviderId?: string): Record<string, string | undefined> {
   const env = { ...process.env };
+
+  // Lazy import to avoid circular dependency at module load time
+  const { getProviderService } = require('../services/providerManager');
+  const svc = getProviderService();
+
+  const providerEnv = sessionOverrideProviderId
+    ? svc.getEnvForProvider(sessionOverrideProviderId)
+    : svc.getEffectiveEnv();
+
+  if (providerEnv) Object.assign(env, providerEnv);
+
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CLAUDE_CODE_SESSION_ACCESS_TOKEN;
