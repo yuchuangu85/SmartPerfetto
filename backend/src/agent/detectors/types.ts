@@ -22,7 +22,8 @@ export type RenderingArchitectureType =
   | 'MIXED'         // 混合渲染 (如 SurfaceView + RecyclerView)
   | 'GAME_ENGINE'   // 游戏引擎 (Unity/Unreal/Godot/Cocos)
   | 'CAMERA'        // 相机管线 (HAL3/Camera2)
-  | 'VIDEO_OVERLAY'  // 视频 Overlay (HWC 硬件合成)
+  | 'VIDEO_OVERLAY' // 视频 Overlay (HWC 硬件合成)
+  | 'REACT_NATIVE'  // React Native (S14: Old Arch Bridge / New Arch Fabric / Skia)
   | 'UNKNOWN';      // 未知架构
 
 /**

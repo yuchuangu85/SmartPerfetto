@@ -30,6 +30,7 @@ import { parseCandidates } from '../../types/teaching.types';
 function mapPipelineToArchType(pipelineId: string): RenderingArchitectureType {
   if (pipelineId.startsWith('FLUTTER_')) return 'FLUTTER';
   if (pipelineId.startsWith('WEBVIEW_')) return 'WEBVIEW';
+  if (pipelineId.startsWith('RN_')) return 'REACT_NATIVE';   // Phase E: S14 React Native
   if (pipelineId === 'COMPOSE_STANDARD') return 'COMPOSE';
   if (pipelineId === 'GAME_ENGINE') return 'GAME_ENGINE';
   if (pipelineId === 'CAMERA_PIPELINE') return 'CAMERA';
