@@ -531,6 +531,76 @@ export interface TraceConfigGeneratorContract extends SparkProvenance {
 }
 
 // =============================================================================
+// Plan 10 — Jank Decision Tree 与 FrameTimeline Ground Truth (Spark #16, #31)
+// =============================================================================
+
+/**
+ * FrameTimeline jank_type values used as ground truth (Spark #16).
+ * Mirrors `actual_frame_timeline_slice.jank_type` from Perfetto stdlib.
+ */
+export type FrameTimelineJankType =
+  | 'None'
+  | 'AppDeadlineMissed'
+  | 'SurfaceFlingerCpuDeadlineMissed'
+  | 'SurfaceFlingerGpuDeadlineMissed'
+  | 'DisplayHAL'
+  | 'PredictionError'
+  | 'Buffer Stuffing'
+  | 'BufferStuffing'
+  | 'Unknown'
+  | string;
+
+/** Single node in the jank attribution decision tree. */
+export interface JankDecisionNode {
+  /** Stable node id used for route tracing. */
+  nodeId: string;
+  /** Short human-readable label. */
+  label: string;
+  /** Decision rule that selected this branch. */
+  rule?: string;
+  /** Skill id that produced the data backing this node. */
+  skillId?: string;
+  /** Evidence pointer for AI quoting. */
+  evidence?: SparkEvidenceRef;
+  /** Confidence in this branch's diagnosis. */
+  confidence?: SparkConfidence;
+  /** Children — empty when this is a terminal verdict. */
+  children?: JankDecisionNode[];
+}
+
+/** Per-frame attribution row. */
+export interface JankFrameAttribution {
+  frameId: number | string;
+  /** ns range of the frame slice. */
+  range: NsTimeRange;
+  /** FrameTimeline ground truth jank_type. */
+  jankType: FrameTimelineJankType;
+  /** Path of decision tree node ids that classified this frame. */
+  routePath: string[];
+  /** Reason code emitted by the analysis (e.g. `cpu_starvation`). */
+  reasonCode?: string;
+  /** Evidence pointers backing the reason code. */
+  evidence?: SparkEvidenceRef[];
+}
+
+/**
+ * JankDecisionTreeContract (Plan 10)
+ *
+ * Output of the scrolling Skill verdict layer. Anchors every diagnosis to
+ * FrameTimeline `jank_type` so the agent can never blend
+ * AppDeadlineMissed / SurfaceFlinger / DisplayHAL conclusions.
+ */
+export interface JankDecisionTreeContract extends SparkProvenance {
+  /** Root of the decision tree (start of the routing). */
+  root: JankDecisionNode;
+  /** Per-frame attribution rows used to validate the tree. */
+  frameAttributions: JankFrameAttribution[];
+  /** Frames missing FrameTimeline ground truth (cannot be classified). */
+  unclassifiedFrames?: JankFrameAttribution[];
+  coverage: SparkCoverageEntry[];
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

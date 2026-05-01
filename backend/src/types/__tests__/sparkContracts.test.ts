@@ -13,6 +13,7 @@ import {
   type TimelineBinningContract,
   type AnonymizationContract,
   type TraceConfigGeneratorContract,
+  type JankDecisionTreeContract,
 } from '../sparkContracts';
 
 describe('sparkContracts — shared provenance', () => {
@@ -357,5 +358,81 @@ describe('Plan 07 — TraceConfigGeneratorContract', () => {
     expect(contract.fragments).toHaveLength(2);
     expect(contract.customSlices?.[0].fields?.[1].unit).toBe('ms');
     expect(contract.selfDescription?.cuj).toBe('scroll_feed');
+  });
+});
+
+describe('Plan 10 — JankDecisionTreeContract', () => {
+  it('routes a frame from FrameTimeline ground truth to a leaf verdict', () => {
+    const contract: JankDecisionTreeContract = {
+      ...makeSparkProvenance({source: 'jank-decision-tree'}),
+      root: {
+        nodeId: 'root',
+        label: 'jank_type branching',
+        rule: 'switch on actual_frame_timeline_slice.jank_type',
+        children: [
+          {
+            nodeId: 'app_deadline_missed',
+            label: 'App deadline missed',
+            confidence: 'high',
+            children: [
+              {
+                nodeId: 'app_cpu_starvation',
+                label: 'CPU starvation on UI thread',
+                rule: 'thread_state.runnable_dur > 5ms',
+                skillId: 'thread_state',
+                confidence: 'medium',
+              },
+            ],
+          },
+          {
+            nodeId: 'sf_cpu_deadline_missed',
+            label: 'SurfaceFlinger CPU deadline missed',
+            confidence: 'high',
+          },
+        ],
+      },
+      frameAttributions: [
+        {
+          frameId: 100123,
+          range: {startNs: 5_000_000_000, endNs: 5_016_667_000},
+          jankType: 'AppDeadlineMissed',
+          routePath: ['root', 'app_deadline_missed', 'app_cpu_starvation'],
+          reasonCode: 'cpu_starvation',
+          evidence: [{skillId: 'thread_state', stepId: 'aggregate'}],
+        },
+      ],
+      coverage: [
+        {sparkId: 16, planId: '10', status: 'scaffolded'},
+        {sparkId: 31, planId: '10', status: 'scaffolded'},
+      ],
+    };
+    expect(contract.frameAttributions[0].jankType).toBe('AppDeadlineMissed');
+    expect(contract.frameAttributions[0].routePath).toEqual([
+      'root',
+      'app_deadline_missed',
+      'app_cpu_starvation',
+    ]);
+  });
+
+  it('keeps unclassified frames separate when FrameTimeline is missing', () => {
+    const contract: JankDecisionTreeContract = {
+      ...makeSparkProvenance({
+        source: 'jank-decision-tree',
+        unsupportedReason: 'frame_timeline data unavailable',
+      }),
+      root: {nodeId: 'root', label: 'no data'},
+      frameAttributions: [],
+      unclassifiedFrames: [
+        {
+          frameId: 200001,
+          range: {startNs: 0, endNs: 16_667_000},
+          jankType: 'Unknown',
+          routePath: [],
+        },
+      ],
+      coverage: [{sparkId: 16, planId: '10', status: 'unsupported'}],
+    };
+    expect(isUnsupported(contract)).toBe(true);
+    expect(contract.unclassifiedFrames).toHaveLength(1);
   });
 });
