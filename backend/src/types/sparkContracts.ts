@@ -341,6 +341,59 @@ export interface ArtifactSchemaContract extends SparkProvenance {
 }
 
 // =============================================================================
+// Plan 05 — Timeline Binning 与 Counter RLE Compression (Spark #23, #27)
+// =============================================================================
+
+/** Single binned bucket along a timeline axis. */
+export interface TimelineBin {
+  /** Inclusive start of the bucket in nanoseconds. */
+  startNs: number;
+  /** Bucket width in nanoseconds. */
+  durNs: number;
+  /** Aggregated value for the bucket (sum/avg/count depending on aggregation). */
+  value: number;
+  /** Count of source rows aggregated into this bin. */
+  rowCount?: number;
+}
+
+/** RLE turning-point record for counter tracks (Spark #27). */
+export interface CounterRleSegment {
+  /** Inclusive start in nanoseconds of the constant-value segment. */
+  startNs: number;
+  /** Exclusive end in nanoseconds. */
+  endNs: number;
+  /** Counter value held across the segment. */
+  value: number;
+  /** Optional cumulative delta from prior segment (turning-point hint). */
+  delta?: number;
+}
+
+/** Aggregation function used for timeline binning. */
+export type TimelineBinAggregation = 'sum' | 'avg' | 'count' | 'max' | 'min';
+
+/**
+ * TimelineBinningContract (Plan 05)
+ *
+ * Compact representation of timeline-style data. Two flavours:
+ *  - `bins[]` — uniformly bucketed stream values (Spark #23 token compression).
+ *  - `rle[]` — run-length encoded counter trail with turning points (Spark #27).
+ */
+export interface TimelineBinningContract extends SparkProvenance {
+  /** Track id this binning describes (`process_counter_track.id`, etc.). */
+  trackId: string | number;
+  /** Time range covered by the binning. */
+  range: NsTimeRange;
+  /** Bin width in nanoseconds when `bins[]` is present. */
+  binDurNs?: number;
+  aggregation?: TimelineBinAggregation;
+  bins?: TimelineBin[];
+  rle?: CounterRleSegment[];
+  /** Original (pre-compression) sample count, for ratio reporting. */
+  originalSampleCount: number;
+  coverage: SparkCoverageEntry[];
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

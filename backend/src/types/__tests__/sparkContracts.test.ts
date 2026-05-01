@@ -10,6 +10,7 @@ import {
   type TraceSummaryV2Contract,
   type SmartPerfettoSqlPackageContract,
   type ArtifactSchemaContract,
+  type TimelineBinningContract,
 } from '../sparkContracts';
 
 describe('sparkContracts — shared provenance', () => {
@@ -226,5 +227,43 @@ describe('Plan 04 — ArtifactSchemaContract', () => {
       startNs: 1_000_000_000,
       endNs: 3_000_000_000,
     });
+  });
+});
+
+describe('Plan 05 — TimelineBinningContract', () => {
+  it('represents binned stream output with aggregation', () => {
+    const contract: TimelineBinningContract = {
+      ...makeSparkProvenance({source: 'timeline-binning'}),
+      trackId: 'cpu0_freq',
+      range: {startNs: 0, endNs: 10_000_000_000},
+      binDurNs: 50_000_000,
+      aggregation: 'avg',
+      bins: [
+        {startNs: 0, durNs: 50_000_000, value: 1_200_000, rowCount: 5},
+        {startNs: 50_000_000, durNs: 50_000_000, value: 1_800_000, rowCount: 4},
+      ],
+      originalSampleCount: 9,
+      coverage: [{sparkId: 23, planId: '05', status: 'scaffolded'}],
+    };
+    expect(contract.bins).toHaveLength(2);
+    expect(contract.aggregation).toBe('avg');
+  });
+
+  it('represents counter RLE turning points', () => {
+    const contract: TimelineBinningContract = {
+      ...makeSparkProvenance({source: 'counter-rle'}),
+      trackId: 12345,
+      range: {startNs: 0, endNs: 5_000_000_000},
+      rle: [
+        {startNs: 0, endNs: 1_000_000_000, value: 50},
+        {startNs: 1_000_000_000, endNs: 3_000_000_000, value: 80, delta: 30},
+        {startNs: 3_000_000_000, endNs: 5_000_000_000, value: 60, delta: -20},
+      ],
+      originalSampleCount: 4096,
+      coverage: [{sparkId: 27, planId: '05', status: 'scaffolded'}],
+    };
+    expect(contract.rle).toHaveLength(3);
+    expect(contract.rle![1].delta).toBe(30);
+    expect(contract.originalSampleCount).toBeGreaterThan(contract.rle!.length);
   });
 });
