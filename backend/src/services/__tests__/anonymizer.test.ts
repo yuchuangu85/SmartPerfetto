@@ -11,7 +11,8 @@ describe('Anonymizer', () => {
     const p1 = a.redact('package', 'com.example.app');
     const p2 = a.redact('package', 'com.example.app');
     expect(p1).toBe(p2);
-    expect(p1).toMatch(/^app_[0-9a-f]{8}$/);
+    // 12 hex chars after the domain prefix.
+    expect(p1).toMatch(/^app_[0-9a-f]{12}$/);
   });
 
   it('placeholder is deterministic across separate Anonymizer instances (Codex regression)', () => {
@@ -46,7 +47,29 @@ describe('Anonymizer', () => {
       'opened by com.example.app';
     const out = a.redactString('package', 'com.example.app', body);
     expect(out).not.toContain('com.example.app');
-    expect(out).toMatch(/app_[0-9a-f]{8}/);
+    expect(out).toMatch(/app_[0-9a-f]{12}/);
+  });
+
+  it('toContract strips raw originals from public mappings (Codex round 8 P1)', () => {
+    const a = new Anonymizer();
+    a.redact('package', 'com.confidential.app');
+    a.redact('path', '/data/data/com.confidential.app/secret.db');
+    const c = a.toContract();
+    expect(c.state).toBe('redacted');
+    for (const m of c.mappings) {
+      expect(m.original).toBe('');
+      expect(m.placeholder.length).toBeGreaterThan(0);
+    }
+    // Operators with the Anonymizer can still get the reverse table.
+    const raw = a.exportRawMappings();
+    expect(raw.find(m => m.original === 'com.confidential.app')).toBeDefined();
+  });
+
+  it('includeRawMappings preserves originals for operator-side use', () => {
+    const a = new Anonymizer();
+    a.redact('package', 'com.x');
+    const c = a.toContract({includeRawMappings: true});
+    expect(c.mappings[0].original).toBe('com.x');
   });
 
   it('toContract returns redacted state with no pending domains', () => {

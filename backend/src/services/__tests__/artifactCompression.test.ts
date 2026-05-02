@@ -125,6 +125,24 @@ describe('compressArtifact', () => {
     expect(maxDurInResult).toBeGreaterThanOrEqual(700);
   });
 
+  it('cuj_window fallback to full does NOT stamp window/range (Codex round 8 regression)', () => {
+    // Missing timestamp column → strategy falls back to 'full'.
+    // The contract must NOT carry compression.window or contract.range —
+    // otherwise consumers would treat the unfiltered artifact as bounded.
+    const result = compressArtifact({
+      artifactId: 'art-fallback',
+      columns: COLUMNS,
+      rows: ROWS,
+      strategy: 'cuj_window',
+      window: {startNs: 0, endNs: 1_000_000},
+      timestampColumn: 'nonexistent_ts',
+    });
+    expect(result.compressedRows.length).toBe(ROWS.length);
+    expect(result.contract.compression.strategy).toBe('full');
+    expect(result.contract.compression.window).toBeUndefined();
+    expect(result.contract.range).toBeUndefined();
+  });
+
   it('falls back to full when rankBy is unknown', () => {
     const result = compressArtifact({
       artifactId: 'art-6',

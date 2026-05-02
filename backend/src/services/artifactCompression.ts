@@ -219,12 +219,17 @@ export function compressArtifact(opts: CompressionOptions): CompressionResult {
   }
 
   const compressedRowCount = compressedRows.length;
+  // Codex round 8: only stamp window/range when the cuj_window strategy
+  // actually filtered the rows. If we fell back to 'full' (missing
+  // timestamp column or missing window), recording the window would
+  // mislead consumers into treating an unfiltered artifact as bounded.
+  const windowApplied = strategy === 'cuj_window' && opts.window !== undefined;
   const compression: ArtifactCompressionInfo = {
     strategy,
     originalRowCount,
     compressedRowCount,
     ratio: originalRowCount > 0 ? compressedRowCount / originalRowCount : 0,
-    ...(opts.window ? {window: opts.window} : {}),
+    ...(windowApplied ? {window: opts.window!} : {}),
     ...(strategy === 'top_k' ? {topK} : {}),
     ...(strategy === 'random' ? {randomSeed: opts.randomSeed ?? 1} : {}),
   };
@@ -241,7 +246,7 @@ export function compressArtifact(opts: CompressionOptions): CompressionResult {
     artifactId,
     columns: enrichedColumns,
     compression,
-    ...(opts.window ? {range: opts.window} : {}),
+    ...(windowApplied ? {range: opts.window!} : {}),
     ...(opts.rankBy ? {rankBy: opts.rankBy} : {}),
     ...(representativeIndices ? {clusterRepresentatives: representativeIndices} : {}),
     coverage: [

@@ -32,13 +32,18 @@ const DOMAIN_PREFIX: Record<AnonymizationDomain, string> = {
   device_id: 'device_',
 };
 
-/** Length of the hex suffix; 8 hex chars = 32 bits, ~negligible collision risk in practice. */
-const HASH_SUFFIX_LEN = 8;
+/**
+ * Length of the hex suffix. 12 hex chars = 48 bits — birthday-collision
+ * probability for 1M distinct values is ~1.7e-9, safe for any realistic
+ * trace. Codex round 8 caught that the prior 8-char suffix could collide
+ * for large `path` domains and the order-dependent `_<n>` tie-breaker
+ * undid the cross-run determinism.
+ */
+const HASH_SUFFIX_LEN = 12;
 
 function deterministicSuffix(domain: AnonymizationDomain, original: string): string {
   // SHA-256 is overkill but uniformly available in Node and produces a
-  // stable hex string regardless of process state, which is exactly what
-  // we need for cross-run mapping stability.
+  // stable hex string regardless of process state.
   const hash = crypto
     .createHash('sha256')
     .update(domain)
@@ -46,6 +51,16 @@ function deterministicSuffix(domain: AnonymizationDomain, original: string): str
     .update(original)
     .digest('hex');
   return hash.slice(0, HASH_SUFFIX_LEN);
+}
+
+/** Full SHA-256 hex used as a deterministic tie-breaker on collision. */
+function fullDeterministicSuffix(domain: AnonymizationDomain, original: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(domain)
+    .update('|')
+    .update(original)
+    .digest('hex');
 }
 
 /**
@@ -75,21 +90,26 @@ export class Anonymizer {
     const baseSuffix = deterministicSuffix(domain, original);
     let placeholder = `${prefix}${baseSuffix}`;
     let collisionIndex: number | undefined;
-    let collisionTry = 1;
 
-    // Resolve hash collision: another `original` already owns this
-    // placeholder for this domain. Walk a sub-suffix counter until free.
-    while (true) {
-      const ownerKey = `${domain}:${placeholder}`;
-      const existingOwner = this.placeholderOwners.get(ownerKey);
-      if (!existingOwner || existingOwner === original) break;
-      collisionIndex = collisionTry;
-      placeholder = `${prefix}${baseSuffix}_${collisionTry}`;
-      collisionTry += 1;
-      if (collisionTry > 1000) {
-        // Defensive cap; mathematically unreachable for SHA-256 + 8 hex
-        // chars at any realistic input size, but bail rather than spin.
-        throw new Error(`Anonymizer: too many collisions for ${domain}/${original}`);
+    const ownerKey = `${domain}:${placeholder}`;
+    const existingOwnerOriginal = this.placeholderOwners.get(ownerKey);
+    if (existingOwnerOriginal && existingOwnerOriginal !== original) {
+      // Hash collision detected. Switch BOTH originals to a fully unique
+      // suffix derived from their full hash, so the resolution is
+      // deterministic regardless of which value was redacted first.
+      // Codex round 8 caught that the prior `_<n>` counter was
+      // order-dependent for collision pairs.
+      collisionIndex = 1;
+      placeholder = `${prefix}${fullDeterministicSuffix(domain, original)}`;
+
+      const otherKey = this.keyOf(domain, existingOwnerOriginal);
+      const otherMapping = this.mappings.get(otherKey);
+      if (otherMapping && otherMapping.placeholder === `${prefix}${baseSuffix}`) {
+        const otherFull = `${prefix}${fullDeterministicSuffix(domain, existingOwnerOriginal)}`;
+        this.placeholderOwners.delete(ownerKey);
+        this.placeholderOwners.set(`${domain}:${otherFull}`, existingOwnerOriginal);
+        otherMapping.placeholder = otherFull;
+        otherMapping.collisionIndex = 1;
       }
     }
 
@@ -110,12 +130,32 @@ export class Anonymizer {
     return body.split(original).join(placeholder);
   }
 
-  /** Snapshot all mappings (sorted by domain then original for stability). */
-  getMappings(): AnonymizationMapping[] {
+  /**
+   * Full mapping table including raw `original` values. Operators who own
+   * the Anonymizer instance use this to reverse a redacted artifact back
+   * to identifying values — DO NOT attach this to a public contract.
+   */
+  exportRawMappings(): AnonymizationMapping[] {
     return Array.from(this.mappings.values()).sort((a, b) => {
       if (a.domain !== b.domain) return a.domain.localeCompare(b.domain);
       return a.original.localeCompare(b.original);
     });
+  }
+
+  /**
+   * Public-safe mapping snapshot — `original` is stripped so a redacted
+   * contract attached to an exported artifact cannot leak package names,
+   * paths, or user IDs. Codex round 8 caught the previous behavior as a
+   * P1 because `getMappings()` was returning sensitive originals inside
+   * a contract whose `state: 'redacted'` advertised it as safe to ship.
+   */
+  getMappings(): AnonymizationMapping[] {
+    return this.exportRawMappings().map(m => ({
+      domain: m.domain,
+      original: '',
+      placeholder: m.placeholder,
+      ...(m.collisionIndex !== undefined ? {collisionIndex: m.collisionIndex} : {}),
+    }));
   }
 
   /** Build a contract describing the current redaction state. */
@@ -123,11 +163,18 @@ export class Anonymizer {
     state?: 'raw' | 'partial' | 'redacted';
     pendingDomains?: AnonymizationDomain[];
     streamProgress?: LargeTraceStreamProgress;
+    /**
+     * Set true ONLY when the contract is consumed by an operator who
+     * already has access to the raw trace (e.g. for in-process diff/
+     * correlation). Defaults false — public/exported contracts must
+     * never include raw originals.
+     */
+    includeRawMappings?: boolean;
   } = {}): AnonymizationContract {
     return {
       ...makeSparkProvenance({source: 'anonymizer'}),
       state: opts.state ?? (opts.pendingDomains && opts.pendingDomains.length > 0 ? 'partial' : 'redacted'),
-      mappings: this.getMappings(),
+      mappings: opts.includeRawMappings ? this.exportRawMappings() : this.getMappings(),
       ...(opts.pendingDomains ? {pendingDomains: opts.pendingDomains} : {}),
       ...(opts.streamProgress ? {streamProgress: opts.streamProgress} : {}),
       coverage: [
