@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Gracker (Chris)
+// This file is part of SmartPerfetto. See LICENSE for details.
+
+import {describe, it, expect} from '@jest/globals';
+import {
+  evaluateAssertion,
+  resolvePath,
+  runDomainSkillEvalHarness,
+} from '../domainSkillEvalHarness';
+import {
+  makeSparkProvenance,
+  type DomainSkillEvalContract,
+} from '../../types/sparkContracts';
+
+describe('resolvePath', () => {
+  it('walks dot-notation paths', () => {
+    const r = resolvePath({summary: {ttid_ms: 1234}}, '$.summary.ttid_ms');
+    expect(r.found).toBe(true);
+    expect(r.value).toBe(1234);
+  });
+
+  it('walks array index paths', () => {
+    const r = resolvePath(
+      {diagnostics: [{reason_code: 'workload_heavy'}]},
+      '$.diagnostics[0].reason_code',
+    );
+    expect(r.found).toBe(true);
+    expect(r.value).toBe('workload_heavy');
+  });
+
+  it('reports not found for missing keys', () => {
+    expect(resolvePath({}, '$.missing.path').found).toBe(false);
+  });
+});
+
+describe('evaluateAssertion', () => {
+  it('checks equality without operator prefix', () => {
+    expect(
+      evaluateAssertion({a: 'x'}, {path: '$.a', expected: 'x'}).ok,
+    ).toBe(true);
+    expect(
+      evaluateAssertion({a: 'x'}, {path: '$.a', expected: 'y'}).ok,
+    ).toBe(false);
+  });
+
+  it('honors numeric comparison operators', () => {
+    expect(
+      evaluateAssertion({a: 100}, {path: '$.a', expected: '<200'}).ok,
+    ).toBe(true);
+    expect(
+      evaluateAssertion({a: 100}, {path: '$.a', expected: '<=100'}).ok,
+    ).toBe(true);
+    expect(
+      evaluateAssertion({a: 100}, {path: '$.a', expected: '>=200'}).ok,
+    ).toBe(false);
+  });
+});
+
+describe('runDomainSkillEvalHarness', () => {
+  function buildContract(): DomainSkillEvalContract {
+    return {
+      ...makeSparkProvenance({source: 'eval-harness-test'}),
+      cases: [
+        {
+          caseId: 'scrolling/jank/heavy',
+          tracePath: 'fixtures/heavy.pftrace',
+          skillId: 'scrolling_analysis',
+        },
+      ],
+      assertions: {
+        'scrolling/jank/heavy': [
+          {path: '$.diagnostics[0].reason_code', expected: 'workload_heavy'},
+          {path: '$.summary.jank_count', expected: '<10'},
+        ],
+      },
+      coverage: [{sparkId: 99, planId: '18', status: 'implemented'}],
+    };
+  }
+
+  it('marks pass when all assertions hold', async () => {
+    const runner = async () => ({
+      diagnostics: [{reason_code: 'workload_heavy'}],
+      summary: {jank_count: 5},
+    });
+    const results = await runDomainSkillEvalHarness({contract: buildContract(), runner});
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('pass');
+    expect(results[0].assertionsPassed).toBe(2);
+    expect(results[0].assertionsFailed).toBe(0);
+  });
+
+  it('records per-assertion failures', async () => {
+    const runner = async () => ({
+      diagnostics: [{reason_code: 'lock_contention'}],
+      summary: {jank_count: 50},
+    });
+    const results = await runDomainSkillEvalHarness({contract: buildContract(), runner});
+    expect(results[0].status).toBe('fail');
+    expect(results[0].assertionsFailed).toBe(2);
+    expect(results[0].failures).toHaveLength(2);
+  });
+
+  it('captures runner exceptions as a single failure', async () => {
+    const runner = async () => {
+      throw new Error('trace_processor crash');
+    };
+    const results = await runDomainSkillEvalHarness({contract: buildContract(), runner});
+    expect(results[0].status).toBe('fail');
+    expect(results[0].failures && results[0].failures[0].actual).toMatch(/crash/);
+  });
+
+  it('respects filterCaseIds', async () => {
+    const runner = async () => ({});
+    const results = await runDomainSkillEvalHarness({
+      contract: buildContract(),
+      runner,
+      filterCaseIds: ['some/other/case'],
+    });
+    expect(results).toEqual([]);
+  });
+});
