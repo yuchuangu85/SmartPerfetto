@@ -30,6 +30,7 @@ import advancedAIRoutes from './routes/advancedAIRoutes';
 import providerRoutes from './routes/providerRoutes';
 import flamegraphRoutes from './routes/flamegraphRoutes';
 import baselineRoutes from './routes/baselineRoutes';
+import memoryRoutes from './routes/memoryRoutes';
 import {
   assertTraceAnalysisConfiguredForStartup,
   getTraceAnalysisConfigurationStatus,
@@ -147,6 +148,7 @@ app.use('/api/advanced-ai', advancedAIRoutes);
 app.use('/api/v1/providers', providerRoutes);
 app.use('/api/flamegraph', flamegraphRoutes);
 app.use('/api/baselines', baselineRoutes);
+app.use('/api/memory', memoryRoutes);
 app.use(LEGACY_AGENT_API_BASE, rejectLegacyAgentApi);
 
 const assistantShellDir = path.resolve(__dirname, '../public/assistant-shell');
