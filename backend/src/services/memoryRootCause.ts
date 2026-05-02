@@ -47,9 +47,19 @@ function topContributors(
     .slice(0, topK);
 }
 
+/** "Has data" guard that rejects both undefined and [] (Codex regression). */
+function hasRows<T>(rows: T[] | undefined): rows is T[] {
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 export function buildMemoryRootCause(
   input: MemoryRootCauseInput,
 ): MemoryRootCauseContract {
+  const hasProcess = hasRows(input.processSnapshots);
+  const hasLmk = hasRows(input.lmkEvents);
+  const hasDma = hasRows(input.dmaAllocations);
+  const hasExternal = hasRows(input.externalArtifacts);
+
   const baselineDiff = input.baseline
     ? {
       baselineId: input.baseline.baselineId,
@@ -61,10 +71,10 @@ export function buildMemoryRootCause(
     : undefined;
 
   const allEmpty =
-    !input.processSnapshots
-    && !input.lmkEvents
-    && !input.dmaAllocations
-    && !input.externalArtifacts
+    !hasProcess
+    && !hasLmk
+    && !hasDma
+    && !hasExternal
     && !baselineDiff;
 
   return {
@@ -73,20 +83,20 @@ export function buildMemoryRootCause(
       ...(allEmpty ? {unsupportedReason: 'no memory facets supplied'} : {}),
     }),
     range: input.range,
-    ...(input.processSnapshots ? {processSnapshots: input.processSnapshots} : {}),
-    ...(input.lmkEvents ? {lmkEvents: input.lmkEvents} : {}),
-    ...(input.dmaAllocations ? {dmaAllocations: input.dmaAllocations} : {}),
-    ...(input.externalArtifacts ? {externalArtifacts: input.externalArtifacts} : {}),
+    ...(hasProcess ? {processSnapshots: input.processSnapshots} : {}),
+    ...(hasLmk ? {lmkEvents: input.lmkEvents} : {}),
+    ...(hasDma ? {dmaAllocations: input.dmaAllocations} : {}),
+    ...(hasExternal ? {externalArtifacts: input.externalArtifacts} : {}),
     ...(baselineDiff ? {baselineDiff} : {}),
     coverage: [
-      {sparkId: 11, planId: '14', status: input.processSnapshots ? 'implemented' : 'scaffolded'},
-      {sparkId: 12, planId: '14', status: input.lmkEvents ? 'implemented' : 'scaffolded'},
-      {sparkId: 13, planId: '14', status: input.dmaAllocations ? 'implemented' : 'scaffolded'},
+      {sparkId: 11, planId: '14', status: hasProcess ? 'implemented' : 'scaffolded'},
+      {sparkId: 12, planId: '14', status: hasLmk ? 'implemented' : 'scaffolded'},
+      {sparkId: 13, planId: '14', status: hasDma ? 'implemented' : 'scaffolded'},
       {sparkId: 34, planId: '14', status: baselineDiff ? 'implemented' : 'scaffolded'},
-      {sparkId: 51, planId: '14', status: input.externalArtifacts?.some(a => a.kind === 'leak_canary') ? 'implemented' : 'scaffolded'},
-      {sparkId: 70, planId: '14', status: input.externalArtifacts?.some(a => a.kind === 'leak_canary') ? 'implemented' : 'scaffolded'},
-      {sparkId: 109, planId: '14', status: input.externalArtifacts?.some(a => a.kind === 'leak_canary') ? 'implemented' : 'scaffolded'},
-      {sparkId: 112, planId: '14', status: input.externalArtifacts?.some(a => a.kind === 'koom') ? 'implemented' : 'scaffolded'},
+      {sparkId: 51, planId: '14', status: hasExternal && input.externalArtifacts!.some(a => a.kind === 'leak_canary') ? 'implemented' : 'scaffolded'},
+      {sparkId: 70, planId: '14', status: hasExternal && input.externalArtifacts!.some(a => a.kind === 'leak_canary') ? 'implemented' : 'scaffolded'},
+      {sparkId: 109, planId: '14', status: hasExternal && input.externalArtifacts!.some(a => a.kind === 'leak_canary') ? 'implemented' : 'scaffolded'},
+      {sparkId: 112, planId: '14', status: hasExternal && input.externalArtifacts!.some(a => a.kind === 'koom') ? 'implemented' : 'scaffolded'},
     ],
   };
 }

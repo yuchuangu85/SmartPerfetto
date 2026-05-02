@@ -45,30 +45,38 @@ function pruneMethodTraceChildren(
   }));
 }
 
+/** "Has data" guard that rejects both undefined and [] (Codex regression). */
+function hasRows<T>(rows: T[] | undefined): rows is T[] {
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 export function buildStartupAnrMethodGraph(
   options: StartupAnrMethodGraphOptions,
 ): StartupAnrMethodGraphContract {
-  const methodTraceGraph = pruneMethodTraceChildren(options.methodTraceGraph);
+  const prunedMethodGraph = pruneMethodTraceChildren(options.methodTraceGraph);
+  const hasStartup = hasRows(options.startupPhases);
+  const hasAnr = hasRows(options.anrAttributions);
+  const hasMethod = hasRows(prunedMethodGraph);
+  const hasTree = Boolean(options.decisionTree);
 
-  const allEmpty =
-    !options.startupPhases
-    && !options.anrAttributions
-    && !methodTraceGraph
-    && !options.decisionTree;
+  const allEmpty = !hasStartup && !hasAnr && !hasMethod && !hasTree;
 
   // Phase coverage detection — flips coverage entries when a phase row
   // surfaces evidence for a particular spark.
-  const hasArtJit = options.startupPhases?.some(
+  const hasArtJit = hasStartup && options.startupPhases!.some(
     p => p.artVerifierDurNs !== undefined || p.jitDurNs !== undefined || p.classLoadingDurNs !== undefined,
   );
-  const hasCompose = options.startupPhases?.some(
+  const hasCompose = hasStartup && options.startupPhases!.some(
     p => p.recompositionCount !== undefined && p.recompositionCount > 0,
   );
-  const hasInitializers = options.startupPhases?.some(
-    p => p.initializersFired && p.initializersFired.length > 0,
+  const hasInitializers = hasStartup && options.startupPhases!.some(
+    p => p.initializersFired !== undefined && p.initializersFired.length > 0,
   );
   const methodSources = new Set(
-    (methodTraceGraph ?? []).map(n => n.source).filter(Boolean) as string[],
+    hasMethod ? (prunedMethodGraph!.map(n => n.source).filter(Boolean) as string[]) : [],
+  );
+  const hasAnrThreadSamples = hasAnr && options.anrAttributions!.some(
+    a => a.threadSamples !== undefined && a.threadSamples.length > 0,
   );
 
   return {
@@ -77,14 +85,14 @@ export function buildStartupAnrMethodGraph(
       ...(allEmpty ? {unsupportedReason: 'no startup / ANR / method-trace facets supplied'} : {}),
     }),
     range: options.range,
-    ...(options.startupPhases ? {startupPhases: options.startupPhases} : {}),
-    ...(options.anrAttributions ? {anrAttributions: options.anrAttributions} : {}),
-    ...(methodTraceGraph ? {methodTraceGraph} : {}),
-    ...(options.decisionTree ? {decisionTree: options.decisionTree} : {}),
+    ...(hasStartup ? {startupPhases: options.startupPhases} : {}),
+    ...(hasAnr ? {anrAttributions: options.anrAttributions} : {}),
+    ...(hasMethod ? {methodTraceGraph: prunedMethodGraph} : {}),
+    ...(hasTree ? {decisionTree: options.decisionTree} : {}),
     coverage: [
-      {sparkId: 32, planId: '17', status: options.startupPhases ? 'implemented' : 'scaffolded'},
-      {sparkId: 33, planId: '17', status: options.anrAttributions ? 'implemented' : 'scaffolded'},
-      {sparkId: 49, planId: '17', status: options.anrAttributions?.some(a => a.threadSamples?.length) ? 'implemented' : 'scaffolded'},
+      {sparkId: 32, planId: '17', status: hasStartup ? 'implemented' : 'scaffolded'},
+      {sparkId: 33, planId: '17', status: hasAnr ? 'implemented' : 'scaffolded'},
+      {sparkId: 49, planId: '17', status: hasAnrThreadSamples ? 'implemented' : 'scaffolded'},
       {sparkId: 68, planId: '17', status: hasCompose ? 'implemented' : 'scaffolded'},
       {sparkId: 69, planId: '17', status: hasInitializers ? 'implemented' : 'scaffolded'},
       {sparkId: 72, planId: '17', status: methodSources.has('matrix') || methodSources.has('btrace') || methodSources.has('rheatrace') || methodSources.has('koom') ? 'implemented' : 'scaffolded'},

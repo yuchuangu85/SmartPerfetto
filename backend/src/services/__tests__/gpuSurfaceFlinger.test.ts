@@ -36,6 +36,24 @@ describe('buildGpuSurfaceFlinger', () => {
     const c = buildGpuSurfaceFlinger({range: {startNs: 0, endNs: 1}});
     expect(isUnsupported(c)).toBe(true);
   });
+
+  it('treats empty arrays as missing data, not as supported coverage (Codex regression)', () => {
+    const c = buildGpuSurfaceFlinger({
+      range: {startNs: 0, endNs: 1},
+      renderStages: [],
+      surfaceFlingerCompositions: [],
+      gpuMemory: [],
+      vendorProfilerImports: [],
+    });
+    expect(isUnsupported(c)).toBe(true);
+    expect(c.renderStages).toBeUndefined();
+    expect(c.surfaceFlingerCompositions).toBeUndefined();
+    expect(c.gpuMemory).toBeUndefined();
+    expect(c.vendorProfilerImports).toBeUndefined();
+    for (const entry of c.coverage) {
+      expect(entry.status).toBe('scaffolded');
+    }
+  });
 });
 
 describe('summarizeComposition', () => {

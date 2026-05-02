@@ -6,10 +6,15 @@
  * Anonymizer + Large-Trace Streaming Helpers (Spark Plan 06)
  *
  * Stable identifier mapping per AnonymizationDomain so the same package
- * always becomes the same placeholder across runs (Spark #29). Streaming
- * progress reporter for large-trace ingestion (Spark #30).
+ * always becomes the same placeholder across runs (Spark #29). Placeholder
+ * suffixes are derived from a deterministic hash of `domain + original`
+ * so cross-run diffs and correlations stay valid — Codex review caught
+ * that order-dependent counters meant the same package could be `app_1`
+ * on one run and `app_2` on another. Streaming progress reporter for
+ * large-trace ingestion (Spark #30).
  */
 
+import * as crypto from 'crypto';
 import {
   makeSparkProvenance,
   type AnonymizationContract,
@@ -27,13 +32,34 @@ const DOMAIN_PREFIX: Record<AnonymizationDomain, string> = {
   device_id: 'device_',
 };
 
+/** Length of the hex suffix; 8 hex chars = 32 bits, ~negligible collision risk in practice. */
+const HASH_SUFFIX_LEN = 8;
+
+function deterministicSuffix(domain: AnonymizationDomain, original: string): string {
+  // SHA-256 is overkill but uniformly available in Node and produces a
+  // stable hex string regardless of process state, which is exactly what
+  // we need for cross-run mapping stability.
+  const hash = crypto
+    .createHash('sha256')
+    .update(domain)
+    .update('|')
+    .update(original)
+    .digest('hex');
+  return hash.slice(0, HASH_SUFFIX_LEN);
+}
+
 /**
- * Stable, in-process anonymizer. Same input value always maps to same
- * placeholder for the same domain.
+ * Stable anonymizer. Same input value always maps to same placeholder for
+ * the same domain — order-independent, no shared mutable counter.
  */
 export class Anonymizer {
   private mappings: Map<string, AnonymizationMapping> = new Map();
-  private counters: Map<AnonymizationDomain, number> = new Map();
+  /**
+   * Reverse lookup so we can detect collisions and assign a numeric
+   * `collisionIndex` if two distinct originals hash to the same suffix.
+   * Keyed by `${domain}:${placeholder}` to keep domains separate.
+   */
+  private placeholderOwners: Map<string, string> = new Map();
 
   private keyOf(domain: AnonymizationDomain, original: string): string {
     return `${domain}:${original}`;
@@ -44,11 +70,36 @@ export class Anonymizer {
     const key = this.keyOf(domain, original);
     const cached = this.mappings.get(key);
     if (cached) return cached.placeholder;
-    const next = (this.counters.get(domain) ?? 0) + 1;
-    this.counters.set(domain, next);
+
     const prefix = DOMAIN_PREFIX[domain] ?? 'redacted_';
-    const placeholder = `${prefix}${next}`;
-    this.mappings.set(key, {domain, original, placeholder});
+    const baseSuffix = deterministicSuffix(domain, original);
+    let placeholder = `${prefix}${baseSuffix}`;
+    let collisionIndex: number | undefined;
+    let collisionTry = 1;
+
+    // Resolve hash collision: another `original` already owns this
+    // placeholder for this domain. Walk a sub-suffix counter until free.
+    while (true) {
+      const ownerKey = `${domain}:${placeholder}`;
+      const existingOwner = this.placeholderOwners.get(ownerKey);
+      if (!existingOwner || existingOwner === original) break;
+      collisionIndex = collisionTry;
+      placeholder = `${prefix}${baseSuffix}_${collisionTry}`;
+      collisionTry += 1;
+      if (collisionTry > 1000) {
+        // Defensive cap; mathematically unreachable for SHA-256 + 8 hex
+        // chars at any realistic input size, but bail rather than spin.
+        throw new Error(`Anonymizer: too many collisions for ${domain}/${original}`);
+      }
+    }
+
+    this.placeholderOwners.set(`${domain}:${placeholder}`, original);
+    this.mappings.set(key, {
+      domain,
+      original,
+      placeholder,
+      ...(collisionIndex !== undefined ? {collisionIndex} : {}),
+    });
     return placeholder;
   }
 

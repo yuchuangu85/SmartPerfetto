@@ -164,6 +164,7 @@ describe('Plan 03 — SmartPerfettoSqlPackageContract', () => {
       symbols: [
         {
           name: 'smartperfetto.scrolling.jank_frames',
+          sqlName: 'smartperfetto_scrolling_jank_frames',
           kind: 'view',
           module: 'scrolling/jank_frames.sql',
           dependencies: ['android.frames.timeline'],
@@ -171,6 +172,7 @@ describe('Plan 03 — SmartPerfettoSqlPackageContract', () => {
         },
         {
           name: 'smartperfetto.binder.victim_to_server',
+          sqlName: 'smartperfetto_binder_victim_to_server',
           kind: 'function',
           module: 'binder/victim_to_server.sql',
           dependencies: ['android.binder'],

@@ -51,4 +51,21 @@ describe('buildCpuThermalPmu', () => {
     const c = buildCpuThermalPmu({range: {startNs: 0, endNs: 1}});
     expect(isUnsupported(c)).toBe(true);
   });
+
+  it('treats empty arrays as missing data, not as supported coverage (Codex regression)', () => {
+    const c = buildCpuThermalPmu({
+      range: {startNs: 0, endNs: 1},
+      freqSamples: [],
+      thermalSamples: [],
+      pmuSamples: [],
+    });
+    expect(isUnsupported(c)).toBe(true);
+    expect(c.cpuFreqResidency).toBeUndefined();
+    expect(c.thermalSamples).toBeUndefined();
+    expect(c.thermalDecision).toBeUndefined();
+    expect(c.pmuAttribution).toBeUndefined();
+    for (const entry of c.coverage) {
+      expect(entry.status).toBe('scaffolded');
+    }
+  });
 });

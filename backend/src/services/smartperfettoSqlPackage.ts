@@ -29,6 +29,8 @@ interface PackageManifest {
   packageVersion: string;
   symbols: Array<{
     name: string;
+    /** Optional override; when missing, derived by replacing dots with underscores. */
+    sqlName?: string;
     kind: SmartPerfettoSqlSymbolKind;
     module: string;
     summary?: string;
@@ -36,6 +38,16 @@ interface PackageManifest {
     dependencies?: string[];
     stability?: 'experimental' | 'stable' | 'deprecated';
   }>;
+}
+
+/**
+ * Derive the actual SQL identifier from the dotted docs path. Perfetto
+ * SQL identifiers cannot contain dots, so we mirror the stdlib convention
+ * of underscore-separated names. Manifest entries can override via the
+ * explicit `sqlName` field.
+ */
+function deriveSqlName(name: string): string {
+  return name.replace(/\./g, '_');
 }
 
 /** Default location for the SmartPerfetto SQL package directory. */
@@ -81,10 +93,12 @@ export function loadSmartPerfettoSqlPackage(
   const symbols: SmartPerfettoSqlSymbol[] = [];
   const removed: SmartPerfettoSqlSymbol[] = [];
   for (const declared of manifest.symbols ?? []) {
+    const sqlName = declared.sqlName ?? deriveSqlName(declared.name);
     const sqlPath = path.join(packageDir, declared.module);
     if (!fs.existsSync(sqlPath)) {
       removed.push({
         name: declared.name,
+        sqlName,
         kind: declared.kind,
         module: declared.module,
         summary: declared.summary,
@@ -96,6 +110,7 @@ export function loadSmartPerfettoSqlPackage(
     }
     symbols.push({
       name: declared.name,
+      sqlName,
       kind: declared.kind,
       module: declared.module,
       summary: declared.summary,

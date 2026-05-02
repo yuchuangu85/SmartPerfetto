@@ -11,15 +11,32 @@ describe('Anonymizer', () => {
     const p1 = a.redact('package', 'com.example.app');
     const p2 = a.redact('package', 'com.example.app');
     expect(p1).toBe(p2);
-    expect(p1).toBe('app_1');
+    expect(p1).toMatch(/^app_[0-9a-f]{8}$/);
   });
 
-  it('separates counters per domain', () => {
+  it('placeholder is deterministic across separate Anonymizer instances (Codex regression)', () => {
+    // Order independence: two runs with different scan orders must produce
+    // the same placeholder for the same input.
+    const runA = new Anonymizer();
+    runA.redact('package', 'com.first');
+    runA.redact('package', 'com.second');
+    const targetA = runA.redact('package', 'com.example.app');
+
+    const runB = new Anonymizer();
+    runB.redact('package', 'com.example.app'); // encountered first in this run
+    runB.redact('package', 'com.first');
+    const targetB = runB.redact('package', 'com.example.app');
+
+    expect(targetA).toBe(targetB);
+  });
+
+  it('separates per-domain placeholders even for identical original strings', () => {
     const a = new Anonymizer();
-    expect(a.redact('package', 'com.a')).toBe('app_1');
-    expect(a.redact('process', 'main')).toBe('proc_1');
-    expect(a.redact('package', 'com.b')).toBe('app_2');
-    expect(a.redact('process', 'render')).toBe('proc_2');
+    const pkg = a.redact('package', 'main');
+    const proc = a.redact('process', 'main');
+    expect(pkg).not.toBe(proc);
+    expect(pkg.startsWith('app_')).toBe(true);
+    expect(proc.startsWith('proc_')).toBe(true);
   });
 
   it('redactString replaces every occurrence in a body', () => {
@@ -29,7 +46,7 @@ describe('Anonymizer', () => {
       'opened by com.example.app';
     const out = a.redactString('package', 'com.example.app', body);
     expect(out).not.toContain('com.example.app');
-    expect(out).toMatch(/app_1/);
+    expect(out).toMatch(/app_[0-9a-f]{8}/);
   });
 
   it('toContract returns redacted state with no pending domains', () => {

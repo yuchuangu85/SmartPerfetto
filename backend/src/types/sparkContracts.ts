@@ -236,8 +236,15 @@ export type SmartPerfettoSqlSymbolKind =
 
 /** Single symbol exported by the `smartperfetto.*` SQL package. */
 export interface SmartPerfettoSqlSymbol {
-  /** Fully qualified name, e.g. `smartperfetto.scrolling.jank_frames`. */
+  /** Fully qualified docs path, e.g. `smartperfetto.scrolling.jank_frames`. */
   name: string;
+  /**
+   * The actual SQL identifier callers use in `SELECT ... FROM <sqlName>`,
+   * e.g. `smartperfetto_scrolling_jank_frames`. Codex review caught that
+   * `name` is a dotted docs path which is not a valid Perfetto SQL
+   * identifier; consumers must always quote `sqlName` in generated SQL.
+   */
+  sqlName: string;
   kind: SmartPerfettoSqlSymbolKind;
   /** Module file containing the definition (relative to package root). */
   module: string;

@@ -29,15 +29,27 @@ export interface GpuSurfaceFlingerOptions {
   surfaceFlingerLatency?: GpuSurfaceFlingerContract['surfaceFlingerLatency'];
 }
 
+/** "Has data" guard that rejects both undefined and [] (Codex regression). */
+function hasRows<T>(rows: T[] | undefined): rows is T[] {
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 export function buildGpuSurfaceFlinger(
   options: GpuSurfaceFlingerOptions,
 ): GpuSurfaceFlingerContract {
-  const allEmpty =
-    !options.renderStages
-    && !options.surfaceFlingerCompositions
-    && !options.gpuMemory
-    && !options.vendorProfilerImports
-    && !options.surfaceFlingerLatency;
+  const hasRender = hasRows(options.renderStages);
+  const hasSf = hasRows(options.surfaceFlingerCompositions);
+  const hasGpuMem = hasRows(options.gpuMemory);
+  const hasVendor = hasRows(options.vendorProfilerImports);
+  const hasLatency = Boolean(options.surfaceFlingerLatency);
+
+  const allEmpty = !hasRender && !hasSf && !hasGpuMem && !hasVendor && !hasLatency;
+
+  const hasAgi = hasVendor && options.vendorProfilerImports!.some(v => v.kind === 'agi');
+  const hasNonAgi = hasVendor && options.vendorProfilerImports!.some(v => v.kind !== 'agi');
+  const hasNamedVendor = hasVendor && options.vendorProfilerImports!.some(
+    v => v.kind === 'mali' || v.kind === 'snapdragon' || v.kind === 'powervr',
+  );
 
   return {
     ...makeSparkProvenance({
@@ -45,25 +57,19 @@ export function buildGpuSurfaceFlinger(
       ...(allEmpty ? {unsupportedReason: 'no GPU / SF facets supplied'} : {}),
     }),
     range: options.range,
-    ...(options.renderStages ? {renderStages: options.renderStages} : {}),
-    ...(options.surfaceFlingerCompositions
-      ? {surfaceFlingerCompositions: options.surfaceFlingerCompositions}
-      : {}),
-    ...(options.gpuMemory ? {gpuMemory: options.gpuMemory} : {}),
-    ...(options.vendorProfilerImports
-      ? {vendorProfilerImports: options.vendorProfilerImports}
-      : {}),
-    ...(options.surfaceFlingerLatency
-      ? {surfaceFlingerLatency: options.surfaceFlingerLatency}
-      : {}),
+    ...(hasRender ? {renderStages: options.renderStages} : {}),
+    ...(hasSf ? {surfaceFlingerCompositions: options.surfaceFlingerCompositions} : {}),
+    ...(hasGpuMem ? {gpuMemory: options.gpuMemory} : {}),
+    ...(hasVendor ? {vendorProfilerImports: options.vendorProfilerImports} : {}),
+    ...(hasLatency ? {surfaceFlingerLatency: options.surfaceFlingerLatency} : {}),
     coverage: [
-      {sparkId: 14, planId: '16', status: options.renderStages || options.gpuMemory ? 'implemented' : 'scaffolded'},
-      {sparkId: 19, planId: '16', status: options.surfaceFlingerCompositions ? 'implemented' : 'scaffolded'},
-      {sparkId: 46, planId: '16', status: options.surfaceFlingerLatency ? 'implemented' : 'scaffolded'},
-      {sparkId: 65, planId: '16', status: options.vendorProfilerImports?.some(v => v.kind === 'agi') ? 'implemented' : 'scaffolded'},
-      {sparkId: 66, planId: '16', status: options.vendorProfilerImports?.some(v => v.kind === 'mali' || v.kind === 'snapdragon' || v.kind === 'powervr') ? 'implemented' : 'scaffolded'},
-      {sparkId: 106, planId: '16', status: options.vendorProfilerImports?.some(v => v.kind === 'agi') ? 'implemented' : 'scaffolded'},
-      {sparkId: 107, planId: '16', status: options.vendorProfilerImports?.some(v => v.kind !== 'agi') ? 'implemented' : 'scaffolded'},
+      {sparkId: 14, planId: '16', status: hasRender || hasGpuMem ? 'implemented' : 'scaffolded'},
+      {sparkId: 19, planId: '16', status: hasSf ? 'implemented' : 'scaffolded'},
+      {sparkId: 46, planId: '16', status: hasLatency ? 'implemented' : 'scaffolded'},
+      {sparkId: 65, planId: '16', status: hasAgi ? 'implemented' : 'scaffolded'},
+      {sparkId: 66, planId: '16', status: hasNamedVendor ? 'implemented' : 'scaffolded'},
+      {sparkId: 106, planId: '16', status: hasAgi ? 'implemented' : 'scaffolded'},
+      {sparkId: 107, planId: '16', status: hasNonAgi ? 'implemented' : 'scaffolded'},
     ],
   };
 }

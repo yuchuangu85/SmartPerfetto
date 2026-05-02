@@ -87,30 +87,43 @@ function decideThermal(
   return 'cool';
 }
 
+/**
+ * "Has data" check that rejects both undefined and []. Codex review caught
+ * the same bug here that ioNetworkWakeup had: empty result arrays were
+ * being marked as supported coverage instead of missing evidence.
+ */
+function hasRows<T>(rows: T[] | undefined): rows is T[] {
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 export function buildCpuThermalPmu(
   options: CpuThermalPmuOptions,
 ): CpuThermalPmuContract {
-  const cpuFreqResidency = buildResidency(options.range, options.freqSamples);
-  const thermalSamples: ThermalSample[] | undefined = options.thermalSamples?.map(
-    s => ({
+  const freqHasRows = hasRows(options.freqSamples);
+  const thermalHasRows = hasRows(options.thermalSamples);
+  const pmuHasRows = hasRows(options.pmuSamples);
+
+  const cpuFreqResidency = freqHasRows ? buildResidency(options.range, options.freqSamples) : undefined;
+  const thermalSamples: ThermalSample[] | undefined = thermalHasRows
+    ? options.thermalSamples!.map(s => ({
       zone: s.zone,
       ts: s.ts,
       tempMc: s.tempMc,
       ...(s.throttleStage !== undefined ? {throttleStage: s.throttleStage} : {}),
-    }),
-  );
-  const thermalDecision = decideThermal(options.thermalSamples);
+    }))
+    : undefined;
+  const thermalDecision = thermalHasRows ? decideThermal(options.thermalSamples) : undefined;
 
-  const pmuAttribution: PmuAttributionRow[] | undefined = options.pmuSamples?.map(
-    s => ({
+  const pmuAttribution: PmuAttributionRow[] | undefined = pmuHasRows
+    ? options.pmuSamples!.map(s => ({
       counter: s.counter,
       ...(s.utid !== undefined ? {utid: s.utid} : {}),
       ...(s.process ? {process: s.process} : {}),
       ...(s.thread ? {thread: s.thread} : {}),
       value: s.value,
       ...(s.derived ? {derived: s.derived} : {}),
-    }),
-  );
+    }))
+    : undefined;
 
   let smoothVsJank: CpuThermalPmuContract['smoothVsJankComparison'];
   if (options.smoothFraction !== undefined && options.jankFraction !== undefined) {

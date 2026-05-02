@@ -45,6 +45,19 @@ describe('stdlibSkillCoverage', () => {
     }
   }, 30000);
 
+  it('counts explicit INCLUDE statements as detected usage (Codex regression)', async () => {
+    // After the Codex fix, a skill that already wrote `INCLUDE PERFETTO MODULE
+    // android.binder` in its SQL must NOT be reported as `declaredButUnused`
+    // — that explicit INCLUDE is exactly the form we want skill authors to
+    // use, and it should count as detected stdlib usage.
+    const contract = await analyzeStdlibSkillCoverage({ignoreSnapshot: true});
+    const binderRootCause = contract.skillUsage.find(u => u.skillId === 'binder_root_cause');
+    if (binderRootCause) {
+      // binder_root_cause's SQL already explicitly includes android.binder.
+      expect(binderRootCause.detected).toContain('android.binder');
+    }
+  }, 30000);
+
   it('round-trips through a snapshot to surface newly added modules', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stdlib-cov-'));
     const snapshotPath = path.join(tmpDir, 'snapshot.json');

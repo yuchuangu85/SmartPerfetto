@@ -35,12 +35,29 @@ import {
   type StdlibSkillUsage,
 } from '../types/sparkContracts';
 
+/**
+ * Match an explicit `INCLUDE PERFETTO MODULE <name>;` statement in raw SQL.
+ * Mirrors `ALREADY_INCLUDED_REGEX` from `sqlIncludeInjector` so we count
+ * modules the skill author already wrote into their SQL — without those
+ * being treated as drift just because the auto-injector did not need to
+ * add them.
+ */
+const EXPLICIT_INCLUDE_REGEX = /\bINCLUDE\s+PERFETTO\s+MODULE\s+([\w.]+)/gi;
+
 /** Walk all SQL fragments inside a skill, returning lowercase module names. */
 function detectStdlibModulesUsedBySkill(skill: SkillDefinition): Set<string> {
   const detected = new Set<string>();
 
   const visit = (sql: string | undefined): void => {
     if (!sql || sql.trim().length === 0) return;
+    // Count modules the author already wrote: `INCLUDE PERFETTO MODULE foo;`.
+    // Codex review caught that injectStdlibIncludes() only reports modules
+    // it newly added, so a correctly-included module would otherwise look
+    // like "declared but unused" drift.
+    for (const match of sql.matchAll(EXPLICIT_INCLUDE_REGEX)) {
+      const mod = match[1]?.toLowerCase();
+      if (mod) detected.add(mod);
+    }
     try {
       const result = injectStdlibIncludes(sql);
       for (const mod of result.injected) detected.add(mod);

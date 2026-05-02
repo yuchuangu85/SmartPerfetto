@@ -55,4 +55,22 @@ describe('buildMemoryRootCause', () => {
     const c = buildMemoryRootCause({range: {startNs: 0, endNs: 1}});
     expect(isUnsupported(c)).toBe(true);
   });
+
+  it('treats empty arrays as missing data, not as supported coverage (Codex regression)', () => {
+    const c = buildMemoryRootCause({
+      range: {startNs: 0, endNs: 1},
+      processSnapshots: [],
+      lmkEvents: [],
+      dmaAllocations: [],
+      externalArtifacts: [],
+    });
+    expect(isUnsupported(c)).toBe(true);
+    expect(c.processSnapshots).toBeUndefined();
+    expect(c.lmkEvents).toBeUndefined();
+    expect(c.dmaAllocations).toBeUndefined();
+    expect(c.externalArtifacts).toBeUndefined();
+    for (const entry of c.coverage) {
+      expect(entry.status).toBe('scaffolded');
+    }
+  });
 });

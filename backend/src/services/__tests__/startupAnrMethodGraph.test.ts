@@ -63,4 +63,20 @@ describe('buildStartupAnrMethodGraph', () => {
     const c = buildStartupAnrMethodGraph({range: {startNs: 0, endNs: 1}});
     expect(isUnsupported(c)).toBe(true);
   });
+
+  it('treats empty arrays as missing data, not as supported coverage (Codex regression)', () => {
+    const c = buildStartupAnrMethodGraph({
+      range: {startNs: 0, endNs: 1},
+      startupPhases: [],
+      anrAttributions: [],
+      methodTraceGraph: [],
+    });
+    expect(isUnsupported(c)).toBe(true);
+    expect(c.startupPhases).toBeUndefined();
+    expect(c.anrAttributions).toBeUndefined();
+    expect(c.methodTraceGraph).toBeUndefined();
+    for (const entry of c.coverage) {
+      expect(entry.status).toBe('scaffolded');
+    }
+  });
 });
