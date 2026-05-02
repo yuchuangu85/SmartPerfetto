@@ -709,10 +709,15 @@ fi
 "$TRACE_PROCESSOR" --version | head -n 1 || true
 
 if [ "$SKIP_BUILD" = false ]; then
-  # Generate frontend types from backend data contract
-  echo "Generating frontend types..."
+  # Keep frontend types in sync without rewriting generated files on every dev start.
+  echo "Checking frontend types..."
   cd "$PROJECT_ROOT/backend"
-  npm run generate:frontend-types 2>&1 | tee -a "$BACKEND_LOG" || echo "Warning: Frontend type generation failed, continuing..."
+  if npm run check:types 2>&1 | tee -a "$BACKEND_LOG"; then
+    echo "Frontend types are already in sync."
+  else
+    echo "Frontend types are out of sync. Regenerating..."
+    npm run generate:frontend-types 2>&1 | tee -a "$BACKEND_LOG" || echo "Warning: Frontend type generation failed, continuing..."
+  fi
 
   # Build backend
   echo "Building backend..."
