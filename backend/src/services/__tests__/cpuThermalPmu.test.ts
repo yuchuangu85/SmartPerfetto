@@ -22,6 +22,29 @@ describe('buildCpuThermalPmu', () => {
     }
   });
 
+  it('aggregates duplicate (cpu, freq) buckets (Codex round 7 regression)', () => {
+    // CPUs revisit the same frequency multiple times during a window —
+    // residency should sum, not split into multiple rows for the same bucket.
+    const c = buildCpuThermalPmu({
+      range: {startNs: 0, endNs: 1_000_000},
+      freqSamples: [
+        {cpu: 0, freqHz: 600_000_000, durNs: 100_000},
+        {cpu: 0, freqHz: 1_800_000_000, durNs: 400_000},
+        {cpu: 0, freqHz: 600_000_000, durNs: 200_000},
+        {cpu: 0, freqHz: 1_800_000_000, durNs: 300_000},
+      ],
+    });
+    expect(c.cpuFreqResidency).toHaveLength(2);
+    if (c.cpuFreqResidency) {
+      const lowFreq = c.cpuFreqResidency.find(r => r.freqHz === 600_000_000);
+      const highFreq = c.cpuFreqResidency.find(r => r.freqHz === 1_800_000_000);
+      expect(lowFreq?.durNs).toBe(300_000);
+      expect(highFreq?.durNs).toBe(700_000);
+      expect(lowFreq?.fraction).toBeCloseTo(0.3);
+      expect(highFreq?.fraction).toBeCloseTo(0.7);
+    }
+  });
+
   it('routes hot temps to hard_throttle', () => {
     const c = buildCpuThermalPmu({
       range: {startNs: 0, endNs: 1},

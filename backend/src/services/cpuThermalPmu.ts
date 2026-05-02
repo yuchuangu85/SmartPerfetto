@@ -52,19 +52,40 @@ export interface CpuThermalPmuOptions {
   jankFraction?: number;
 }
 
-/** Compute fraction-of-window residency for each (cpu,freq) bucket. */
+/**
+ * Compute fraction-of-window residency for each (cpu, freq) bucket.
+ *
+ * Codex round 7 caught that callers can pass multiple samples for the
+ * same (cpu, freqHz) — common when a CPU revisits a frequency during
+ * the window — so we aggregate by bucket before computing fractions
+ * instead of emitting split rows that consumers have to re-sum.
+ */
 function buildResidency(
   range: NsTimeRange,
   samples: CpuFreqResidencySample[] | undefined,
 ): CpuFreqResidency[] | undefined {
   if (!samples || samples.length === 0) return undefined;
   const totalDur = Math.max(1, range.endNs - range.startNs);
-  return samples.map(s => ({
-    cpu: s.cpu,
-    freqHz: s.freqHz,
-    durNs: s.durNs,
-    fraction: s.durNs / totalDur,
-  }));
+
+  const byBucket = new Map<string, CpuFreqResidencySample>();
+  for (const s of samples) {
+    const key = `${s.cpu}|${s.freqHz}`;
+    const existing = byBucket.get(key);
+    if (existing) {
+      existing.durNs += s.durNs;
+    } else {
+      byBucket.set(key, {cpu: s.cpu, freqHz: s.freqHz, durNs: s.durNs});
+    }
+  }
+
+  return Array.from(byBucket.values())
+    .sort((a, b) => a.cpu - b.cpu || a.freqHz - b.freqHz)
+    .map(s => ({
+      cpu: s.cpu,
+      freqHz: s.freqHz,
+      durNs: s.durNs,
+      fraction: s.durNs / totalDur,
+    }));
 }
 
 /**

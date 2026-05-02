@@ -118,6 +118,13 @@ const PROBE_SLICE_COUNT: ProbeSpec = {
  * counts timeline-slice rows, not frames — multi-layer apps produce
  * multiple slice rows per frame, inflating both totals. Aggregate by
  * (upid, name) first so the L2 metric reports distinct frames.
+ *
+ * Codex round 7: when a trace has no FrameTimeline rows at all (e.g.
+ * captured without surfaceflinger.frametimeline data source), the
+ * aggregate would still return one row with COUNT=0 and SUM=NULL,
+ * making missing capture data look like "valid no-jank". The outer
+ * filter drops the result row when per_frame is empty so runProbe
+ * marks the probe unsupported instead of silently zero-filling.
  */
 const PROBE_FRAME_TIMELINE_JANK: ProbeSpec = {
   id: 'frame_timeline_jank',
@@ -131,10 +138,14 @@ const PROBE_FRAME_TIMELINE_JANK: ProbeSpec = {
       FROM actual_frame_timeline_slice
       GROUP BY upid, name
     )
-    SELECT
-      COUNT(*) AS total,
-      SUM(is_jank) AS jank
-    FROM per_frame
+    SELECT total, jank
+    FROM (
+      SELECT
+        COUNT(*) AS total,
+        COALESCE(SUM(is_jank), 0) AS jank
+      FROM per_frame
+    )
+    WHERE total > 0
   `,
   toMetrics: rows => {
     const total = Number(rows[0]?.[0] ?? 0);

@@ -63,6 +63,29 @@ describe('traceSummaryV2', () => {
     expect(covered).toEqual([2, 22, 102]);
   });
 
+  it('treats missing FrameTimeline data as unsupported, not 0 jank (Codex round 7 regression)', async () => {
+    // SQL probe filters out the result row when per_frame is empty, so
+    // runProbe sees rows.length === 0 and marks the probe unsupported.
+    const query = makeMockQuery({
+      trace_bounds: {columns: ['start_ts', 'end_ts'], rows: [[0, 1_000]]},
+      'COUNT(*) FROM process': {columns: ['c'], rows: [[1]]},
+      'COUNT(*) FROM slice': {columns: ['c'], rows: [[1]]},
+      // FrameTimeline probe returns no rows (simulating empty per_frame CTE).
+      actual_frame_timeline_slice: {columns: ['total', 'jank'], rows: []},
+      'slice\n    ORDER BY dur DESC': {
+        columns: ['name', 'dur'],
+        rows: [['x', 1]],
+      },
+    });
+    const contract = await buildTraceSummaryV2({query});
+    expect(contract.probes.frame_timeline_jank).toBe(false);
+    // No frames.* metric should claim 0 jank.
+    const jank = contract.metrics.find(m => m.metricId === 'frames.jank_count');
+    expect(jank).toBeUndefined();
+    const unsupported = contract.metrics.find(m => m.metricId === 'frame_timeline_jank.unsupported');
+    expect(unsupported).toBeDefined();
+  });
+
   it('marks failing probes unsupported instead of zero-filling metrics', async () => {
     const query = makeMockQuery({
       trace_bounds: {columns: ['start_ts', 'end_ts'], rows: [[0, 1_000_000]]},
