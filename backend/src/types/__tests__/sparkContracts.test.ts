@@ -44,6 +44,11 @@ import {
   type ProjectMemoryEntry,
   type FeedbackPipelineEntry,
   type MemoryRagSelfImprovementContract,
+  type CaseEducationalLevel,
+  type CaseFindingLink,
+  type CaseNode,
+  type CaseEdge,
+  type CaseGraphLibraryContract,
 } from '../sparkContracts';
 
 describe('sparkContracts — shared provenance', () => {
@@ -1405,5 +1410,95 @@ describe('Plan 44 — MemoryRagSelfImprovementContract', () => {
     expect(contract.entries).toHaveLength(1);
     expect(contract.pipeline[0].stage).toBe('feedback');
     expect(contract.coverage).toHaveLength(2);
+  });
+});
+
+describe('Plan 54 — CaseGraphLibraryContract', () => {
+  it('CaseEducationalLevel covers novice / intermediate / advanced', () => {
+    const levels: CaseEducationalLevel[] = [
+      'novice',
+      'intermediate',
+      'advanced',
+    ];
+    expect(levels).toHaveLength(3);
+  });
+
+  it('draft case can omit traceArtifactId without explanation when raw', () => {
+    const node: CaseNode = {
+      ...makeSparkProvenance({source: 'plan-54-test'}),
+      caseId: 'case-draft-001',
+      title: 'Heavy mixed scrolling — first-jank chain',
+      status: 'draft',
+      redactionState: 'raw',
+      traceArtifactId: 'artifact-trace-001',
+      tags: ['scrolling', 'binder'],
+      findings: [
+        {id: 'f1', severity: 'critical', title: 'Binder S>5ms before Choreographer'},
+      ],
+    };
+    expect(node.status).toBe('draft');
+    expect(node.curatedBy).toBeUndefined();
+  });
+
+  it('archived case carries traceUnavailableReason instead of artifactId', () => {
+    const node: CaseNode = {
+      ...makeSparkProvenance({source: 'plan-54-test'}),
+      caseId: 'case-archived-001',
+      title: 'Old jank case (consent revoked)',
+      status: 'private',
+      redactionState: 'redacted',
+      traceUnavailableReason: 'consent revoked 2026-04-30',
+      tags: ['archive'],
+      findings: [],
+    };
+    expect(node.traceArtifactId).toBeUndefined();
+    expect(node.traceUnavailableReason).toBe('consent revoked 2026-04-30');
+  });
+
+  it('CaseFindingLink mirrors lightweight severity vocabulary', () => {
+    const link: CaseFindingLink = {
+      id: 'f1',
+      severity: 'warning',
+      title: 'BufferStuffing detected on 14% of frames',
+      evidence: {
+        skillId: 'frametimeline_jank_attribution',
+        artifactId: 'artifact-jank-rows',
+        description: 'Frame timeline jank rows backing the claim',
+      },
+    };
+    expect(link.severity).toBe('warning');
+    expect(link.evidence?.skillId).toBe('frametimeline_jank_attribution');
+  });
+
+  it('CaseEdge represents directional relation with optional weight', () => {
+    const edge: CaseEdge = {
+      edgeId: 'e1',
+      fromCaseId: 'case-old-fix',
+      toCaseId: 'case-new-fix',
+      relation: 'before_after_fix',
+      weight: 0.95,
+      note: 'Same root cause, fix landed in 14.2.0',
+    };
+    expect(edge.relation).toBe('before_after_fix');
+    expect(edge.weight).toBe(0.95);
+  });
+
+  it('CaseGraphLibraryContract tracks lastPublishedAt for public bundle', () => {
+    const contract: CaseGraphLibraryContract = {
+      ...makeSparkProvenance({source: 'plan-54-test'}),
+      cases: [],
+      edges: [],
+      lastPublishedAt: 1714600000000,
+      coverage: [
+        {sparkId: 162, planId: '54', status: 'scaffolded'},
+        {sparkId: 179, planId: '54', status: 'scaffolded'},
+        {sparkId: 180, planId: '54', status: 'scaffolded'},
+        {sparkId: 195, planId: '54', status: 'scaffolded'},
+        {sparkId: 196, planId: '54', status: 'scaffolded'},
+        {sparkId: 203, planId: '54', status: 'scaffolded'},
+      ],
+    };
+    expect(contract.lastPublishedAt).toBe(1714600000000);
+    expect(contract.coverage).toHaveLength(6);
   });
 });

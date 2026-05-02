@@ -1720,6 +1720,129 @@ export interface MemoryRagSelfImprovementContract extends SparkProvenance {
 }
 
 // =============================================================================
+// Plan 54 — Case Graph, Public Case Library
+//          (Spark #162, #179, #180, #195, #196, #203)
+// =============================================================================
+
+/**
+ * Educational level used by the case browser (Spark #162).
+ *
+ * Drives default filters for the public case library and the "导览模式"
+ * walkthrough — junior developers see novice-tagged cases first.
+ */
+export type CaseEducationalLevel = 'novice' | 'intermediate' | 'advanced';
+
+/**
+ * Severity of a finding linked to a case node. Mirrors the lightweight
+ * severity vocabulary used across SmartPerfetto reports.
+ */
+export type CaseFindingSeverity = 'info' | 'warning' | 'critical';
+
+/**
+ * One finding link inside a case node — the analyst's claim about the
+ * underlying trace, with optional evidence pointer.
+ */
+export interface CaseFindingLink {
+  /** Stable finding id. */
+  id: string;
+  severity: CaseFindingSeverity;
+  /** Short human-readable title. */
+  title: string;
+  evidence?: SparkEvidenceRef;
+}
+
+/**
+ * A single case = curated trace + analysis snapshot + curation metadata.
+ *
+ * Publishing gate is double-controlled: a case can be `status='published'`
+ * only when `redactionState='redacted'` AND `curatedBy` is set
+ * (a curator has signed off). Anonymizer alone is not enough — see
+ * §5.2 in the design doc for the boundary.
+ */
+export interface CaseNode extends SparkProvenance {
+  caseId: string;
+  /** Title for the browsing UI. */
+  title: string;
+  /** Curation status — uses `CurationStatus` from base types. */
+  status: CurationStatus;
+  /** Composite key matching the baseline namespace (when applicable). */
+  key?: PerfBaselineKey;
+  /**
+   * Anonymization state. Tracked separately from `status` so an
+   * in-review case can move toward redaction without flipping the
+   * curation lifecycle.
+   */
+  redactionState: 'raw' | 'partial' | 'redacted';
+  /**
+   * Pointer to the original trace artifact (or anonymized copy when
+   * published). Optional because archived / consent-revoked cases stay
+   * in the library as read-only metadata. See `traceUnavailableReason`.
+   */
+  traceArtifactId?: string;
+  /**
+   * Why the trace artifact is unavailable, e.g. `'archived after 90 days'`,
+   * `'evicted from artifact store'`, `'consent revoked'`. When set,
+   * `traceArtifactId` may be undefined and consumers must treat the
+   * case as read-only metadata.
+   */
+  traceUnavailableReason?: string;
+  /** Pointer to the analysis report artifact. */
+  reportArtifactId?: string;
+  /** Tags for category filtering. */
+  tags: string[];
+  /** Linked findings — top-level claim ids. */
+  findings: CaseFindingLink[];
+  /** Curator name (required for `status='published'`). */
+  curatedBy?: string;
+  /** When curated (epoch ms). */
+  curatedAt?: number;
+  /** Educational level (Spark #162). */
+  educationalLevel?: CaseEducationalLevel;
+}
+
+/**
+ * A relation between two cases in the case graph.
+ *
+ * Edges are directional — the relation often is too (e.g.
+ * `before_after_fix` from old to fixed case). Symmetric relations
+ * (`similar_root_cause`) should be stored once with a documented
+ * "canonical from-side" rule rather than mirrored.
+ */
+export interface CaseEdge {
+  edgeId: string;
+  fromCaseId: string;
+  toCaseId: string;
+  /** Relation kind. The string union below lists the canonical relations. */
+  relation:
+    | 'similar_root_cause'
+    | 'same_app'
+    | 'same_device'
+    | 'before_after_fix'
+    | 'derived_pattern'
+    | 'contradicts'
+    | string;
+  /** Confidence 0..1. */
+  weight?: number;
+  /** Free-form note from the curator. */
+  note?: string;
+}
+
+/**
+ * CaseGraphLibraryContract (Plan 54)
+ *
+ * Surface of the case library + graph. `lastPublishedAt` is set when the
+ * library is exported as a public bundle (Spark #180); private and
+ * draft cases never affect this timestamp.
+ */
+export interface CaseGraphLibraryContract extends SparkProvenance {
+  cases: CaseNode[];
+  edges: CaseEdge[];
+  /** When the library was last exported as a public bundle (Spark #180). */
+  lastPublishedAt?: number;
+  coverage: SparkCoverageEntry[];
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
