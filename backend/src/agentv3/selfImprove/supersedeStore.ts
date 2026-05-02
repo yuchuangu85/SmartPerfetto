@@ -413,6 +413,41 @@ export class SupersedeStoreHandle {
 }
 
 /**
+ * Read-only handle factory for callers (recall_patterns and the
+ * future stdio MCP host) that must NOT create / migrate / mutate
+ * the supersede store.
+ *
+ * Returns null when the store does not yet exist on disk, signalling
+ * the caller to fall back to the no-marker default (weight 1.0).
+ * This is the prerequisite from Plan 41 M1a for upgrading
+ * `recall_patterns` from `internal` back to `public-readonly`
+ * exposure: `openSupersedeStore` triggers `mkdir` + sqlite migration
+ * which is incompatible with read-only classification, while this
+ * adapter performs no writes.
+ *
+ * Underlying sqlite open uses `{readonly: true, fileMustExist:
+ * true}` so any accidental mutation attempt throws at the SDK
+ * layer rather than silently dirty-ing the database.
+ */
+export function openSupersedeStoreReadOnly(
+  opts: SupersedeStoreOptions = {},
+): SupersedeStoreHandle | null {
+  const dbPath = opts.dbPath || defaultDbPath();
+  if (dbPath === ':memory:') {
+    // :memory: stores are caller-private; a read-only adapter has no
+    // shared state to surface. Tell the caller "no data" rather than
+    // returning a handle that is guaranteed empty.
+    return null;
+  }
+  if (!fs.existsSync(dbPath)) return null;
+  const db = new Database(dbPath, {readonly: true, fileMustExist: true});
+  // Busy timeout is read-side tuning only; pragma is allowed under
+  // readonly because it does not mutate the DB file.
+  db.pragma('busy_timeout = 5000');
+  return new SupersedeStoreHandle(db);
+}
+
+/**
  * Injection-time weight modifier for a failure mode. Returns 1.0 when no
  * marker is active, the §4 weight otherwise. Pure read-only — callers are
  * the negative-pattern injection path and the monitoring dashboard.
