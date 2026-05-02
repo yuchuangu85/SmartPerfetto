@@ -90,6 +90,169 @@ export interface SparkCoverageEntry {
 }
 
 // =============================================================================
+// First-tier shared base types — Plans 41 / 44 / 50 / 54 / 55
+//
+// These types are referenced from multiple plans and live here (not on a
+// per-plan basis) so they can be imported once. Every type is opt-in: existing
+// plans (01-18) do not depend on them and continue to compile unchanged.
+// =============================================================================
+
+/**
+ * Strict enum of RAG (Retrieval-Augmented Generation) source kinds.
+ *
+ * Narrow on purpose — license / consent / freshness policy tables switch on
+ * this value and must not silently accept unknown sources. Extending the
+ * union requires an explicit contract bump and updates to those tables.
+ */
+export type RagSourceKind =
+  /** Plan 55 — androidperformance.com blog ingester. */
+  | 'androidperformance.com'
+  /** Plan 55 — AOSP source ingester (license required). */
+  | 'aosp'
+  /** Plan 55 — OEM SDK doc ingester (license required). */
+  | 'oem_sdk'
+  /** Plan 44 — exposes project memory entries as a RAG corpus. */
+  | 'project_memory'
+  /** Plan 44 — world-scope consolidated memory (post-review). */
+  | 'world_memory'
+  /** Plan 54 — published case library entries. */
+  | 'case_library';
+
+/**
+ * Pointer to a RAG-indexed document chunk.
+ *
+ * Used by Plan 44 (project memory references) and Plan 55 (blog/AOSP/OEM
+ * retrieval results). The reference travels through the artifact store so
+ * downstream consumers can resolve the original text on demand.
+ */
+export interface RagDocumentRef {
+  /** Stable chunk id (sha-256 prefix of source + offset). */
+  chunkId: string;
+  /** Knowledge source kind — strict enum, see `RagSourceKind`. */
+  source: RagSourceKind;
+  /** Display title of the parent document. */
+  title?: string;
+  /** Original URL or local path. */
+  uri?: string;
+  /** Byte offset (or token offset) into the source document. */
+  offset?: number;
+  /** Length of the chunk in characters. */
+  length?: number;
+  /** When the chunk was indexed (epoch ms). */
+  indexedAt?: number;
+  /**
+   * License of the source. Required at ingestion time when `source` is `aosp`
+   * or `oem_sdk` — the Plan 55 ingester must reject those chunks if license
+   * is missing. Optional for blog / project_memory / world_memory /
+   * case_library because those sources have implicit policies covered by
+   * Plans 44 / 54.
+   */
+  license?: 'AGPL-3.0' | 'Apache-2.0' | 'CC-BY-4.0' | 'proprietary' | string;
+  /** Freshness flag — true if older than the source's recommended refresh window. */
+  stale?: boolean;
+}
+
+/**
+ * Memory scope hierarchy — controls retention, sharing, and consolidation
+ * policy for Plan 44 project memory and Plan 54 case library.
+ *
+ *   session → project → world
+ *
+ * Promotion between scopes must be explicit (see `MemoryPromotionTrigger`).
+ * Auto-promotion is forbidden — `promote()` must reject any other trigger.
+ */
+export type MemoryScope =
+  /** Ephemeral, dies with the analysis. Lives in `analysisPatternMemory.ts`. */
+  | 'session'
+  /** Persisted per-project (typically per app + device combo). */
+  | 'project'
+  /** Promoted to cross-project knowledge after explicit reviewer approval. */
+  | 'world';
+
+/**
+ * Composite key shared by Plan 50 baselines and Plan 54 case nodes.
+ *
+ * Anonymization status of each component is the responsibility of the
+ * containing record's `redactionState` field — `BaselineRecord` and
+ * `CaseNode` both treat raw appId/deviceId as identifiable info.
+ */
+export interface PerfBaselineKey {
+  /** App package or product id. */
+  appId: string;
+  /** Device fingerprint (model + Android version + SoC). */
+  deviceId: string;
+  /** Build identifier (git sha, version code, or branch). */
+  buildId: string;
+  /** Critical-User-Journey id, e.g. `cold_start` / `scroll_feed` / `anr_dispatch`. */
+  cuj: string;
+}
+
+/**
+ * Curation lifecycle status for cases (Plan 54) and baselines (Plan 50).
+ *
+ * Note: redaction state is a separate axis. Each record (CaseNode,
+ * BaselineRecord) carries its own `redactionState: 'raw' | 'partial' |
+ * 'redacted'` field. A case can be `published` only if `redactionState ===
+ * 'redacted'` AND a curator has signed off (double-control gate).
+ */
+export type CurationStatus = 'draft' | 'reviewed' | 'published' | 'private';
+
+/**
+ * Cross-plan reference to a case node (Plan 54).
+ *
+ * Defined here, in shared base types, to break the circular dependency
+ * between Plan 44 (FeedbackPipelineEntry → caseId) and Plan 54 (CaseNode
+ * findings → memory entries). Both plans depend on `CaseRef` rather than
+ * importing each other's contract types directly.
+ */
+export interface CaseRef {
+  /** Stable case id from Plan 54's case library. */
+  caseId: string;
+  /** Optional snapshot of the case status at reference time. */
+  status?: CurationStatus;
+  /** Free-form note explaining why this case is referenced. */
+  citationReason?: string;
+}
+
+/**
+ * What triggered a memory promotion event (Plan 44).
+ *
+ * Auto-promotion is intentionally absent — `projectMemory.promote()` must
+ * throw when given a trigger outside this union. The audit log relies on a
+ * recorded human or eval-driven trigger for every cross-scope move.
+ */
+export type MemoryPromotionTrigger =
+  /** User explicitly said "remember this" via feedback. */
+  | 'user_feedback'
+  /** Admin signed off via `/api/memory/promote` (reviewer required). */
+  | 'reviewer_approval'
+  /** Entry contributed to a passing eval case (Spark #95). */
+  | 'skill_eval_pass';
+
+/**
+ * Audit record attached to every cross-scope memory promotion.
+ *
+ * Stored on the `ProjectMemoryEntry.promotionPolicy` field for entries
+ * whose scope is `world` (required) and optionally on `project` entries
+ * that were promoted (rather than created directly). Also appended to the
+ * promotion audit log at `backend/logs/analysis_project_memory.json`.
+ */
+export interface MemoryPromotionPolicy {
+  /** Source scope (lower in the hierarchy). */
+  fromScope: MemoryScope;
+  /** Target scope (higher). */
+  toScope: MemoryScope;
+  /** What triggered the promotion. */
+  trigger: MemoryPromotionTrigger;
+  /** Reviewer name when trigger='reviewer_approval'. */
+  reviewer?: string;
+  /** When the promotion happened (epoch ms). */
+  promotedAt: number;
+  /** Eval case id when trigger='skill_eval_pass'. */
+  evalCaseId?: string;
+}
+
+// =============================================================================
 // Plan 01 — Stdlib Catalog 与 Skill 覆盖率治理 (Spark #1, #21)
 // =============================================================================
 

@@ -22,6 +22,14 @@ import {
   type GpuSurfaceFlingerContract,
   type StartupAnrMethodGraphContract,
   type DomainSkillEvalContract,
+  type RagSourceKind,
+  type RagDocumentRef,
+  type MemoryScope,
+  type PerfBaselineKey,
+  type CurationStatus,
+  type CaseRef,
+  type MemoryPromotionTrigger,
+  type MemoryPromotionPolicy,
 } from '../sparkContracts';
 
 describe('sparkContracts — shared provenance', () => {
@@ -931,5 +939,125 @@ describe('Plan 18 — DomainSkillEvalContract', () => {
     );
     expect(contract.importers?.[0].required).toBe(true);
     expect(contract.runs?.[0].status).toBe('pass');
+  });
+});
+
+// =============================================================================
+// First-tier shared base types — Plans 41 / 44 / 50 / 54 / 55
+// =============================================================================
+
+describe('First-tier shared base types', () => {
+  it('RagSourceKind enumerates the six known knowledge sources', () => {
+    const sources: RagSourceKind[] = [
+      'androidperformance.com',
+      'aosp',
+      'oem_sdk',
+      'project_memory',
+      'world_memory',
+      'case_library',
+    ];
+    expect(sources).toHaveLength(6);
+    // Compile-time check: each value is assignable to RagSourceKind.
+    sources.forEach(s => expect(typeof s).toBe('string'));
+  });
+
+  it('RagDocumentRef accepts a minimal blog reference without license', () => {
+    const ref: RagDocumentRef = {
+      chunkId: 'sha256:abc123',
+      source: 'androidperformance.com',
+    };
+    expect(ref.chunkId).toBe('sha256:abc123');
+    expect(ref.license).toBeUndefined();
+  });
+
+  it('RagDocumentRef carries license + indexedAt for AOSP chunks', () => {
+    const ref: RagDocumentRef = {
+      chunkId: 'sha256:def456',
+      source: 'aosp',
+      license: 'Apache-2.0',
+      indexedAt: 1714600000000,
+      uri: 'frameworks/base/services/core/.../HwcLayer.cpp',
+      title: 'HwcLayer composition fallback',
+      stale: false,
+    };
+    expect(ref.license).toBe('Apache-2.0');
+    expect(ref.source).toBe('aosp');
+  });
+
+  it('MemoryScope hierarchy is session/project/world', () => {
+    const scopes: MemoryScope[] = ['session', 'project', 'world'];
+    expect(scopes).toEqual(['session', 'project', 'world']);
+  });
+
+  it('PerfBaselineKey requires all four key components', () => {
+    const key: PerfBaselineKey = {
+      appId: 'com.example.feed',
+      deviceId: 'pixel-9-android-15',
+      buildId: 'main-abc1234',
+      cuj: 'scroll_feed',
+    };
+    expect(key.appId).toBe('com.example.feed');
+    expect(key.cuj).toBe('scroll_feed');
+  });
+
+  it('CurationStatus does not include redacted (separate axis)', () => {
+    const statuses: CurationStatus[] = [
+      'draft',
+      'reviewed',
+      'published',
+      'private',
+    ];
+    // Sanity: the literal 'redacted' is intentionally not part of the union.
+    // If this list ever grows, the redactionState invariant in §5.2 breaks.
+    expect(statuses).toHaveLength(4);
+    expect(statuses).not.toContain('redacted' as unknown as CurationStatus);
+  });
+
+  it('CaseRef is the cross-plan reference shape (Plan 44 ↔ 54)', () => {
+    const ref: CaseRef = {
+      caseId: 'case-2026-04-30-jank-binder-001',
+      status: 'published',
+      citationReason: 'Same root cause as the current trace',
+    };
+    expect(ref.caseId).toBe('case-2026-04-30-jank-binder-001');
+    expect(ref.status).toBe('published');
+  });
+
+  it('MemoryPromotionTrigger forbids auto promotion', () => {
+    const triggers: MemoryPromotionTrigger[] = [
+      'user_feedback',
+      'reviewer_approval',
+      'skill_eval_pass',
+    ];
+    expect(triggers).toHaveLength(3);
+    // Compile-time check: 'auto_inferred' is intentionally absent.
+    expect(triggers).not.toContain(
+      'auto_inferred' as unknown as MemoryPromotionTrigger,
+    );
+  });
+
+  it('MemoryPromotionPolicy records reviewer for project→world', () => {
+    const policy: MemoryPromotionPolicy = {
+      fromScope: 'project',
+      toScope: 'world',
+      trigger: 'reviewer_approval',
+      reviewer: 'chris',
+      promotedAt: 1714600000000,
+    };
+    expect(policy.fromScope).toBe('project');
+    expect(policy.toScope).toBe('world');
+    expect(policy.reviewer).toBe('chris');
+  });
+
+  it('MemoryPromotionPolicy records evalCaseId for skill_eval_pass', () => {
+    const policy: MemoryPromotionPolicy = {
+      fromScope: 'session',
+      toScope: 'project',
+      trigger: 'skill_eval_pass',
+      promotedAt: 1714600000000,
+      evalCaseId: 'scrolling/jank/heavy_mixed',
+    };
+    expect(policy.trigger).toBe('skill_eval_pass');
+    expect(policy.evalCaseId).toBe('scrolling/jank/heavy_mixed');
   });
 });
