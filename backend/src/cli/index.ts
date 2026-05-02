@@ -15,6 +15,7 @@ import { validateCommand } from './commands/validate';
 import { testCommand } from './commands/test';
 import { listCommand } from './commands/list';
 import { smokeCommand } from './commands/smoke';
+import { coverageCommand } from './commands/coverage';
 
 const program = new Command();
 
@@ -27,5 +28,6 @@ program.addCommand(validateCommand);
 program.addCommand(testCommand);
 program.addCommand(listCommand);
 program.addCommand(smokeCommand);
+program.addCommand(coverageCommand);
 
 program.parse();
