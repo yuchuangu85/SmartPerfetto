@@ -32,6 +32,7 @@ import flamegraphRoutes from './routes/flamegraphRoutes';
 import baselineRoutes from './routes/baselineRoutes';
 import memoryRoutes from './routes/memoryRoutes';
 import caseRoutes from './routes/caseRoutes';
+import ragAdminRoutes from './routes/ragAdminRoutes';
 import {
   assertTraceAnalysisConfiguredForStartup,
   getTraceAnalysisConfigurationStatus,
@@ -151,6 +152,7 @@ app.use('/api/flamegraph', flamegraphRoutes);
 app.use('/api/baselines', baselineRoutes);
 app.use('/api/memory', memoryRoutes);
 app.use('/api/cases', caseRoutes);
+app.use('/api/rag', ragAdminRoutes);
 app.use(LEGACY_AGENT_API_BASE, rejectLegacyAgentApi);
 
 const assistantShellDir = path.resolve(__dirname, '../public/assistant-shell');

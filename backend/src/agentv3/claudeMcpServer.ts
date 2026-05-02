@@ -1373,6 +1373,31 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
     { annotations: { readOnlyHint: true } },
   );
 
+  // lookup_oem_sdk (Plan 55 M2): retrieve indexed OEM SDK chunks
+  // (MTK / Qualcomm / Samsung tuning docs etc.). Public read-only.
+  // Same agent contract as lookup_aosp_source: blocked / empty
+  // results must NOT be paraphrased or fabricated.
+  const lookupOemSdk = tool(
+    'lookup_oem_sdk',
+    'Retrieve indexed OEM SDK / tuning documentation chunks. Optionally restrict by vendor via the URI prefix (`oem://<vendor>/...`). ' +
+    'Read-only over the RagStore. When the result carries `unsupportedReason` (license_blocked, index empty), the agent must say the source is unavailable and must NOT summarize or invent.',
+    {
+      query: z.string().describe('Search query — typically a tuning concept or vendor-specific knob.'),
+      top_k: z.number().int().min(1).max(20).optional().describe('Maximum hits returned (1-20, default 5).'),
+    },
+    async ({ query, top_k }) => {
+      const store = getRagStore();
+      const result = store.search(query, {
+        topK: top_k ?? 5,
+        kinds: ['oem_sdk'],
+      });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+      };
+    },
+    { annotations: { readOnlyHint: true } },
+  );
+
   // recall_project_memory (Plan 44): pure-read recall over project +
   // world memory entries. Strict invariant: handler MUST NOT cause any
   // disk writes; ProjectMemory.recallProjectMemory() is enforced via
@@ -2475,6 +2500,7 @@ export function createClaudeMcpServer(options: ClaudeMcpServerOptions) {
     registry.registerSdk(lookupKnowledge, 'lookup_knowledge', 'public');
     registry.registerSdk(lookupBlogKnowledge, 'lookup_blog_knowledge', 'public');
     registry.registerSdk(lookupAospSource, 'lookup_aosp_source', 'public');
+    registry.registerSdk(lookupOemSdk, 'lookup_oem_sdk', 'public');
     registry.registerSdk(lookupBaseline, 'lookup_baseline', 'public');
     registry.registerSdk(compareBaselines, 'compare_baselines', 'public');
     registry.registerSdk(recallProjectMemory, 'recall_project_memory', 'public');
